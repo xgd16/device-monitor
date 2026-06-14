@@ -30,6 +30,7 @@ export interface BatteryInfo {
   status: string;
   voltage_v: number;
   current_ma: number;
+  power_w: number;
   temp_celsius: number;
   time_left_min: number;
 }

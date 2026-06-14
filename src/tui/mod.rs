@@ -199,8 +199,13 @@ fn render(
     let time = if b.time_left_min > 0 { format!("Left {}h{}m", b.time_left_min/60, b.time_left_min%60) }
         else if b.time_left_min < 0 { let a = b.time_left_min.unsigned_abs(); format!("Full {}h{}m", a/60, a%60) }
         else { String::new() };
-    out.push_str(&format!("\x1b[{}m  BAT [{}{}] {}% {} {:.1}V {:.0}mA {}C {}\x1b[0m\r\n\r\n",
-        bc, "#".repeat(bf), ".".repeat(be), b.capacity, bs, b.voltage_v, b.current_ma, b.temp_celsius as u32, time));
+    let power_label = match b.status.as_str() {
+        "Charging" => format!("+{:.1}W", b.power_w),
+        "Discharging" => format!("-{:.1}W", b.power_w),
+        _ => format!("{:.1}W", b.power_w),
+    };
+    out.push_str(&format!("\x1b[{}m  BAT [{}{}] {}% {} {} {:.1}V {:.0}mA {}C {}\x1b[0m\r\n\r\n",
+        bc, "#".repeat(bf), ".".repeat(be), b.capacity, bs, power_label, b.voltage_v, b.current_ma, b.temp_celsius as u32, time));
 
     // ── 温度传感器（按温度降序，显示前 8 个）──
     let mut thermals: Vec<_> = o.thermal.iter().collect();

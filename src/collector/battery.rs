@@ -49,6 +49,7 @@ pub fn collect() -> BatteryInfo {
         status,
         voltage_v: voltage,
         current_ma: current * 1000.0,
+        power_w: voltage * current.abs(),
         temp_celsius: temp,
         time_left_min,
     }

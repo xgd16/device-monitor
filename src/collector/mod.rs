@@ -77,6 +77,8 @@ pub struct BatteryInfo {
     pub status: String,
     pub voltage_v: f64,
     pub current_ma: f64,
+    /// 当前功率（W），电压 × |电流|；充电/放电方向由 status 区分
+    pub power_w: f64,
     pub temp_celsius: f64,
     /// 放电: 剩余可用分钟(正数)；充电: 距充满分钟(负数)；未知: 0
     pub time_left_min: i64,

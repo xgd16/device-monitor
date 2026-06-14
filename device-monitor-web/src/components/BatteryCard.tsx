@@ -14,9 +14,23 @@ function fmtTime(mins: number): string {
   return `${m}分`;
 }
 
+function fmtPower(battery: BatteryInfo): { label: string; watts: string; color: string } {
+  const w = battery.power_w ?? (battery.voltage_v * Math.abs(battery.current_ma) / 1000);
+  const watts = w.toFixed(1);
+
+  if (battery.status === 'Charging') {
+    return { label: '充电功率', watts: `${watts} W`, color: 'var(--accent)' };
+  }
+  if (battery.status === 'Discharging') {
+    return { label: '消耗功率', watts: `${watts} W`, color: 'var(--warning)' };
+  }
+  return { label: '功率', watts: `${watts} W`, color: 'var(--default)' };
+}
+
 export function BatteryCard({ battery }: BatteryCardProps) {
   const isCharging = battery.status === 'Charging';
-  const color = percentColor(100 - battery.capacity); // 电量低=红
+  const color = percentColor(100 - battery.capacity);
+  const power = fmtPower(battery);
 
   let statusText = isCharging ? '充电中' : '放电中';
   let timeText = '';
@@ -41,7 +55,6 @@ export function BatteryCard({ battery }: BatteryCardProps) {
         </Chip>
       </div>
 
-      {/* 进度条 + 百分比 */}
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <ProgressBar
@@ -59,11 +72,18 @@ export function BatteryCard({ battery }: BatteryCardProps) {
         </span>
       </div>
 
-      {/* 详细信息 */}
+      {/* 充电/消耗瓦数 */}
+      <div className="flex items-baseline gap-2">
+        <span className="text-[10px] sm:text-[11px] font-mono opacity-50">{power.label}</span>
+        <span className="font-mono text-lg sm:text-xl font-medium" style={{ color: power.color }}>
+          {power.watts}
+        </span>
+      </div>
+
       <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] sm:text-[11px] opacity-50">
-        <span>电压 {battery.voltage_v.toFixed(2)}V</span>
-        <span>电流 {battery.current_ma.toFixed(0)}mA</span>
-        {battery.temp_celsius > 0 && <span>温度 {battery.temp_celsius.toFixed(1)}°C</span>}
+        <span>电压 {battery.voltage_v.toFixed(2)} V</span>
+        <span>电流 {Math.abs(battery.current_ma).toFixed(0)} mA</span>
+        {battery.temp_celsius > 0 && <span>温度 {battery.temp_celsius.toFixed(1)} °C</span>}
         {timeText && <span className="opacity-70">{timeText}</span>}
       </div>
     </Card>
