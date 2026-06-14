@@ -33,6 +33,8 @@ pub struct FileEntry {
 #[derive(Deserialize)]
 pub struct PathQuery {
     pub path: Option<String>,
+    /// 为 true 时使用 inline  disposition 并设置合适 Content-Type，供浏览器内嵌预览
+    pub inline: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -417,7 +419,7 @@ pub async fn upload_file(mut multipart: Multipart) -> Json<Value> {
     success(serde_json::json!({ "uploaded": uploaded }))
 }
 
-/// `GET /api/files/download?path=`
+/// `GET /api/files/download?path=&inline=`
 pub async fn download_file(Query(q): Query<PathQuery>) -> Response {
     let raw = match q.path.as_deref() {
         Some(p) => p,
@@ -440,14 +442,23 @@ pub async fn download_file(Query(q): Query<PathQuery>) -> Response {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "download".into());
 
+    let inline = q.inline.unwrap_or(false);
+    let content_type = if inline {
+        mime_type_for_path(&path)
+    } else {
+        "application/octet-stream"
+    };
+    let disposition = if inline {
+        format!("inline; filename=\"{}\"", file_name)
+    } else {
+        format!("attachment; filename=\"{}\"", file_name)
+    };
+
     match fs::read(&path) {
         Ok(data) => Response::builder()
             .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "application/octet-stream")
-            .header(
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", file_name),
-            )
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::CONTENT_DISPOSITION, disposition)
             .body(Body::from(data))
             .unwrap(),
         Err(e) => (
@@ -455,6 +466,33 @@ pub async fn download_file(Query(q): Query<PathQuery>) -> Response {
             error(&format!("Failed to read file: {}", e)),
         )
             .into_response(),
+    }
+}
+
+fn mime_type_for_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("bmp") => "image/bmp",
+        Some("ico") => "image/x-icon",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mov") => "video/quicktime",
+        Some("mkv") => "video/x-matroska",
+        Some("avi") => "video/x-msvideo",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") => "audio/ogg",
+        Some("pdf") => "application/pdf",
+        _ => "application/octet-stream",
     }
 }
 

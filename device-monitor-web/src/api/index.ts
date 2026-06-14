@@ -66,6 +66,9 @@ export const uploadFiles = (dirPath: string, files: File[]) => {
 export const downloadUrl = (path: string) =>
   `/api/files/download?path=${encodeURIComponent(path)}`;
 
+export const previewUrl = (path: string) =>
+  `/api/files/download?path=${encodeURIComponent(path)}&inline=1`;
+
 export const mkdir = (path: string) =>
   api.post('/files/mkdir', { path }).then(r => r.data);
 

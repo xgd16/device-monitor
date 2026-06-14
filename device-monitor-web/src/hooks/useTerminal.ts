@@ -5,30 +5,33 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 
 export type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'exited';
 
-function readTerminalTheme(theme: 'dark' | 'light') {
-  const el = document.documentElement;
-  const style = getComputedStyle(el);
-  const bg = style.getPropertyValue('--dm-terminal-bg').trim();
-  const fg = style.getPropertyValue('--dm-terminal-fg').trim();
-  const cursor = style.getPropertyValue('--dm-terminal-cursor').trim();
-  const selection = style.getPropertyValue('--dm-terminal-selection').trim();
-  if (bg && fg) {
-    return {
-      background: bg,
-      foreground: fg,
-      cursor: cursor || fg,
-      selectionBackground: selection || (theme === 'dark' ? '#33467c' : '#c7d2fe'),
-    };
-  }
-  return theme === 'dark'
-    ? { background: '#1c1c22', foreground: '#ececf0', cursor: '#ececf0', selectionBackground: '#33467c' }
-    : { background: '#ffffff', foreground: '#18181b', cursor: '#18181b', selectionBackground: '#c7d2fe' };
-}
+/** 经典深色终端配色，不随 App 主题切换 */
+const TERMINAL_THEME = {
+  background: '#1e1e1e',
+  foreground: '#d4d4d4',
+  cursor: '#aeafad',
+  cursorAccent: '#1e1e1e',
+  selectionBackground: '#264f78',
+  selectionForeground: '#ffffff',
+  black: '#000000',
+  red: '#cd3131',
+  green: '#0dbc79',
+  yellow: '#e5e510',
+  blue: '#2472c8',
+  magenta: '#bc3fbc',
+  cyan: '#11a8cd',
+  white: '#e5e5e5',
+  brightBlack: '#666666',
+  brightRed: '#f14c4c',
+  brightGreen: '#23d18b',
+  brightYellow: '#f5f243',
+  brightBlue: '#3b8eea',
+  brightMagenta: '#d670d6',
+  brightCyan: '#29b8db',
+  brightWhite: '#ffffff',
+};
 
-export function useTerminal(
-  containerRef: React.RefObject<HTMLDivElement | null>,
-  theme: 'dark' | 'light',
-) {
+export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -53,10 +56,12 @@ export function useTerminal(
 
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      theme: readTerminalTheme(theme),
+      fontSize: 14,
+      lineHeight: 1.2,
+      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace',
+      theme: TERMINAL_THEME,
       scrollback: 5000,
+      allowTransparency: false,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -123,7 +128,7 @@ export function useTerminal(
         }).catch(() => {});
       }
     });
-  }, [containerRef, theme, sendResize]);
+  }, [containerRef, sendResize]);
 
   const disconnect = useCallback(() => {
     intentionalClose.current = true;
@@ -142,12 +147,6 @@ export function useTerminal(
     connect();
     return () => disconnect();
   }, [connect, disconnect]);
-
-  useEffect(() => {
-    const term = termRef.current;
-    if (!term) return;
-    term.options.theme = readTerminalTheme(theme);
-  }, [theme]);
 
   useEffect(() => {
     const el = containerRef.current;

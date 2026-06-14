@@ -28,15 +28,14 @@ function statusColor(status: TerminalStatus): 'success' | 'warning' | 'danger' |
 }
 
 interface TerminalSessionProps {
-  theme: 'dark' | 'light';
   active: boolean;
   onStatus: (status: TerminalStatus) => void;
   onReady: (actions: { paste: () => void; clear: () => void; reconnect: () => void }) => void;
 }
 
-function TerminalSession({ theme, active, onStatus, onReady }: TerminalSessionProps) {
+function TerminalSession({ active, onStatus, onReady }: TerminalSessionProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { status, paste, clear, reconnect } = useTerminal(containerRef, theme);
+  const { status, paste, clear, reconnect } = useTerminal(containerRef);
 
   useEffect(() => {
     onStatus(status);
@@ -57,11 +56,10 @@ function TerminalSession({ theme, active, onStatus, onReady }: TerminalSessionPr
 }
 
 interface TerminalPanelProps {
-  theme: 'dark' | 'light';
   fullPage?: boolean;
 }
 
-export function TerminalPanel({ theme, fullPage = false }: TerminalPanelProps) {
+export function TerminalPanel({ fullPage = false }: TerminalPanelProps) {
   const [sessions, setSessions] = useState<Session[]>([{ id: '1', title: '终端 1' }]);
   const [activeId, setActiveId] = useState('1');
   const [activeStatus, setActiveStatus] = useState<TerminalStatus>('connecting');
@@ -140,11 +138,10 @@ export function TerminalPanel({ theme, fullPage = false }: TerminalPanelProps) {
         <Button size="sm" variant="ghost" onPress={addSession}>+ 新建</Button>
       </div>
 
-      <div className="flex-1 min-h-0 relative p-2 bg-default-50">
+      <div className="flex-1 min-h-0 relative bg-[#1e1e1e]">
         {sessions.map((s) => (
           <TerminalSession
             key={`${s.id}-${activeId === s.id ? remountKey : 0}`}
-            theme={theme}
             active={activeId === s.id}
             onStatus={activeId === s.id ? handleStatus : () => {}}
             onReady={activeId === s.id ? handleReady : () => {}}
