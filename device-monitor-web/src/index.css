@@ -1,0 +1,35 @@
+@import "@heroui/styles/css";
+
+/* Custom scrollbar for the whole app */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.4 0 0);
+  border-radius: 4px;
+}
+
+/* Full-bleed layout */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* Monospace utility */
+.font-mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Theme backgrounds */
+[data-theme="dark"] body {
+  background: oklch(0.14 0.005 260);
+}
+[data-theme="light"] body {
+  background: oklch(0.97 0.002 260);
+}
