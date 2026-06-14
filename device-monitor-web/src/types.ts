@@ -120,3 +120,31 @@ export interface DatabaseStats {
   newest_metric: number | null;
   retention_days: number;
 }
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  mode: string;
+  owner: string;
+  group: string;
+  modified: number;
+  is_symlink: boolean;
+}
+
+export interface FileListResponse {
+  path: string;
+  parent: string | null;
+  entries: FileEntry[];
+}
+
+export interface FileReadResponse {
+  path: string;
+  offset: number;
+  total_size: number;
+  read_size: number;
+  is_binary: boolean;
+  content: string | null;
+  encoding: string;
+}

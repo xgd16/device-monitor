@@ -45,3 +45,4 @@ build/
 
 .codegraph
 .cursor
+static/

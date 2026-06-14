@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -18,6 +18,9 @@ futures-util = "0.3"
 libc = "0.2.186"
 ratatui = "0.30"
 crossterm = "0.29"
+portable-pty = "0.8"
+zip = "8.6.0"
+sevenz-rust = "0.6.1"
 
 [[bin]]
 name = "device-monitor-server"

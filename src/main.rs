@@ -13,9 +13,10 @@ mod ws;
 mod alert;
 mod tui;
 
-use axum::{Router, routing::{get, post}};
+use axum::{Router, routing::{get, post, put, delete}};
 use tower_http::cors::{CorsLayer, Any};
 use tower_http::services::ServeDir;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -129,12 +130,26 @@ async fn main() {
         .route("/hardware/clear-memory", post(api::hardware::clear_memory))
         .route("/database/stats", get(api::database::get_stats))
         .route("/database/cleanup", post(api::database::cleanup))
-        .route("/history/metrics", get(api::history::metrics_history));
+        .route("/history/metrics", get(api::history::metrics_history))
+        .route("/files/list", get(api::files::list_files))
+        .route("/files/stat", get(api::files::stat_file))
+        .route("/files/read", get(api::files::read_file))
+        .route("/files/write", put(api::files::write_file))
+        .route("/files/upload", post(api::files::upload_file))
+        .route("/files/download", get(api::files::download_file))
+        .route("/files/mkdir", post(api::files::mkdir))
+        .route("/files/rename", post(api::files::rename_file))
+        .route("/files/move", post(api::files::move_file))
+        .route("/files/copy", post(api::files::copy_file))
+        .route("/files/delete", delete(api::files::delete_file))
+        .route("/files/compress", post(api::files::compress_files))
+        .route("/files/extract", post(api::files::extract_files));
 
     // ── 组装路由：API + WebSocket + 静态前端 ──
     let app = Router::new()
         .nest("/api", api_routes)
         .route("/ws/realtime", get(ws::ws_handler))
+        .route("/ws/terminal", get(ws::terminal::ws_handler))
         .fallback_service(ServeDir::new("static"))  // device-monitor-web 构建产物
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
         .with_state(state);
@@ -143,5 +158,10 @@ async fn main() {
     tracing::info!("Server running on http://{}", bind);
 
     let listener = tokio::net::TcpListener::bind(bind).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }

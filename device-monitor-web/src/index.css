@@ -1,3 +1,4 @@
+@import "@xterm/xterm/css/xterm.css";
 @import "@heroui/styles/css";
 
 /* Custom scrollbar for the whole app */
@@ -32,4 +33,21 @@ html, body, #root {
 }
 [data-theme="light"] body {
   background: oklch(0.97 0.002 260);
+}
+
+/* Terminal overrides */
+.terminal-container {
+  background: #1a1b26;
+  border-radius: 6px;
+  overflow: hidden;
+}
+[data-theme="light"] .terminal-container {
+  background: #f5f5f7;
+}
+.terminal-container .xterm {
+  height: 100%;
+  padding: 4px;
+}
+.terminal-container .xterm-viewport {
+  overflow-y: auto !important;
 }

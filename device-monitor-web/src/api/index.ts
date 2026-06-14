@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { SystemOverview, ProcessInfo, WifiInfo, BluetoothInfo, AlertItem, HistorySeries, DatabaseStats } from '../types';
+import type { SystemOverview, ProcessInfo, WifiInfo, BluetoothInfo, AlertItem, HistorySeries, DatabaseStats, FileListResponse, FileReadResponse } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -36,3 +36,55 @@ export const vibratePattern = (segments: [number, number, number][], repeat: boo
   api.post('/hardware/vibrate/pattern', { segments: segments.map(([d, s, w]) => ({ duration_ms: d, strong_pct: s, weak_pct: w })), repeat }).then(r => r.data);
 export const vibrateStop = () => api.post('/hardware/vibrate/stop').then(r => r.data);
 export const clearMemory = () => api.post('/hardware/clear-memory').then(r => r.data);
+
+// ── 文件管理 ──
+
+export const listFiles = (path: string = '/') =>
+  api.get('/files/list', { params: { path } }).then(r => r.data.data as FileListResponse);
+
+export const statFile = (path: string) =>
+  api.get('/files/stat', { params: { path } }).then(r => r.data.data);
+
+export const readFile = (path: string, offset = 0, limit = 256 * 1024) =>
+  api.get('/files/read', { params: { path, offset, limit } }).then(r => r.data.data as FileReadResponse);
+
+export const writeFile = (path: string, content: string, create = false) =>
+  api.put('/files/write', { path, content, create }).then(r => r.data);
+
+export const uploadFiles = (dirPath: string, files: File[]) => {
+  const form = new FormData();
+  form.append('path', dirPath);
+  for (const f of files) {
+    form.append('file', f, f.name);
+  }
+  return api.post('/files/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  }).then(r => r.data);
+};
+
+export const downloadUrl = (path: string) =>
+  `/api/files/download?path=${encodeURIComponent(path)}`;
+
+export const mkdir = (path: string) =>
+  api.post('/files/mkdir', { path }).then(r => r.data);
+
+export const renameFile = (from: string, to: string) =>
+  api.post('/files/rename', { from, to }).then(r => r.data);
+
+export const moveFile = (from: string, to: string) =>
+  api.post('/files/move', { from, to }).then(r => r.data);
+
+export const copyFile = (from: string, to: string) =>
+  api.post('/files/copy', { from, to }).then(r => r.data);
+
+export const deleteFile = (path: string, recursive = false) =>
+  api.delete('/files/delete', { params: { path, recursive } }).then(r => r.data);
+
+export type ArchiveFormat = 'zip' | '7z' | 'rar';
+
+export const compressFiles = (paths: string[], output: string, format: ArchiveFormat) =>
+  api.post('/files/compress', { paths, output, format }, { timeout: 300000 }).then(r => r.data);
+
+export const extractFiles = (path: string, dest: string, overwrite = false) =>
+  api.post('/files/extract', { path, dest, overwrite }, { timeout: 300000 }).then(r => r.data);

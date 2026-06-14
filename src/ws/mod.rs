@@ -1,7 +1,9 @@
-//! WebSocket 实时推送模块
+//! WebSocket 模块
 //!
-//! 客户端连接 `/ws/realtime` 后，每当后台采集任务推送新的 `SystemOverview`，
-//! 服务端即将其序列化为 JSON 文本帧发送给客户端。
+//! - `/ws/realtime` — 系统指标实时推送
+//! - `/ws/terminal` — PTY 终端会话
+
+pub mod terminal;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;

@@ -15,6 +15,8 @@ pub mod alerts;
 pub mod hardware;
 pub mod database;
 pub mod history;
+pub mod files;
+pub mod archive;
 
 use axum::Json;
 use serde_json::{json, Value};

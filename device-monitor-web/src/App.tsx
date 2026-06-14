@@ -18,6 +18,8 @@ import { BatteryCard } from './components/BatteryCard';
 import { DiskCard } from './components/DiskCard';
 import { HardwareControl } from './components/HardwareControl';
 import { ReportsPanel } from './components/ReportsPanel';
+import { TerminalPanel } from './components/TerminalPanel';
+import { FileManager } from './components/FileManager';
 
 export default function App() {
   const data = useDeviceStore((s) => s.data);
@@ -117,6 +119,8 @@ export default function App() {
             <Tabs.Tab id="net">网络</Tabs.Tab>
             <Tabs.Tab id="hw">控制</Tabs.Tab>
             <Tabs.Tab id="more">更多</Tabs.Tab>
+            <Tabs.Tab id="terminal">终端</Tabs.Tab>
+            <Tabs.Tab id="files">文件</Tabs.Tab>
             <Tabs.Tab id="reports">报表</Tabs.Tab>
           </Tabs.List>
 
@@ -145,6 +149,14 @@ export default function App() {
           <Tabs.Panel id="more" className="p-3 flex flex-col gap-3">
             <DiskCard />
             <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
+          </Tabs.Panel>
+
+          <Tabs.Panel id="terminal" className="p-3 flex flex-col gap-3">
+            <TerminalPanel theme={theme} />
+          </Tabs.Panel>
+
+          <Tabs.Panel id="files" className="p-3 flex flex-col gap-3">
+            <FileManager />
           </Tabs.Panel>
 
           <Tabs.Panel id="reports" className="p-3 flex flex-col gap-3">
@@ -186,10 +198,24 @@ export default function App() {
         {/* Row 5: Process table */}
         <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
 
-        {/* Row 6: Alerts */}
+        {/* Row 6: Terminal / Files */}
+        <Tabs aria-label="终端与文件" variant="secondary" className="w-full">
+          <Tabs.List>
+            <Tabs.Tab id="desk-terminal">终端</Tabs.Tab>
+            <Tabs.Tab id="desk-files">文件管理</Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel id="desk-terminal">
+            <TerminalPanel theme={theme} />
+          </Tabs.Panel>
+          <Tabs.Panel id="desk-files">
+            <FileManager />
+          </Tabs.Panel>
+        </Tabs>
+
+        {/* Row 7: Alerts */}
         <AlertsCard alerts={alerts} />
 
-        {/* Row 7: Historical reports */}
+        {/* Row 8: Historical reports */}
         <ReportsPanel />
 
         {/* Footer */}

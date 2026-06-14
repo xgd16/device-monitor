@@ -21,6 +21,8 @@
 | **进程** | 进程列表、详情查看、发送信号终止进程 |
 | **日志** | 读取系统日志并支持关键字/级别过滤 |
 | **告警** | CPU 高温、内存过高、低电量自动告警并持久化 |
+| **终端** | Web 终端（PTY shell），支持多 Tab、resize、粘贴 |
+| **文件管理** | 浏览/上传/下载/编辑/重命名/移动/复制/删除 |
 
 ### 硬件控制
 
@@ -345,9 +347,39 @@ npx pm2 save
 | GET | `/api/database/stats` | 记录数与时间范围 |
 | POST | `/api/database/cleanup` | 手动清理 7 天前数据 |
 
+### 文件管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/files/list?path=` | 列目录（默认 `/`） |
+| GET | `/api/files/stat?path=` | 文件/目录元信息 |
+| GET | `/api/files/read?path=&offset=&limit=` | 读取文件（默认 256KB，最大 1MB） |
+| PUT | `/api/files/write` | 写文本文件，`body: { "path", "content", "create"? }` |
+| POST | `/api/files/upload` | multipart 上传，`path` + `file` 字段 |
+| GET | `/api/files/download?path=` | 下载文件（二进制流） |
+| POST | `/api/files/mkdir` | 创建目录，`body: { "path" }` |
+| POST | `/api/files/rename` | 重命名，`body: { "from", "to" }` |
+| POST | `/api/files/move` | 移动，`body: { "from", "to" }` |
+| POST | `/api/files/copy` | 复制文件，`body: { "from", "to" }` |
+| DELETE | `/api/files/delete?path=&recursive=` | 删除文件或目录 |
+| POST | `/api/files/compress` | 压缩，`body: { "paths": [...], "output": "/path/a.zip", "format": "zip\|7z\|rar" }` |
+| POST | `/api/files/extract` | 解压，`body: { "path": "/path/a.zip", "dest": "/path/out", "overwrite"? }` |
+
+压缩格式说明：
+
+| 格式 | 压缩 | 解压 |
+|------|------|------|
+| zip | 纯 Rust（内置） | 纯 Rust（内置） |
+| 7z | 纯 Rust（sevenz-rust） | 纯 Rust（内置） |
+| rar | 需系统 `rar` 命令 | 需系统 `unrar` 或 `7z` 命令 |
+
+路径经 `canonicalize` 规范化，防止 `../` 穿越；可访问完整文件系统。
+
 ---
 
 ## WebSocket
+
+### 实时指标
 
 **端点：** `ws://<host>:3000/ws/realtime`
 
@@ -368,6 +400,21 @@ npx pm2 save
 ```
 
 前端断线后每 **3 秒**自动重连。
+
+### Web 终端
+
+**端点：** `ws://<host>:3000/ws/terminal`
+
+每个连接独立 PTY shell 会话（默认 `$SHELL` 或 `/bin/sh`）。单客户端最多 **3** 个并发会话。
+
+**协议：**
+
+| 方向 | 类型 | 说明 |
+|------|------|------|
+| 客户端 → 服务端 | Binary | 键盘/粘贴输入（原始字节） |
+| 客户端 → 服务端 | Text JSON | `{"type":"resize","cols":80,"rows":24}` |
+| 服务端 → 客户端 | Binary | PTY 输出 |
+| 服务端 → 客户端 | Text JSON | `{"type":"exit","code":0}` shell 退出时 |
 
 ---
 
@@ -425,7 +472,7 @@ RUST_LOG=debug ./target/release/device-monitor-server
 
 ## 许可证
 
-本项目源码仅供学习与个人使用。部署到生产环境前请评估安全影响（进程 kill、内存清理、硬件控制等接口无鉴权）。
+本项目源码仅供学习与个人使用。部署到生产环境前请评估安全影响（进程 kill、内存清理、硬件控制、**Web 终端**、**文件管理**等接口无鉴权，等同于 shell 级访问权限）。
 
 ---
 
