@@ -58,9 +58,10 @@ function TerminalSession({ theme, active, onStatus, onReady }: TerminalSessionPr
 
 interface TerminalPanelProps {
   theme: 'dark' | 'light';
+  fullPage?: boolean;
 }
 
-export function TerminalPanel({ theme }: TerminalPanelProps) {
+export function TerminalPanel({ theme, fullPage = false }: TerminalPanelProps) {
   const [sessions, setSessions] = useState<Session[]>([{ id: '1', title: '终端 1' }]);
   const [activeId, setActiveId] = useState('1');
   const [activeStatus, setActiveStatus] = useState<TerminalStatus>('connecting');
@@ -99,9 +100,12 @@ export function TerminalPanel({ theme }: TerminalPanelProps) {
   };
 
   return (
-    <Card className="flex flex-col overflow-hidden" style={{ height: '420px' }}>
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5 flex-wrap shrink-0">
-        <span className="text-xs font-semibold opacity-70">终端</span>
+    <Card
+      className={`flex flex-col overflow-hidden ${fullPage ? 'flex-1 min-h-0 h-full' : ''}`}
+      style={fullPage ? undefined : { height: '420px' }}
+    >
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-default-200 flex-wrap shrink-0">
+        <span className="text-xs font-semibold text-foreground/70">Shell</span>
         <Chip size="sm" color={statusColor(activeStatus)} variant="soft">
           {statusLabel(activeStatus)}
         </Chip>
@@ -112,8 +116,10 @@ export function TerminalPanel({ theme }: TerminalPanelProps) {
               key={s.id}
               type="button"
               onClick={() => setActiveId(s.id)}
-              className={`text-xs px-2 py-1 rounded-md whitespace-nowrap flex items-center gap-1 ${
-                activeId === s.id ? 'bg-white/10' : 'opacity-50 hover:opacity-80'
+              className={`text-xs px-2 py-1 rounded-md whitespace-nowrap flex items-center gap-1 transition-colors ${
+                activeId === s.id
+                  ? 'bg-accent/15 text-accent font-medium'
+                  : 'text-foreground/50 hover:text-foreground/80 hover:bg-default-100'
               }`}
             >
               {s.title}
@@ -134,7 +140,7 @@ export function TerminalPanel({ theme }: TerminalPanelProps) {
         <Button size="sm" variant="ghost" onPress={addSession}>+ 新建</Button>
       </div>
 
-      <div className="flex-1 min-h-0 relative p-1">
+      <div className="flex-1 min-h-0 relative p-2 bg-default-50">
         {sessions.map((s) => (
           <TerminalSession
             key={`${s.id}-${activeId === s.id ? remountKey : 0}`}
@@ -146,7 +152,7 @@ export function TerminalPanel({ theme }: TerminalPanelProps) {
         ))}
       </div>
 
-      <div className="flex items-center gap-2 px-3 py-1.5 border-t border-white/5 shrink-0">
+      <div className="flex items-center gap-2 px-3 py-2 border-t border-default-200 shrink-0">
         <Button size="sm" variant="ghost" onPress={() => actionsRef.current?.paste()}>粘贴</Button>
         <Button size="sm" variant="ghost" onPress={() => actionsRef.current?.clear()}>清屏</Button>
         {(activeStatus === 'disconnected' || activeStatus === 'exited') && (

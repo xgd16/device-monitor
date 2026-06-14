@@ -5,19 +5,25 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 
 export type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'exited';
 
-const DARK_THEME = {
-  background: '#1a1b26',
-  foreground: '#c0caf5',
-  cursor: '#c0caf5',
-  selectionBackground: '#33467c',
-};
-
-const LIGHT_THEME = {
-  background: '#f5f5f7',
-  foreground: '#1d1d1f',
-  cursor: '#1d1d1f',
-  selectionBackground: '#c7d2fe',
-};
+function readTerminalTheme(theme: 'dark' | 'light') {
+  const el = document.documentElement;
+  const style = getComputedStyle(el);
+  const bg = style.getPropertyValue('--dm-terminal-bg').trim();
+  const fg = style.getPropertyValue('--dm-terminal-fg').trim();
+  const cursor = style.getPropertyValue('--dm-terminal-cursor').trim();
+  const selection = style.getPropertyValue('--dm-terminal-selection').trim();
+  if (bg && fg) {
+    return {
+      background: bg,
+      foreground: fg,
+      cursor: cursor || fg,
+      selectionBackground: selection || (theme === 'dark' ? '#33467c' : '#c7d2fe'),
+    };
+  }
+  return theme === 'dark'
+    ? { background: '#1c1c22', foreground: '#ececf0', cursor: '#ececf0', selectionBackground: '#33467c' }
+    : { background: '#ffffff', foreground: '#18181b', cursor: '#18181b', selectionBackground: '#c7d2fe' };
+}
 
 export function useTerminal(
   containerRef: React.RefObject<HTMLDivElement | null>,
@@ -49,7 +55,7 @@ export function useTerminal(
       cursorBlink: true,
       fontSize: 13,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      theme: theme === 'dark' ? DARK_THEME : LIGHT_THEME,
+      theme: readTerminalTheme(theme),
       scrollback: 5000,
     });
     const fit = new FitAddon();
@@ -140,7 +146,7 @@ export function useTerminal(
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = theme === 'dark' ? DARK_THEME : LIGHT_THEME;
+    term.options.theme = readTerminalTheme(theme);
   }, [theme]);
 
   useEffect(() => {

@@ -10,7 +10,7 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.4 0 0);
+  background: color-mix(in oklch, var(--foreground) 25%, transparent);
   border-radius: 4px;
 }
 
@@ -35,14 +35,40 @@ html, body, #root {
   background: oklch(0.97 0.002 260);
 }
 
-/* Terminal overrides */
-.terminal-container {
-  background: #1a1b26;
-  border-radius: 6px;
-  overflow: hidden;
+/* Shared tool-page tokens */
+[data-theme="dark"] {
+  --dm-terminal-bg: oklch(0.17 0.006 260);
+  --dm-terminal-fg: oklch(0.93 0.01 260);
+  --dm-terminal-cursor: oklch(0.78 0.02 260);
+  --dm-terminal-selection: oklch(0.45 0.12 280 / 0.45);
 }
-[data-theme="light"] .terminal-container {
-  background: #f5f5f7;
+[data-theme="light"] {
+  --dm-terminal-bg: oklch(0.99 0.002 260);
+  --dm-terminal-fg: oklch(0.22 0.01 260);
+  --dm-terminal-cursor: oklch(0.45 0.02 260);
+  --dm-terminal-selection: oklch(0.55 0.12 280 / 0.25);
+}
+
+/* Form controls used in file manager */
+.dm-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  outline: none;
+  background: var(--default-100);
+  border: 1px solid var(--default-200);
+  color: var(--foreground);
+}
+.dm-input:focus {
+  border-color: var(--accent);
+}
+
+/* Terminal container */
+.terminal-container {
+  background: var(--dm-terminal-bg);
+  border-radius: 0.375rem;
+  overflow: hidden;
 }
 .terminal-container .xterm {
   height: 100%;
@@ -50,4 +76,18 @@ html, body, #root {
 }
 .terminal-container .xterm-viewport {
   overflow-y: auto !important;
+}
+.terminal-container .xterm-screen {
+  background-color: transparent !important;
+}
+
+/* File manager table */
+.dm-table-head {
+  background: var(--default-100);
+}
+.dm-table-row:hover {
+  background: var(--default-100);
+}
+.dm-table-row-selected {
+  background: color-mix(in oklch, var(--accent) 12%, var(--default-100));
 }

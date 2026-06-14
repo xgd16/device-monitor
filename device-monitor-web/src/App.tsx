@@ -4,7 +4,7 @@ import { useDeviceStore } from './stores/useDeviceStore';
 import { useWebSocket } from './hooks/useWebSocket';
 import { fetchProcesses, fetchWifi, fetchBluetooth, fetchAlerts } from './api';
 import type { ProcessInfo, WifiInfo, BluetoothInfo, AlertItem } from './types';
-import { StatusBar } from './components/StatusBar';
+import { StatusBar, type AppPage } from './components/StatusBar';
 import { CpuCard } from './components/CpuCard';
 import { MemoryCard } from './components/MemoryCard';
 import { MetricsBar } from './components/MetricsBar';
@@ -27,6 +27,12 @@ export default function App() {
   const connected = useDeviceStore((s) => s.connected);
   useWebSocket();
 
+  const [page, setPage] = useState<AppPage>(() => {
+    const saved = localStorage.getItem('dm-page');
+    if (saved === 'monitor' || saved === 'terminal' || saved === 'files') return saved;
+    return 'monitor';
+  });
+
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('dm-theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -38,12 +44,15 @@ export default function App() {
     localStorage.setItem('dm-theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    localStorage.setItem('dm-page', page);
+  }, [page]);
+
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [wifi, setWifi] = useState<WifiInfo | null>(null);
   const [bluetooth, setBluetooth] = useState<BluetoothInfo | null>(null);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
 
-  // Network speed calculation
   const prevNetRef = useRef<Record<string, { rx: number; tx: number; ts: number }>>({});
   const netSpeed = useMemo(() => {
     if (!data) return {};
@@ -67,7 +76,6 @@ export default function App() {
     return speeds;
   }, [data]);
 
-  // Polling for non-WS data
   useEffect(() => {
     const load = () => {
       fetchProcesses().then(setProcesses).catch(() => {});
@@ -84,13 +92,12 @@ export default function App() {
   const memHistory = useMemo(() => history.map((h) => h.memory.usage_percent), [history]);
   const historyTimestamps = useMemo(() => history.map((h) => h.timestamp), [history]);
 
-  // Loading state
   if (!data) {
     return (
       <div className="flex items-center justify-center h-dvh">
         <div className="text-center flex flex-col items-center gap-4">
           <Spinner size="lg" />
-          <p className="text-sm opacity-50">
+          <p className="text-sm text-foreground/50">
             {connected ? '已连接，等待数据...' : '正在连接...'}
           </p>
         </div>
@@ -101,129 +108,112 @@ export default function App() {
   const { cpu, memory, network } = data;
 
   return (
-    <div className="min-h-dvh flex flex-col">
-      {/* Status bar - always visible */}
+    <div className="h-dvh flex flex-col overflow-hidden">
       <StatusBar
         connected={connected}
         uptime={data.uptime}
         theme={theme}
+        page={page}
         onThemeChange={setTheme}
+        onPageChange={setPage}
       />
 
-      {/* Mobile: Tab navigation (< md) */}
-      <div className="flex-1 md:hidden">
-        <Tabs aria-label="导航" variant="secondary" className="w-full">
-          <Tabs.List className="w-full">
-            <Tabs.Tab id="overview">概览</Tabs.Tab>
-            <Tabs.Tab id="cpu">CPU</Tabs.Tab>
-            <Tabs.Tab id="net">网络</Tabs.Tab>
-            <Tabs.Tab id="hw">控制</Tabs.Tab>
-            <Tabs.Tab id="more">更多</Tabs.Tab>
-            <Tabs.Tab id="terminal">终端</Tabs.Tab>
-            <Tabs.Tab id="files">文件</Tabs.Tab>
-            <Tabs.Tab id="reports">报表</Tabs.Tab>
-          </Tabs.List>
-
-          <Tabs.Panel id="overview" className="p-3 flex flex-col gap-3">
-            <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
-            <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
-            <BatteryCard battery={data.battery} />
-            <MetricsBar data={data} processes={processes} />
-            <AlertsCard alerts={alerts} />
-          </Tabs.Panel>
-
-          <Tabs.Panel id="cpu" className="p-3 flex flex-col gap-3">
-            <CoreBars cores={cpu.cores} />
-            <ThermalCard thermal={data.thermal} />
-          </Tabs.Panel>
-
-          <Tabs.Panel id="net" className="p-3 flex flex-col gap-3">
-            <NetworkCard network={network} netSpeed={netSpeed} />
-            <WirelessCard wifi={wifi} bluetooth={bluetooth} />
-          </Tabs.Panel>
-
-          <Tabs.Panel id="hw" className="p-3 flex flex-col gap-3">
-            <HardwareControl />
-          </Tabs.Panel>
-
-          <Tabs.Panel id="more" className="p-3 flex flex-col gap-3">
-            <DiskCard />
-            <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
-          </Tabs.Panel>
-
-          <Tabs.Panel id="terminal" className="p-3 flex flex-col gap-3">
-            <TerminalPanel theme={theme} />
-          </Tabs.Panel>
-
-          <Tabs.Panel id="files" className="p-3 flex flex-col gap-3">
-            <FileManager />
-          </Tabs.Panel>
-
-          <Tabs.Panel id="reports" className="p-3 flex flex-col gap-3">
-            <ReportsPanel />
-          </Tabs.Panel>
-        </Tabs>
-      </div>
-
-      {/* Desktop: Full grid layout (>= md) */}
-      <div className="hidden md:flex-1 md:flex md:flex-col md:gap-3 md:p-4 lg:p-5">
-        {/* Row 1: CPU + Memory */}
-        <div className="grid grid-cols-2 gap-3">
-          <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
-          <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
+      {page === 'terminal' && (
+        <div className="flex-1 flex flex-col min-h-0 p-3 md:p-4">
+          <TerminalPanel theme={theme} fullPage />
         </div>
+      )}
 
-        {/* Row 2: Metrics + Battery */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-          <MetricsBar data={data} processes={processes} />
-          <BatteryCard battery={data.battery} />
+      {page === 'files' && (
+        <div className="flex-1 flex flex-col min-h-0 p-3 md:p-4">
+          <FileManager fullPage />
         </div>
+      )}
 
-        {/* Row 3: CoreBars + Thermal + Network */}
-        <div className="grid grid-cols-3 gap-3">
-          <CoreBars cores={cpu.cores} />
-          <ThermalCard thermal={data.thermal} />
-          <div className="flex flex-col gap-3">
-            <NetworkCard network={network} netSpeed={netSpeed} />
-            <WirelessCard wifi={wifi} bluetooth={bluetooth} />
+      {page === 'monitor' && (
+        <>
+          {/* Mobile: Tab navigation (< md) */}
+          <div className="flex-1 min-h-0 overflow-y-auto md:hidden">
+            <Tabs aria-label="导航" variant="secondary" className="w-full">
+              <Tabs.List className="w-full">
+                <Tabs.Tab id="overview">概览</Tabs.Tab>
+                <Tabs.Tab id="cpu">CPU</Tabs.Tab>
+                <Tabs.Tab id="net">网络</Tabs.Tab>
+                <Tabs.Tab id="hw">控制</Tabs.Tab>
+                <Tabs.Tab id="more">更多</Tabs.Tab>
+                <Tabs.Tab id="reports">报表</Tabs.Tab>
+              </Tabs.List>
+
+              <Tabs.Panel id="overview" className="p-3 flex flex-col gap-3">
+                <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
+                <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
+                <BatteryCard battery={data.battery} />
+                <MetricsBar data={data} processes={processes} />
+                <AlertsCard alerts={alerts} />
+              </Tabs.Panel>
+
+              <Tabs.Panel id="cpu" className="p-3 flex flex-col gap-3">
+                <CoreBars cores={cpu.cores} />
+                <ThermalCard thermal={data.thermal} />
+              </Tabs.Panel>
+
+              <Tabs.Panel id="net" className="p-3 flex flex-col gap-3">
+                <NetworkCard network={network} netSpeed={netSpeed} />
+                <WirelessCard wifi={wifi} bluetooth={bluetooth} />
+              </Tabs.Panel>
+
+              <Tabs.Panel id="hw" className="p-3 flex flex-col gap-3">
+                <HardwareControl />
+              </Tabs.Panel>
+
+              <Tabs.Panel id="more" className="p-3 flex flex-col gap-3">
+                <DiskCard />
+                <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
+              </Tabs.Panel>
+
+              <Tabs.Panel id="reports" className="p-3 flex flex-col gap-3">
+                <ReportsPanel />
+              </Tabs.Panel>
+            </Tabs>
           </div>
-        </div>
 
-        {/* Row 4: Disk + Hardware */}
-        <div className="grid grid-cols-2 gap-3">
-          <DiskCard />
-          <HardwareControl />
-        </div>
+          {/* Desktop: Full grid layout (>= md) */}
+          <div className="hidden md:flex-1 md:flex md:flex-col md:gap-3 md:p-4 lg:p-5 md:overflow-y-auto md:min-h-0">
+            <div className="grid grid-cols-2 gap-3">
+              <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
+              <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
+            </div>
 
-        {/* Row 5: Process table */}
-        <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+              <MetricsBar data={data} processes={processes} />
+              <BatteryCard battery={data.battery} />
+            </div>
 
-        {/* Row 6: Terminal / Files */}
-        <Tabs aria-label="终端与文件" variant="secondary" className="w-full">
-          <Tabs.List>
-            <Tabs.Tab id="desk-terminal">终端</Tabs.Tab>
-            <Tabs.Tab id="desk-files">文件管理</Tabs.Tab>
-          </Tabs.List>
-          <Tabs.Panel id="desk-terminal">
-            <TerminalPanel theme={theme} />
-          </Tabs.Panel>
-          <Tabs.Panel id="desk-files">
-            <FileManager />
-          </Tabs.Panel>
-        </Tabs>
+            <div className="grid grid-cols-3 gap-3">
+              <CoreBars cores={cpu.cores} />
+              <ThermalCard thermal={data.thermal} />
+              <div className="flex flex-col gap-3">
+                <NetworkCard network={network} netSpeed={netSpeed} />
+                <WirelessCard wifi={wifi} bluetooth={bluetooth} />
+              </div>
+            </div>
 
-        {/* Row 7: Alerts */}
-        <AlertsCard alerts={alerts} />
+            <div className="grid grid-cols-2 gap-3">
+              <DiskCard />
+              <HardwareControl />
+            </div>
 
-        {/* Row 8: Historical reports */}
-        <ReportsPanel />
+            <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
+            <AlertsCard alerts={alerts} />
+            <ReportsPanel />
 
-        {/* Footer */}
-        <footer className="flex justify-between items-center py-2 text-[10px] font-mono opacity-30">
-          <span>设备监控 v0.1.0</span>
-          <span>最后更新 {new Date(data.timestamp * 1000).toLocaleTimeString('zh-CN', { hour12: false })}</span>
-        </footer>
-      </div>
+            <footer className="flex justify-between items-center py-2 text-[10px] font-mono text-foreground/30">
+              <span>设备监控 v0.2.0</span>
+              <span>最后更新 {new Date(data.timestamp * 1000).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+            </footer>
+          </div>
+        </>
+      )}
     </div>
   );
 }
