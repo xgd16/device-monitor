@@ -1,14 +1,14 @@
-import { Chip, Switch } from '@heroui/react';
+import { Chip } from '@heroui/react';
 import { fmtUptime } from './utils';
 
 interface StatusBarProps {
   connected: boolean;
   uptime: number;
   theme: 'dark' | 'light';
-  onThemeToggle: () => void;
+  onThemeChange: (theme: 'dark' | 'light') => void;
 }
 
-export function StatusBar({ connected, uptime, theme, onThemeToggle }: StatusBarProps) {
+export function StatusBar({ connected, uptime, theme, onThemeChange }: StatusBarProps) {
   return (
     <div className="flex items-center justify-between px-3 py-2 sm:px-4 sm:py-2.5">
       <div className="flex items-center gap-2 sm:gap-3">
@@ -24,12 +24,34 @@ export function StatusBar({ connected, uptime, theme, onThemeToggle }: StatusBar
           />
           <span>{connected ? '已连接' : '断开'}</span>
         </div>
-        <Switch
-          size="sm"
-          isSelected={theme === 'dark'}
-          onChange={onThemeToggle}
-          aria-label="切换主题"
-        />
+        <div
+          className="flex items-center rounded-lg p-0.5 gap-0.5 bg-default-100 border border-default-200"
+          role="group"
+          aria-label="主题切换"
+        >
+          <button
+            type="button"
+            onClick={() => onThemeChange('light')}
+            className={`px-2.5 py-1 rounded-md text-[10px] sm:text-[11px] font-medium transition-colors ${
+              theme === 'light'
+                ? 'bg-accent text-accent-foreground shadow-sm'
+                : 'opacity-50 hover:opacity-80'
+            }`}
+          >
+            浅色
+          </button>
+          <button
+            type="button"
+            onClick={() => onThemeChange('dark')}
+            className={`px-2.5 py-1 rounded-md text-[10px] sm:text-[11px] font-medium transition-colors ${
+              theme === 'dark'
+                ? 'bg-accent text-accent-foreground shadow-sm'
+                : 'opacity-50 hover:opacity-80'
+            }`}
+          >
+            深色
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ pub mod battery;
 pub mod network;
 pub mod process;
 pub mod hardware;
+pub mod disk;
 
 use serde::{Deserialize, Serialize};
 

@@ -79,6 +79,7 @@ export default function App() {
 
   const cpuHistory = useMemo(() => history.map((h) => h.cpu.overall_usage), [history]);
   const memHistory = useMemo(() => history.map((h) => h.memory.usage_percent), [history]);
+  const historyTimestamps = useMemo(() => history.map((h) => h.timestamp), [history]);
 
   // Loading state
   if (!data) {
@@ -103,7 +104,7 @@ export default function App() {
         connected={connected}
         uptime={data.uptime}
         theme={theme}
-        onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+        onThemeChange={setTheme}
       />
 
       {/* Mobile: Tab navigation (< md) */}
@@ -118,8 +119,8 @@ export default function App() {
           </Tabs.List>
 
           <Tabs.Panel id="overview" className="p-3 flex flex-col gap-3">
-            <CpuCard cpu={cpu} history={cpuHistory} loadAvg={data.load_avg} />
-            <MemoryCard memory={memory} history={memHistory} />
+            <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
+            <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
             <BatteryCard battery={data.battery} />
             <MetricsBar data={data} processes={processes} />
             <AlertsCard alerts={alerts} />
@@ -150,8 +151,8 @@ export default function App() {
       <div className="hidden md:flex-1 md:flex md:flex-col md:gap-3 md:p-4 lg:p-5">
         {/* Row 1: CPU + Memory */}
         <div className="grid grid-cols-2 gap-3">
-          <CpuCard cpu={cpu} history={cpuHistory} loadAvg={data.load_avg} />
-          <MemoryCard memory={memory} history={memHistory} />
+          <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
+          <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
         </div>
 
         {/* Row 2: Metrics + Battery */}

@@ -1,15 +1,16 @@
 import { Card, ProgressCircle } from '@heroui/react';
-import { Sparkline } from './Sparkline';
+import { TrendChart } from './TrendChart';
 import { percentColor } from './utils';
 import type { CpuInfo } from '../types';
 
 interface CpuCardProps {
   cpu: CpuInfo;
   history: number[];
+  timestamps?: number[];
   loadAvg: number[];
 }
 
-export function CpuCard({ cpu, history, loadAvg }: CpuCardProps) {
+export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
   const color = percentColor(cpu.overall_usage);
   return (
     <Card className="p-4 sm:p-5 flex flex-col gap-3">
@@ -31,7 +32,7 @@ export function CpuCard({ cpu, history, loadAvg }: CpuCardProps) {
           </span>
         </div>
         <div className="flex-1 min-w-0">
-          <Sparkline data={history} color="cpu" />
+          <TrendChart data={history} timestamps={timestamps} variant="cpu" />
           <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] sm:text-[11px] font-mono opacity-50">
             <span>负载 {loadAvg.map(v => v.toFixed(2)).join(' / ')}</span>
             <span>{cpu.cores[0]?.frequency_mhz || 0} MHz</span>
