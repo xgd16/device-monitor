@@ -92,3 +92,31 @@ export interface AlertItem {
   title: string;
   message: string;
 }
+
+export interface HistorySeries {
+  range: string;
+  from: number;
+  to: number;
+  count: number;
+  timestamps: number[];
+  cpu_usage: number[];
+  memory_percent: number[];
+  memory_used_mb: number[];
+  load_1: number[];
+  load_5: number[];
+  load_15: number[];
+  battery_capacity: number[];
+  battery_power_w: number[];
+  thermal_max: number[];
+  process_count: number[];
+  network_rx_kbps: number[];
+  network_tx_kbps: number[];
+}
+
+export interface DatabaseStats {
+  metrics_count: number;
+  alerts_count: number;
+  oldest_metric: number | null;
+  newest_metric: number | null;
+  retention_days: number;
+}

@@ -128,7 +128,8 @@ async fn main() {
         .route("/hardware/vibrate/stop", post(api::hardware::vibrate_stop))
         .route("/hardware/clear-memory", post(api::hardware::clear_memory))
         .route("/database/stats", get(api::database::get_stats))
-        .route("/database/cleanup", post(api::database::cleanup));
+        .route("/database/cleanup", post(api::database::cleanup))
+        .route("/history/metrics", get(api::history::metrics_history));
 
     // ── 组装路由：API + WebSocket + 静态前端 ──
     let app = Router::new()

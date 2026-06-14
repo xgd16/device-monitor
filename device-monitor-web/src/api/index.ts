@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { SystemOverview, ProcessInfo, WifiInfo, BluetoothInfo, AlertItem } from '../types';
+import type { SystemOverview, ProcessInfo, WifiInfo, BluetoothInfo, AlertItem, HistorySeries, DatabaseStats } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -22,6 +22,9 @@ export const killProcess = (pid: number, signal: string = 'TERM') =>
 export const fetchLogs = (params?: { lines?: number; keyword?: string; level?: string }) =>
   api.get('/logs', { params }).then(r => r.data.data);
 export const fetchAlerts = () => api.get('/alerts').then(r => r.data.data as AlertItem[]);
+export const fetchHistoryMetrics = (range: string = '24h', maxPoints = 500) =>
+  api.get('/history/metrics', { params: { range, max_points: maxPoints } }).then(r => r.data.data as HistorySeries);
+export const fetchDatabaseStats = () => api.get('/database/stats').then(r => r.data.data as DatabaseStats);
 export const fetchAlertConfig = () => api.get('/alerts/config').then(r => r.data.data);
 export const updateAlertConfig = (config: any) => api.put('/alerts/config', config).then(r => r.data.data);
 export const fetchHardware = () => api.get('/hardware').then(r => r.data.data);

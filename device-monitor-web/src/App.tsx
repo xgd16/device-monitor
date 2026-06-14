@@ -17,6 +17,7 @@ import { AlertsCard } from './components/AlertsCard';
 import { BatteryCard } from './components/BatteryCard';
 import { DiskCard } from './components/DiskCard';
 import { HardwareControl } from './components/HardwareControl';
+import { ReportsPanel } from './components/ReportsPanel';
 
 export default function App() {
   const data = useDeviceStore((s) => s.data);
@@ -116,6 +117,7 @@ export default function App() {
             <Tabs.Tab id="net">网络</Tabs.Tab>
             <Tabs.Tab id="hw">控制</Tabs.Tab>
             <Tabs.Tab id="more">更多</Tabs.Tab>
+            <Tabs.Tab id="reports">报表</Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel id="overview" className="p-3 flex flex-col gap-3">
@@ -143,6 +145,10 @@ export default function App() {
           <Tabs.Panel id="more" className="p-3 flex flex-col gap-3">
             <DiskCard />
             <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
+          </Tabs.Panel>
+
+          <Tabs.Panel id="reports" className="p-3 flex flex-col gap-3">
+            <ReportsPanel />
           </Tabs.Panel>
         </Tabs>
       </div>
@@ -182,6 +188,9 @@ export default function App() {
 
         {/* Row 6: Alerts */}
         <AlertsCard alerts={alerts} />
+
+        {/* Row 7: Historical reports */}
+        <ReportsPanel />
 
         {/* Footer */}
         <footer className="flex justify-between items-center py-2 text-[10px] font-mono opacity-30">

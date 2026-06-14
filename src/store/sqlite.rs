@@ -123,7 +123,7 @@ impl Database {
         let newest_metric: Option<i64> = conn.query_row(
             "SELECT MAX(timestamp) FROM metrics", [], |row| row.get(0)
         ).ok();
-        
+
         Ok(serde_json::json!({
             "metrics_count": metrics_count,
             "alerts_count": alerts_count,
@@ -132,4 +132,47 @@ impl Database {
             "retention_days": 7
         }))
     }
+
+    /// 查询指定时间范围内的指标快照（按时间升序）。
+    pub fn get_metrics_in_range(
+        &self,
+        from_ts: i64,
+        to_ts: i64,
+        max_points: usize,
+    ) -> Result<Vec<(i64, String)>, rusqlite::Error> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT timestamp, data FROM metrics
+             WHERE timestamp >= ?1 AND timestamp <= ?2
+             ORDER BY timestamp ASC",
+        )?;
+
+        let rows: Vec<(i64, String)> = stmt
+            .query_map(params![from_ts, to_ts], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(downsample_pairs(rows, max_points))
+    }
+}
+
+/// 均匀降采样，保留首尾点。
+fn downsample_pairs(rows: Vec<(i64, String)>, max_points: usize) -> Vec<(i64, String)> {
+    if rows.len() <= max_points || max_points == 0 {
+        return rows;
+    }
+    let last = rows.len() - 1;
+    let mut out = Vec::with_capacity(max_points);
+    for i in 0..max_points {
+        let idx = if max_points == 1 {
+            0
+        } else {
+            (i as f64 * last as f64 / (max_points - 1) as f64).round() as usize
+        };
+        if out.last().map(|(ts, _)| *ts) != Some(rows[idx].0) {
+            out.push(rows[idx].clone());
+        }
+    }
+    out
 }
