@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent } from 'react';
 import { Card, Button, Switch } from '@heroui/react';
 import {
   RiFolderLine,
@@ -235,11 +235,13 @@ export function FileManager({ fullPage = false }: FileManagerProps) {
 
   const joinPath = (dir: string, name: string) => (dir === '/' ? `/${name}` : `${dir}/${name}`);
 
-  const handleEntryDoubleClick = async (entry: FileEntry) => {
-    if (entry.is_dir) {
-      navigate(entry.path);
-      return;
-    }
+  const handleEntryClick = (entry: FileEntry, e: MouseEvent) => {
+    if ((e.target as HTMLElement).closest('input, button')) return;
+    if (entry.is_dir) navigate(entry.path);
+  };
+
+  const handleEntryDoubleClick = (entry: FileEntry) => {
+    if (entry.is_dir) return;
     if (isArchiveName(entry.name)) {
       openExtractModalFor(entry);
       return;
@@ -497,8 +499,11 @@ export function FileManager({ fullPage = false }: FileManagerProps) {
                 <tr
                   key={entry.path}
                   className={`border-b border-default-200 dm-table-row ${
+                    entry.is_dir ? 'cursor-pointer' : ''
+                  } ${
                     clipboard?.entry.path === entry.path ? 'dm-table-row-selected' : ''
                   } ${checkedPaths.has(entry.path) ? 'bg-accent/5' : ''}`}
+                  onClick={(e) => handleEntryClick(entry, e)}
                   onDoubleClick={() => handleEntryDoubleClick(entry)}
                 >
                   <td className="px-2 py-1.5">
