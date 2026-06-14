@@ -216,11 +216,40 @@ fn render(tty_path: &str, o: &collector::SystemOverview, speeds: &HashMap<String
     }
     out.push_str("\r\n");
 
-    // ── 系统运行时间与进程数 ──
+    // ── 进程 Top 10（按 CPU 倒序）──
+    let mut processes = collector::process::list_processes();
+    processes.sort_by(|a, b| {
+        b.cpu_usage
+            .partial_cmp(&a.cpu_usage)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out.push_str(&format!(
+        "\x1b[1m  Processes ({} total, top 10 by CPU):\x1b[0m\r\n",
+        o.process_count
+    ));
+    out.push_str("    PID      CPU%    MEM MB  NAME\r\n");
+    for p in processes.iter().take(10) {
+        let name = if p.name.len() > 24 {
+            format!("{}...", &p.name[..21])
+        } else {
+            p.name.clone()
+        };
+        out.push_str(&format!(
+            "    \x1b[{}m{:>6} {:>6.1}% {:>7}  {}\x1b[0m\r\n",
+            clr(p.cpu_usage as f64),
+            p.pid,
+            p.cpu_usage,
+            p.memory_mb,
+            name
+        ));
+    }
+    out.push_str("\r\n");
+
+    // ── 系统运行时间 ──
     let s = o.uptime as u64;
     let (d,h,m) = (s/86400,(s%86400)/3600,(s%3600)/60);
     let up = if d>0 {format!("{}d{}h{}m",d,h,m)} else if h>0 {format!("{}h{}m",h,m)} else {format!("{}m",m)};
-    out.push_str(&format!("  Uptime: {} | Processes: {}\r\n", up, o.process_count));
+    out.push_str(&format!("  Uptime: {}\r\n", up));
 
     write!(f, "{}", out)?;
     f.flush()?;
