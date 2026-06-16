@@ -35,7 +35,7 @@ interface TerminalSessionProps {
 
 function TerminalSession({ active, onStatus, onReady }: TerminalSessionProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { status, paste, clear, reconnect } = useTerminal(containerRef);
+  const { status, paste, clear, reconnect } = useTerminal(containerRef, active);
 
   useEffect(() => {
     onStatus(status);

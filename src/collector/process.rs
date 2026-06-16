@@ -6,7 +6,7 @@
 use super::ProcessInfo;
 use std::collections::HashMap;
 use std::fs;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Instant;
 
 /// 单个进程的上次 CPU tick 采样，用于差分计算 CPU 使用率。
@@ -16,8 +16,10 @@ struct PrevCpu {
 }
 
 /// 全局 PID → 上次采样 映射，跨调用持久化。
-static PREV_CPU: std::sync::LazyLock<Mutex<HashMap<i32, PrevCpu>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static PREV_CPU: LazyLock<Mutex<HashMap<i32, PrevCpu>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static NUM_CPUS: OnceLock<u64> = OnceLock::new();
 
 /// 统计 `/proc` 下数字目录数量（即进程总数）。
 pub fn count_processes() -> usize {
@@ -33,11 +35,13 @@ pub fn count_processes() -> usize {
 
 /// 获取逻辑 CPU 核心数。
 fn num_cpus() -> u64 {
-    fs::read_to_string("/proc/cpuinfo")
-        .ok()
-        .map(|s| s.lines().filter(|l| l.starts_with("processor")).count() as u64)
-        .unwrap_or(1)
-        .max(1)
+    *NUM_CPUS.get_or_init(|| {
+        fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .map(|s| s.lines().filter(|l| l.starts_with("processor")).count() as u64)
+            .unwrap_or(1)
+            .max(1)
+    })
 }
 
 /// 从 `/proc/<pid>/stat` 解析 utime + stime（单位：jiffies）。

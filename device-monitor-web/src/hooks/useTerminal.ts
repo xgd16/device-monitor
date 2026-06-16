@@ -31,11 +31,15 @@ const TERMINAL_THEME = {
   brightWhite: '#ffffff',
 };
 
-export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>) {
+export function useTerminal(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  enabled = true,
+) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intentionalClose = useRef(false);
   const [status, setStatus] = useState<TerminalStatus>('connecting');
 
@@ -136,6 +140,10 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
       clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
     }
+    if (resizeTimer.current) {
+      clearTimeout(resizeTimer.current);
+      resizeTimer.current = null;
+    }
     wsRef.current?.close();
     wsRef.current = null;
     termRef.current?.dispose();
@@ -144,20 +152,30 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      disconnect();
+      setStatus('disconnected');
+      return;
+    }
     connect();
     return () => disconnect();
-  }, [connect, disconnect]);
+  }, [enabled, connect, disconnect]);
 
   useEffect(() => {
+    if (!enabled) return;
     const el = containerRef.current;
     if (!el) return;
 
     const ro = new ResizeObserver(() => {
-      sendResize();
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+      resizeTimer.current = setTimeout(() => sendResize(), 150);
     });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [containerRef, sendResize]);
+    return () => {
+      ro.disconnect();
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+    };
+  }, [enabled, containerRef, sendResize]);
 
   const paste = useCallback(async () => {
     const ws = wsRef.current;

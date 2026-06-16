@@ -5,7 +5,15 @@
 //! - 蓝牙：读取 `/sys/class/bluetooth/hci0` 基本信息
 
 use super::{NetworkInterface, WifiInfo, BluetoothInfo};
+use std::collections::HashMap;
 use std::fs;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
+const IP_CACHE_TTL: Duration = Duration::from_secs(30);
+
+static IP_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Vec<String>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 采集所有非 loopback 网络接口的信息。
 pub fn collect_interfaces() -> Vec<NetworkInterface> {
@@ -57,6 +65,19 @@ fn read_stat(base: &str, field: &str) -> u64 {
 
 /// 通过 `ip addr` 获取 IPv4 和 IPv6 地址。
 fn get_ips(iface: &str) -> Vec<String> {
+    if let Some(cached) = {
+        let cache = IP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache.get(iface).and_then(|(ts, ips)| {
+            if ts.elapsed() <= IP_CACHE_TTL {
+                Some(ips.clone())
+            } else {
+                None
+            }
+        })
+    } {
+        return cached;
+    }
+
     let mut ips = Vec::new();
 
     if let Ok(output) = std::process::Command::new("ip")
@@ -87,6 +108,8 @@ fn get_ips(iface: &str) -> Vec<String> {
         }
     }
 
+    let mut cache = IP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    cache.insert(iface.to_string(), (Instant::now(), ips.clone()));
     ips
 }
 

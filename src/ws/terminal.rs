@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
+use tokio::time::{interval, MissedTickBehavior};
 
 const MAX_SESSIONS_PER_IP: usize = 3;
 
@@ -141,6 +143,10 @@ async fn handle_terminal(socket: WebSocket, _guard: SessionGuard) {
         }
     });
 
+    // 周期性检测 shell 退出；勿用 yield_now()，否则空闲时会忙等占满 CPU
+    let mut exit_poll = interval(Duration::from_millis(500));
+    exit_poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
     loop {
         tokio::select! {
             // PTY → WebSocket
@@ -184,7 +190,7 @@ async fn handle_terminal(socket: WebSocket, _guard: SessionGuard) {
                 }
             }
             // 检测 shell 退出
-            _ = tokio::task::yield_now() => {
+            _ = exit_poll.tick() => {
                 if let Ok(Some(status)) = child.try_wait() {
                     let code = status.exit_code();
                     let exit_msg = serde_json::json!({"type":"exit","code":code}).to_string();

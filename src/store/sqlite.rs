@@ -19,7 +19,11 @@ impl Database {
         let conn = Connection::open(path)?;
 
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS metrics (
+            "PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 3000;
+
+            CREATE TABLE IF NOT EXISTS metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp INTEGER NOT NULL,
                 data TEXT NOT NULL
