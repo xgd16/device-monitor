@@ -103,6 +103,7 @@ try_kmscon() {
     "$KMSCON" --no-libseat --vt=1 \
     --font-name="Noto Sans CJK SC" \
     --font-size="$font_size" \
+    --dpms-timeout=0 \
     -l -- "$WRAPPER" &
   kms_pid=$!
 
