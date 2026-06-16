@@ -1,5 +1,5 @@
 import { Card, ProgressBar } from '@heroui/react';
-import { tempColor } from './utils';
+import { tempColor, thermalSensorLabel } from './utils';
 import type { ThermalZone } from '../types';
 
 interface ThermalCardProps {
@@ -14,10 +14,17 @@ export function ThermalCard({ thermal }: ThermalCardProps) {
       {sorted.length === 0 ? (
         <p className="text-xs font-mono opacity-30">未检测到传感器</p>
       ) : (
-        <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto min-h-0">
-          {sorted.map(z => (
+        <div className="flex flex-col gap-2 flex-1 overflow-y-auto min-h-0 pr-1">
+          {sorted.map(z => {
+            const label = thermalSensorLabel(z.name);
+            return (
             <div key={z.id} className="flex items-center gap-2 text-xs py-0.5">
-              <span className="flex-1 text-[10px] sm:text-[11px] truncate opacity-50">{z.name}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] sm:text-xs truncate text-foreground/70">{label.title}</div>
+                <div className="text-[9px] sm:text-[10px] truncate font-mono opacity-35">
+                  {label.description} · {z.name}
+                </div>
+              </div>
               <div className="w-16 sm:w-20">
                 <ProgressBar
                   value={z.temp_celsius}
@@ -37,7 +44,8 @@ export function ThermalCard({ thermal }: ThermalCardProps) {
                 {z.temp_celsius.toFixed(1)}°
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Card>

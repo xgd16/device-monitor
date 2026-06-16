@@ -1,6 +1,6 @@
 import { Card, ProgressBar } from '@heroui/react';
 import type { SystemOverview, ProcessInfo } from '../types';
-import { tempColor, percentColor } from './utils';
+import { tempColor, percentColor, thermalSensorLabel } from './utils';
 
 interface MetricsBarProps {
   data: SystemOverview;
@@ -43,7 +43,7 @@ export function MetricsBar({ data, processes }: MetricsBarProps) {
         <div className="flex flex-col gap-0.5">
           {top3Thermal.map(z => (
             <div key={z.id} className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-mono">
-              <span className="flex-1 truncate opacity-40">{z.name.replace('-thermal', '')}</span>
+              <span className="flex-1 truncate opacity-40">{thermalSensorLabel(z.name).title}</span>
               <span style={{ color: `var(--${tempColor(z.temp_celsius)})` }}>{z.temp_celsius.toFixed(1)}°</span>
             </div>
           ))}
