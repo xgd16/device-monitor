@@ -18,6 +18,8 @@ import { AlertsCard } from './components/AlertsCard';
 import { BatteryCard } from './components/BatteryCard';
 import { DiskCard } from './components/DiskCard';
 import { HardwareControl } from './components/HardwareControl';
+import { GpuMonitorCard } from './components/GpuMonitorCard';
+import { SystemStatusCard } from './components/SystemStatusCard';
 import { ReportsPanel } from './components/ReportsPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import { FileManager } from './components/FileManager';
@@ -201,14 +203,19 @@ export default function App() {
               bluetooth={bluetooth}
             />
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 grid-flow-dense auto-rows-min">
               <DiskCard />
-              <HardwareControl />
+              <GpuMonitorCard />
+              <SystemStatusCard data={data} processes={processes} netSpeed={netSpeed} />
+              <HardwareControl embedded />
+              <AlertsCard alerts={alerts} className="md:col-span-2 xl:col-span-3" />
+              <div className="md:col-span-2 xl:col-span-3">
+                <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
+              </div>
+              <div className="md:col-span-2 xl:col-span-3">
+                <ReportsPanel />
+              </div>
             </div>
-
-            <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
-            <AlertsCard alerts={alerts} />
-            <ReportsPanel />
 
             <footer className="flex justify-between items-center py-2 text-[10px] font-mono text-foreground/30">
               <span>设备监控 v0.2.0</span>

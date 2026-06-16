@@ -5,7 +5,7 @@ import type { EChartsOption } from 'echarts';
 interface TrendChartProps {
   data: number[];
   timestamps?: number[];
-  variant: 'cpu' | 'mem';
+  variant: 'cpu' | 'mem' | 'gpu';
   unit?: string;
   height?: number;
 }
@@ -13,6 +13,7 @@ interface TrendChartProps {
 const VARIANT_COLORS = {
   cpu: { line: '#38bdf8', areaTop: 'rgba(56, 189, 248, 0.35)', areaBottom: 'rgba(56, 189, 248, 0.02)' },
   mem: { line: '#4ade80', areaTop: 'rgba(74, 222, 128, 0.35)', areaBottom: 'rgba(74, 222, 128, 0.02)' },
+  gpu: { line: '#a78bfa', areaTop: 'rgba(167, 139, 250, 0.35)', areaBottom: 'rgba(167, 139, 250, 0.02)' },
 };
 
 function fmtTime(ts: number) {
@@ -42,7 +43,9 @@ export function TrendChart({ data, timestamps, variant, unit = '%', height = 80 
     const colors = VARIANT_COLORS[variant];
     const isDark = theme === 'dark';
     const maxVal = Math.max(...data, 1);
-    const yMax = Math.min(100, Math.ceil(maxVal * 1.2 + 8));
+    const yMax = variant === 'gpu'
+      ? Math.ceil(maxVal * 1.15 + 20)
+      : Math.min(100, Math.ceil(maxVal * 1.2 + 8));
 
     const labels =
       timestamps && timestamps.length === data.length

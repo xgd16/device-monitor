@@ -81,6 +81,79 @@ pub async fn vibrate_stop() -> Json<Value> {
     success(serde_json::json!({ "stopped": true }))
 }
 
+#[derive(Deserialize)]
+pub struct StatusLedParams {
+    pub on: Option<bool>,
+    pub percent: Option<u32>,
+}
+
+/// `POST /api/hardware/status-led` — 控制状态 LED。
+pub async fn status_led_control(Json(params): Json<StatusLedParams>) -> Json<Value> {
+    let result = match (params.on, params.percent) {
+        (_, Some(percent)) => collector::hardware::set_status_led_brightness(percent).map(|_| percent),
+        (Some(on), None) => collector::hardware::set_status_led(on).map(|_| if on { 100 } else { 0 }),
+        _ => Err("need on or percent".to_string()),
+    };
+    match result {
+        Ok(percent) => success(serde_json::json!({ "percent": percent })),
+        Err(e) => error(&e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CpuStatusLedLinkParams {
+    pub enabled: bool,
+}
+
+/// `POST /api/hardware/cpu-status-led-link` — CPU 使用率联动状态 LED 亮度。
+pub async fn cpu_status_led_link_control(Json(params): Json<CpuStatusLedLinkParams>) -> Json<Value> {
+    match collector::hardware::set_cpu_status_led_link(params.enabled) {
+        Ok(enabled) => success(serde_json::json!({ "enabled": enabled })),
+        Err(e) => error(&e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ChargeCurrentParams {
+    /// 充电电流上限（µA）
+    pub microamps: u32,
+}
+
+/// `POST /api/hardware/charge-current` — 设置充电电流上限。
+pub async fn charge_current_control(Json(params): Json<ChargeCurrentParams>) -> Json<Value> {
+    match collector::hardware::set_charge_current_max(params.microamps) {
+        Ok(ua) => success(serde_json::json!({ "microamps": ua })),
+        Err(e) => error(&e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct GpuMaxFreqParams {
+    /// GPU 最大频率（MHz）
+    pub max_mhz: u32,
+}
+
+/// `POST /api/hardware/gpu-max-freq` — 设置 GPU 频率上限。
+pub async fn gpu_max_freq_control(Json(params): Json<GpuMaxFreqParams>) -> Json<Value> {
+    match collector::hardware::set_gpu_max_freq_mhz(params.max_mhz) {
+        Ok(mhz) => success(serde_json::json!({ "max_mhz": mhz })),
+        Err(e) => error(&e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct WifiPowerSaveParams {
+    pub enabled: bool,
+}
+
+/// `POST /api/hardware/wifi-power-save` — 开关 WiFi 省电模式。
+pub async fn wifi_power_save_control(Json(params): Json<WifiPowerSaveParams>) -> Json<Value> {
+    match collector::hardware::set_wifi_power_save(params.enabled) {
+        Ok(enabled) => success(serde_json::json!({ "enabled": enabled })),
+        Err(e) => error(&e),
+    }
+}
+
 /// `POST /api/hardware/clear-memory` — 释放页缓存（需 root 权限）。
 ///
 /// 执行 sync + echo 3 > /proc/sys/vm/drop_caches，返回清理前后内存对比。

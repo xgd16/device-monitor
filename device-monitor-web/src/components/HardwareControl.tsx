@@ -1,34 +1,64 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Card, Button, Chip } from '@heroui/react';
-import { fetchHardware, setFlashlight, setBrightness, setScreenPower, vibrate, vibratePattern, vibrateStop, clearMemory } from '../api';
+import {
+  fetchHardware,
+  setFlashlight,
+  setBrightness,
+  setScreenPower,
+  vibrate,
+  vibratePattern,
+  vibrateStop,
+  clearMemory,
+  setStatusLed,
+  setCpuStatusLedLink,
+  setChargeCurrent,
+  setWifiPowerSave,
+} from '../api';
 
 interface HardwareState {
   flashlight: { white_on: boolean; yellow_on: boolean; max_brightness: number };
+  status_led: { on: boolean; brightness: number; max_brightness: number; percent: number };
+  cpu_status_led_link: { enabled: boolean };
   brightness: { current: number; max: number; percent: number };
   screen_on: boolean;
   vibrating: boolean;
+  charging: { current_max_ua: number; charger_online: boolean };
+  wifi_power_save: { enabled: boolean; iface: string };
 }
 
 const BRIGHTNESS_PRESETS = [0, 25, 50, 75, 100];
+
+const CHARGE_PRESETS: { label: string; ua: number }[] = [
+  { label: '不限', ua: 0 },
+  { label: '500mA', ua: 500_000 },
+  { label: '1A', ua: 1_000_000 },
+  { label: '1.5A', ua: 1_500_000 },
+  { label: '2A', ua: 2_000_000 },
+];
 
 const VIBE_PRESETS: { name: string; ms: number; strong: number; weak: number }[] = [
   { name: '轻触', ms: 50, strong: 40, weak: 0 },
   { name: '短震', ms: 150, strong: 80, weak: 0 },
   { name: '中震', ms: 400, strong: 80, weak: 0 },
   { name: '长震', ms: 800, strong: 80, weak: 0 },
-  { name: '双击', ms: 0, strong: 80, weak: 0 },  // special: pattern
-  { name: '心跳', ms: 0, strong: 90, weak: 0 },  // special: pattern
-  { name: 'SOS',  ms: 0, strong: 80, weak: 0 },  // special: pattern
+  { name: '双击', ms: 0, strong: 80, weak: 0 },
+  { name: '心跳', ms: 0, strong: 90, weak: 0 },
+  { name: 'SOS', ms: 0, strong: 80, weak: 0 },
 ];
 
-// 模式段: [duration, strong%, weak%]
 const PATTERNS: Record<string, [number, number, number][]> = {
-  '双击': [[100,80,0],[80,0,0],[100,80,0]],
-  '心跳': [[100,90,0],[100,0,0],[60,70,0],[500,0,0]],
-  'SOS': [[80,80,0],[80,0,0],[80,80,0],[80,0,0],[80,80,0],[200,0,0],[200,80,0],[200,0,0],[200,80,0],[200,0,0],[200,80,0],[200,0,0],[80,80,0],[80,0,0],[80,80,0],[80,0,0],[80,80,0],[600,0,0]],
+  '双击': [[100, 80, 0], [80, 0, 0], [100, 80, 0]],
+  '心跳': [[100, 90, 0], [100, 0, 0], [60, 70, 0], [500, 0, 0]],
+  'SOS': [[80, 80, 0], [80, 0, 0], [80, 80, 0], [80, 0, 0], [80, 80, 0], [200, 0, 0], [200, 80, 0], [200, 0, 0], [200, 80, 0], [200, 0, 0], [200, 80, 0], [200, 0, 0], [80, 80, 0], [80, 0, 0], [80, 80, 0], [80, 0, 0], [80, 80, 0], [600, 0, 0]],
 };
 
-export function HardwareControl() {
+function formatUa(ua: number) {
+  if (ua === 0) return '不限';
+  if (ua >= 1_000_000) return `${(ua / 1_000_000).toFixed(1)}A`;
+  return `${Math.round(ua / 1000)}mA`;
+}
+
+export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
   const [hw, setHw] = useState<HardwareState | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [activeVibe, setActiveVibe] = useState<string | null>(null);
@@ -55,6 +85,18 @@ export function HardwareControl() {
     setLoading(null);
   };
 
+  const handleStatusLed = async (on: boolean) => {
+    setLoading('status-led');
+    try { await setStatusLed(on); refresh(); } catch {}
+    setLoading(null);
+  };
+
+  const handleCpuStatusLedLink = async (enabled: boolean) => {
+    setLoading('cpu-led-link');
+    try { await setCpuStatusLedLink(enabled); refresh(); } catch {}
+    setLoading(null);
+  };
+
   const handleBrightness = async (percent: number) => {
     setLoading('brightness');
     try { await setBrightness(percent); refresh(); } catch {}
@@ -67,7 +109,18 @@ export function HardwareControl() {
     setLoading(null);
   };
 
-  // 单次振动
+  const handleChargeCurrent = async (ua: number) => {
+    setLoading('charge');
+    try { await setChargeCurrent(ua); refresh(); } catch {}
+    setLoading(null);
+  };
+
+  const handleWifiPowerSave = async (enabled: boolean) => {
+    setLoading('wifi-ps');
+    try { await setWifiPowerSave(enabled); refresh(); } catch {}
+    setLoading(null);
+  };
+
   const handleVibeOnce = async (ms: number, _strong: number, _weak: number, label: string) => {
     setLoading(`vib-${label}`);
     try {
@@ -77,7 +130,6 @@ export function HardwareControl() {
     } catch { setLoading(null); }
   };
 
-  // 模式振动
   const handleVibePattern = async (name: string, repeat: boolean) => {
     const segs = PATTERNS[name];
     if (!segs) return;
@@ -89,14 +141,12 @@ export function HardwareControl() {
     setLoading(null);
   };
 
-  // 停止
   const handleStop = async () => {
     setLoading('vib-stop');
     try { await vibrateStop(); setActiveVibe(null); } catch {}
     setLoading(null);
   };
 
-  // 清理内存
   const handleClearMemory = async () => {
     setLoading('clear-mem');
     setMemResult(null);
@@ -107,10 +157,20 @@ export function HardwareControl() {
     setLoading(null);
   };
 
-  if (!hw) return <div className="p-6 text-center font-mono text-sm opacity-30">加载硬件状态...</div>;
+  if (!hw) {
+    const loading = (
+      <Card className={`p-6 flex items-center justify-center ${embedded ? 'md:col-span-2 xl:col-span-3' : ''}`}>
+        <span className="font-mono text-sm opacity-30">加载硬件状态...</span>
+      </Card>
+    );
+    return embedded ? loading : <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">{loading}</div>;
+  }
 
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  const span2 = embedded ? 'md:col-span-2 xl:col-span-2' : '';
+  const spanFull = embedded ? 'md:col-span-2 xl:col-span-3' : 'sm:col-span-2 xl:col-span-3';
+
+  const cards = (
+    <>
       {/* 闪光灯 */}
       <Card className="p-4 sm:p-5 flex flex-col gap-4">
         <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">闪光灯</span>
@@ -131,8 +191,85 @@ export function HardwareControl() {
         })}
       </Card>
 
-      {/* 屏幕 */}
+      {/* 状态灯 */}
       <Card className="p-4 sm:p-5 flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">状态灯</span>
+          <div className="flex items-center gap-2">
+            {hw.cpu_status_led_link.enabled && (
+              <Chip size="sm" color="warning" variant="secondary">CPU联动</Chip>
+            )}
+            <Chip size="sm" color={hw.status_led.on ? 'success' : 'default'} variant="secondary">{hw.status_led.on ? 'ON' : 'OFF'}</Chip>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="inline-block w-3 h-3 rounded-full border-2 border-default-300 bg-white" style={{ opacity: hw.status_led.on ? 1 : 0.2 }} />
+          <span className="font-mono text-sm">white:status</span>
+          <span className="font-mono text-[10px] opacity-30">{hw.status_led.brightness}/{hw.status_led.max_brightness}</span>
+        </div>
+        <Button
+          size="sm"
+          variant={hw.cpu_status_led_link.enabled ? 'danger' : 'secondary'}
+          isDisabled={loading === 'cpu-led-link'}
+          onPress={() => handleCpuStatusLedLink(!hw.cpu_status_led_link.enabled)}
+          className="font-mono text-xs"
+        >
+          {hw.cpu_status_led_link.enabled ? '关闭 CPU 联动' : 'CPU 使用率联动'}
+        </Button>
+        <Button size="md" variant={hw.status_led.on ? 'danger' : 'secondary'} isDisabled={loading === 'status-led'} onPress={() => handleStatusLed(!hw.status_led.on)} className="font-mono text-sm">
+          {hw.status_led.on ? '关闭状态灯' : '开启状态灯'}
+        </Button>
+      </Card>
+
+      {/* 充电 — 短卡片优先，避免高卡片留洞 */}
+      <Card className="p-4 sm:p-5 flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">充电电流</span>
+          <Chip size="sm" color={hw.charging.charger_online ? 'success' : 'default'} variant="secondary">
+            {hw.charging.charger_online ? '已接入' : '未接入'}
+          </Chip>
+        </div>
+        <div className="font-mono text-sm">
+          上限 <span className="text-lg">{formatUa(hw.charging.current_max_ua)}</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {CHARGE_PRESETS.map(p => (
+            <Button
+              key={p.ua}
+              size="sm"
+              variant={hw.charging.current_max_ua === p.ua ? 'secondary' : 'ghost'}
+              isDisabled={loading === 'charge'}
+              onPress={() => handleChargeCurrent(p.ua)}
+              className="font-mono text-xs"
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
+      </Card>
+
+      {/* WiFi 省电 */}
+      <Card className="p-4 sm:p-5 flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">WiFi 省电</span>
+          <Chip size="sm" color={hw.wifi_power_save.enabled ? 'warning' : 'success'} variant="secondary">
+            {hw.wifi_power_save.enabled ? '开启' : '关闭'}
+          </Chip>
+        </div>
+        <span className="font-mono text-[10px] opacity-30">{hw.wifi_power_save.iface}</span>
+        <Button
+          size="md"
+          variant={hw.wifi_power_save.enabled ? 'danger' : 'secondary'}
+          isDisabled={loading === 'wifi-ps'}
+          onPress={() => handleWifiPowerSave(!hw.wifi_power_save.enabled)}
+          className="font-mono text-sm"
+        >
+          {hw.wifi_power_save.enabled ? '关闭省电模式' : '开启省电模式'}
+        </Button>
+      </Card>
+
+      {/* 屏幕 — 较高，占 2 列与 WiFi 同行 */}
+      <Card className={`p-4 sm:p-5 flex flex-col gap-4 ${span2}`}>
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">屏幕</span>
           <Chip size="sm" color={hw.screen_on ? 'success' : 'default'} variant="secondary">{hw.screen_on ? '亮屏' : '息屏'}</Chip>
@@ -151,7 +288,7 @@ export function HardwareControl() {
       </Card>
 
       {/* 振动马达 */}
-      <Card className="p-4 sm:p-5 flex flex-col gap-3 sm:col-span-2">
+      <Card className={`p-4 sm:p-5 flex flex-col gap-3 ${spanFull}`}>
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">振动马达</span>
           {activeVibe && hw.vibrating && (
@@ -159,7 +296,6 @@ export function HardwareControl() {
           )}
         </div>
 
-        {/* 自定义振动 */}
         <div className="flex flex-col gap-2 p-3 rounded-lg bg-default-50">
           <div className="flex items-center gap-3">
             <span className="font-mono text-[10px] opacity-50 w-10">时长</span>
@@ -182,7 +318,6 @@ export function HardwareControl() {
           </Button>
         </div>
 
-        {/* 预设 */}
         <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
           {VIBE_PRESETS.map(v => {
             const isPattern = v.ms === 0;
@@ -211,7 +346,7 @@ export function HardwareControl() {
       </Card>
 
       {/* 系统工具 */}
-      <Card className="p-4 sm:p-5 flex flex-col gap-4 sm:col-span-2">
+      <Card className={`p-4 sm:p-5 flex flex-col gap-4 ${spanFull}`}>
         <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">系统工具</span>
         <div className="flex items-center gap-3">
           <Button
@@ -231,6 +366,9 @@ export function HardwareControl() {
           )}
         </div>
       </Card>
-    </div>
+    </>
   );
+
+  if (embedded) return cards;
+  return <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">{cards}</div>;
 }

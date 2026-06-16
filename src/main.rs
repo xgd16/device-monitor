@@ -66,6 +66,9 @@ async fn main() {
                 // 每 5 秒采集一次系统指标
                 _ = interval.tick() => {
                     let overview = collector::collect_system_overview();
+                    if let Err(e) = collector::hardware::apply_cpu_status_led_link(overview.cpu.overall_usage as f64) {
+                        tracing::error!("CPU 状态灯联动失败: {}", e);
+                    }
                     let _ = tx.send(overview.clone());
                     if let Err(e) = db_bg.store_metrics(&overview) {
                         tracing::error!("Failed to store metrics: {}", e);
@@ -96,8 +99,9 @@ async fn main() {
             .and_then(|i| args.get(i + 1).cloned())
             .unwrap_or_else(|| "/dev/tty1".to_string());
         let mut tui_rx = state.latest.clone();
+        let db_tui = db.clone();
         tokio::spawn(async move {
-            if let Err(e) = tui::run_tui(&mut tui_rx, &tty).await {
+            if let Err(e) = tui::run_tui(&mut tui_rx, &tty, Some(db_tui)).await {
                 tracing::error!("TUI error: {}", e);
             }
         });
@@ -131,6 +135,11 @@ async fn main() {
         .route("/hardware/vibrate", post(api::hardware::vibrate_control))
         .route("/hardware/vibrate/pattern", post(api::hardware::vibrate_pattern))
         .route("/hardware/vibrate/stop", post(api::hardware::vibrate_stop))
+        .route("/hardware/status-led", post(api::hardware::status_led_control))
+        .route("/hardware/cpu-status-led-link", post(api::hardware::cpu_status_led_link_control))
+        .route("/hardware/charge-current", post(api::hardware::charge_current_control))
+        .route("/hardware/gpu-max-freq", post(api::hardware::gpu_max_freq_control))
+        .route("/hardware/wifi-power-save", post(api::hardware::wifi_power_save_control))
         .route("/hardware/clear-memory", post(api::hardware::clear_memory))
         .route("/database/stats", get(api::database::get_stats))
         .route("/database/cleanup", post(api::database::cleanup))

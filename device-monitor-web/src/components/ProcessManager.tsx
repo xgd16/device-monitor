@@ -7,6 +7,8 @@ import type { ProcessInfo } from '../types';
 interface ProcessManagerProps {
   processes: ProcessInfo[];
   onRefresh?: () => void;
+  /** 侧栏紧凑模式：固定行数、无分页 */
+  compact?: boolean;
 }
 
 type SortKey = 'pid' | 'name' | 'status' | 'cpu_usage' | 'memory_mb' | 'threads' | 'ppid';
@@ -20,8 +22,9 @@ const SIGNALS = [
 ];
 
 const PAGE_SIZE = 30;
+const COMPACT_ROWS = 10;
 
-export function ProcessManager({ processes, onRefresh }: ProcessManagerProps) {
+export function ProcessManager({ processes, onRefresh, compact = false }: ProcessManagerProps) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('cpu_usage');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -63,7 +66,9 @@ export function ProcessManager({ processes, onRefresh }: ProcessManagerProps) {
   // 搜索/排序变化时重置页码
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const paged = compact
+    ? filtered.slice(0, COMPACT_ROWS)
+    : filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const stats = useMemo(() => {
     const totalMem = processes.reduce((s, p) => s + p.memory_mb, 0);
@@ -107,19 +112,26 @@ export function ProcessManager({ processes, onRefresh }: ProcessManagerProps) {
   return (
     <Card>
       {/* 头部 */}
-      <div className="px-4 sm:px-5 pt-3 sm:pt-4 pb-1 sm:pb-2 flex flex-col gap-2">
+      <div className={`px-4 sm:px-5 pt-3 sm:pt-4 pb-1 sm:pb-2 flex flex-col gap-2 ${compact ? 'pb-2' : ''}`}>
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">进程管理</span>
+          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">
+            {compact ? '进程 Top' : '进程管理'}
+          </span>
           <div className="flex items-center gap-2 font-mono text-[10px] opacity-30">
             <span>{stats.total} 进程</span>
             <span>·</span>
             <span className="text-success">{stats.running} 运行</span>
-            <span>·</span>
-            <span className="hidden sm:inline">CPU {stats.totalCpu.toFixed(1)}%</span>
-            <span className="hidden sm:inline">·</span>
-            <span className="hidden sm:inline">内存 {stats.totalMem} MB</span>
+            {!compact && (
+              <>
+                <span>·</span>
+                <span className="hidden sm:inline">CPU {stats.totalCpu.toFixed(1)}%</span>
+                <span className="hidden sm:inline">·</span>
+                <span className="hidden sm:inline">内存 {stats.totalMem} MB</span>
+              </>
+            )}
           </div>
         </div>
+        {!compact && (
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -134,6 +146,7 @@ export function ProcessManager({ processes, onRefresh }: ProcessManagerProps) {
             </span>
           )}
         </div>
+        )}
       </div>
 
       {/* 表格 */}
@@ -146,9 +159,9 @@ export function ProcessManager({ processes, onRefresh }: ProcessManagerProps) {
               <ThSort col="status" label="状态" className="text-right" />
               <ThSort col="cpu_usage" label="CPU%" className="text-right" />
               <ThSort col="memory_mb" label="内存" className="text-right" />
-              <ThSort col="threads" label="线程" className="text-right hidden sm:table-cell" />
-              <ThSort col="ppid" label="PPID" className="text-right hidden md:table-cell" />
-              <th className="text-right font-mono text-[10px] opacity-50 pr-4 sm:pr-5 whitespace-nowrap">操作</th>
+              {!compact && <ThSort col="threads" label="线程" className="text-right hidden sm:table-cell" />}
+              {!compact && <ThSort col="ppid" label="PPID" className="text-right hidden md:table-cell" />}
+              {!compact && <th className="text-right font-mono text-[10px] opacity-50 pr-4 sm:pr-5 whitespace-nowrap">操作</th>}
             </tr>
           </thead>
           <tbody>
@@ -174,6 +187,8 @@ export function ProcessManager({ processes, onRefresh }: ProcessManagerProps) {
                 >
                   {p.memory_mb >= 1024 ? `${(p.memory_mb / 1024).toFixed(1)}G` : `${p.memory_mb}M`}
                 </td>
+                {!compact && (
+                  <>
                 <td className="text-right font-mono text-[10px] sm:text-[11px] opacity-40 py-1.5 pr-2 hidden sm:table-cell">{p.threads}</td>
                 <td className="text-right font-mono text-[10px] sm:text-[11px] opacity-30 py-1.5 pr-2 hidden md:table-cell">{p.ppid}</td>
                 <td className="text-right py-1.5 pr-4 sm:pr-5">
@@ -211,11 +226,13 @@ export function ProcessManager({ processes, onRefresh }: ProcessManagerProps) {
                     </Button>
                   )}
                 </td>
+                  </>
+                )}
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center font-mono text-[11px] opacity-30 py-6">
+                <td colSpan={compact ? 5 : 8} className="text-center font-mono text-[11px] opacity-30 py-6">
                   {search ? '无匹配进程' : '无进程数据'}
                 </td>
               </tr>
@@ -225,7 +242,7 @@ export function ProcessManager({ processes, onRefresh }: ProcessManagerProps) {
       </div>
 
       {/* 分页 */}
-      {totalPages > 1 && (
+      {!compact && totalPages > 1 && (
         <div className="px-4 sm:px-5 py-2 flex items-center justify-between border-t border-default-200">
           <span className="font-mono text-[10px] opacity-30">
             {filtered.length} 结果 · 第 {safePage}/{totalPages} 页

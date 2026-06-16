@@ -36,6 +36,16 @@ export const vibratePattern = (segments: [number, number, number][], repeat: boo
   api.post('/hardware/vibrate/pattern', { segments: segments.map(([d, s, w]) => ({ duration_ms: d, strong_pct: s, weak_pct: w })), repeat }).then(r => r.data);
 export const vibrateStop = () => api.post('/hardware/vibrate/stop').then(r => r.data);
 export const clearMemory = () => api.post('/hardware/clear-memory').then(r => r.data);
+export const setStatusLed = (on?: boolean, percent?: number) =>
+  api.post('/hardware/status-led', { on, percent }).then(r => r.data);
+export const setCpuStatusLedLink = (enabled: boolean) =>
+  api.post('/hardware/cpu-status-led-link', { enabled }).then(r => r.data);
+export const setChargeCurrent = (microamps: number) =>
+  api.post('/hardware/charge-current', { microamps }).then(r => r.data);
+export const setGpuMaxFreq = (max_mhz: number) =>
+  api.post('/hardware/gpu-max-freq', { max_mhz }).then(r => r.data);
+export const setWifiPowerSave = (enabled: boolean) =>
+  api.post('/hardware/wifi-power-save', { enabled }).then(r => r.data);
 
 // ── 文件管理 ──
 

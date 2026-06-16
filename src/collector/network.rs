@@ -7,6 +7,7 @@
 use super::{NetworkInterface, WifiInfo, BluetoothInfo};
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,6 +15,27 @@ const IP_CACHE_TTL: Duration = Duration::from_secs(30);
 
 static IP_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Vec<String>)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn command_path(candidates: &[&str]) -> String {
+    candidates
+        .iter()
+        .find(|path| path.contains('/') && Path::new(path).exists())
+        .or_else(|| candidates.last())
+        .unwrap_or(&"")
+        .to_string()
+}
+
+fn ip_cmd() -> String {
+    command_path(&["/sbin/ip", "/usr/sbin/ip", "/bin/ip", "/usr/bin/ip", "ip"])
+}
+
+fn iw_cmd() -> String {
+    command_path(&["/usr/sbin/iw", "/sbin/iw", "/usr/bin/iw", "/bin/iw", "iw"])
+}
+
+fn nmcli_cmd() -> String {
+    command_path(&["/usr/bin/nmcli", "/bin/nmcli", "nmcli"])
+}
 
 /// 采集所有非 loopback 网络接口的信息。
 pub fn collect_interfaces() -> Vec<NetworkInterface> {
@@ -80,8 +102,9 @@ fn get_ips(iface: &str) -> Vec<String> {
 
     let mut ips = Vec::new();
 
-    if let Ok(output) = std::process::Command::new("ip")
-        .args(["-4", "addr", "show", iface])
+    let ip = ip_cmd();
+    if let Ok(output) = std::process::Command::new(&ip)
+        .args(["-f", "inet", "addr", "show", "dev", iface])
         .output()
     {
         let text = String::from_utf8_lossy(&output.stdout);
@@ -94,8 +117,8 @@ fn get_ips(iface: &str) -> Vec<String> {
         }
     }
 
-    if let Ok(output) = std::process::Command::new("ip")
-        .args(["-6", "addr", "show", iface, "scope", "global"])
+    if let Ok(output) = std::process::Command::new(&ip)
+        .args(["-f", "inet6", "addr", "show", "dev", iface, "scope", "global"])
         .output()
     {
         let text = String::from_utf8_lossy(&output.stdout);
@@ -115,13 +138,18 @@ fn get_ips(iface: &str) -> Vec<String> {
 
 /// 获取 wlan0 的 WiFi 连接详情。
 pub fn get_wifi_info() -> WifiInfo {
-    let output = std::process::Command::new("iw")
+    let output = std::process::Command::new(iw_cmd())
         .args(["dev", "wlan0", "link"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
 
     let connected = output.contains("Connected to");
+    if !connected {
+        if let Some(info) = get_wifi_info_from_nmcli() {
+            return info;
+        }
+    }
     let ssid = extract_field(&output, "SSID").unwrap_or_default();
     let signal = extract_field(&output, "signal")
         .and_then(|s| s.split_whitespace().next()?.parse::<i32>().ok())
@@ -151,6 +179,44 @@ pub fn get_wifi_info() -> WifiInfo {
         bitrate,
         bssid,
     }
+}
+
+fn get_wifi_info_from_nmcli() -> Option<WifiInfo> {
+    let output = std::process::Command::new(nmcli_cmd())
+        .args(["-t", "-f", "ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL", "dev", "wifi"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.first().copied() != Some("yes") {
+            continue;
+        }
+        let ssid = fields.get(1).copied().unwrap_or("").to_string();
+        let bssid = fields.get(2).copied().unwrap_or("").to_string();
+        let channel = fields.get(3).and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+        let freq = fields
+            .get(4)
+            .and_then(|v| v.split_whitespace().next())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        let signal = fields.get(6).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+        let (_, band) = freq_to_channel_band(freq);
+        return Some(WifiInfo {
+            connected: true,
+            ssid,
+            signal_dbm: signal,
+            frequency_mhz: freq,
+            channel,
+            band,
+            bitrate: fields.get(5).copied().unwrap_or("").to_string(),
+            bssid,
+        });
+    }
+    None
 }
 
 /// 获取蓝牙适配器基本信息（设备列表暂未实现）。
