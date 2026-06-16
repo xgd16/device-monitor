@@ -179,7 +179,7 @@ export default function App() {
 
           {/* Desktop: Full grid layout (>= md) */}
           <div className="hidden md:flex-1 md:flex md:flex-col md:gap-3 md:p-4 lg:p-5 md:overflow-y-auto md:min-h-0">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 items-stretch">
               <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
               <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
             </div>
