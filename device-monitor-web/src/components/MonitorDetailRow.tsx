@@ -7,6 +7,8 @@ import type { CpuCore, ThermalZone, NetworkInterface, WifiInfo, BluetoothInfo } 
 
 interface MonitorDetailRowProps {
   cores: CpuCore[];
+  overallUsage: number;
+  loadAvg: number[];
   thermal: ThermalZone[];
   network: NetworkInterface[];
   netSpeed: Record<string, { rx: number; tx: number }>;
@@ -16,6 +18,8 @@ interface MonitorDetailRowProps {
 
 export function MonitorDetailRow({
   cores,
+  overallUsage,
+  loadAvg,
   thermal,
   network,
   netSpeed,
@@ -35,15 +39,22 @@ export function MonitorDetailRow({
     const ro = new ResizeObserver(sync);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [network, wifi, bluetooth]);
+  }, [network, wifi, bluetooth, cores.length, thermal.length]);
+
+  const matchedHeight =
+    rightHeight !== undefined ? { height: rightHeight } : undefined;
 
   return (
     <div className="grid grid-cols-3 gap-3 items-start">
-      <CoreBars cores={cores} />
-      <div
-        className="min-h-0 overflow-hidden"
-        style={rightHeight !== undefined ? { height: rightHeight } : undefined}
-      >
+      <div className="min-h-0 overflow-hidden" style={matchedHeight}>
+        <CoreBars
+          cores={cores}
+          overallUsage={overallUsage}
+          loadAvg={loadAvg}
+          thermal={thermal}
+        />
+      </div>
+      <div className="min-h-0 overflow-hidden" style={matchedHeight}>
         <ThermalCard thermal={thermal} />
       </div>
       <div ref={rightRef} className="flex flex-col gap-3">

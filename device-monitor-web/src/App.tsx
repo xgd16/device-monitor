@@ -154,7 +154,7 @@ export default function App() {
               </Tabs.Panel>
 
               <Tabs.Panel id="cpu" className="p-3 flex flex-col gap-3">
-                <CoreBars cores={cpu.cores} />
+                <CoreBars cores={cpu.cores} overallUsage={cpu.overall_usage} loadAvg={data.load_avg} thermal={data.thermal} />
                 <ThermalCard thermal={data.thermal} />
               </Tabs.Panel>
 
@@ -192,6 +192,8 @@ export default function App() {
 
             <MonitorDetailRow
               cores={cpu.cores}
+              overallUsage={cpu.overall_usage}
+              loadAvg={data.load_avg}
               thermal={data.thermal}
               network={network}
               netSpeed={netSpeed}
