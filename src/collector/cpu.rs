@@ -101,3 +101,87 @@ fn read_frequencies() -> Vec<u64> {
         })
         .collect()
 }
+
+/// CPU Governor 信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CpuGovernor {
+    /// 当前使用的 governor
+    pub current: String,
+    /// 所有可用的 governor
+    pub available: Vec<String>,
+    /// 各核心的 governor（通常所有核心相同）
+    pub per_core: Vec<CoreGovernor>,
+}
+
+/// 单个核心的 governor 信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CoreGovernor {
+    pub core_id: usize,
+    pub governor: String,
+}
+
+/// 读取 CPU governor 信息
+pub fn get_governor() -> CpuGovernor {
+    // 读取 CPU0 的 governor 作为当前值
+    let current = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    // 读取可用的 governor
+    let available_str = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors")
+        .unwrap_or_default();
+    let available: Vec<String> = available_str
+        .trim()
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+
+    // 读取各核心的 governor
+    let mut per_core = Vec::new();
+    for i in 0..8 {
+        let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_governor", i);
+        if let Ok(gov) = fs::read_to_string(&path) {
+            per_core.push(CoreGovernor {
+                core_id: i,
+                governor: gov.trim().to_string(),
+            });
+        }
+    }
+
+    CpuGovernor {
+        current,
+        available,
+        per_core,
+    }
+}
+
+/// 设置 CPU governor
+/// 对所有核心设置相同的 governor
+pub fn set_governor(governor: &str) -> Result<(), String> {
+    // 先验证 governor 是否可用
+    let available_str = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors")
+        .unwrap_or_default();
+    let available: Vec<&str> = available_str.trim().split_whitespace().collect();
+
+    if !available.contains(&governor) {
+        return Err(format!("Governor '{}' 不可用。可用选项: {:?}", governor, available));
+    }
+
+    // 设置所有核心的 governor
+    let mut errors = Vec::new();
+    for i in 0..8 {
+        let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_governor", i);
+        if std::path::Path::new(&path).exists() {
+            if let Err(e) = fs::write(&path, governor) {
+                errors.push(format!("CPU{}: {}", i, e));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("部分核心设置失败: {}", errors.join(", ")))
+    }
+}

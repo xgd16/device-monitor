@@ -107,6 +107,7 @@ async fn main() {
     let api_routes = Router::new()
         .route("/system/overview", get(api::system::overview))
         .route("/cpu", get(api::cpu::cpu_info))
+        .route("/cpu/governor", get(api::cpu::get_governor).post(api::cpu::set_governor))
         .route("/memory", get(api::memory::memory_info))
         .route("/disk", get(api::disk::disk_info))
         .route("/thermal", get(api::thermal::thermal_info))

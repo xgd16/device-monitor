@@ -9,6 +9,17 @@ export interface CpuInfo {
   cores: CpuCore[];
 }
 
+export interface CoreGovernor {
+  core_id: number;
+  governor: string;
+}
+
+export interface CpuGovernor {
+  current: string;
+  available: string[];
+  per_core: CoreGovernor[];
+}
+
 export interface MemoryInfo {
   total_mb: number;
   used_mb: number;
