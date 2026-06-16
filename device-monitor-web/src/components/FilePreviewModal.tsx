@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Card, Button } from '@heroui/react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import {
   RiFileLine,
   RiImageLine,
@@ -13,7 +11,14 @@ import {
   RiEditLine,
 } from '@remixicon/react';
 import { readFile, writeFile, previewUrl, downloadUrl } from '../api';
-import { getPreviewKind, type PreviewKind } from '../utils/filePreview';
+import { getPreviewKind, fileExtension, type PreviewKind } from '../utils/filePreview';
+import { MarkdownPreview, CodePreview } from './MarkdownPreview';
+
+const CODE_PREVIEW_EXTS = new Set([
+  'sh', 'bash', 'zsh', 'rs', 'py', 'js', 'ts', 'tsx', 'jsx',
+  'json', 'yaml', 'yml', 'css', 'html', 'xml', 'toml', 'go', 'c', 'cpp', 'h',
+  'sql', 'ini', 'conf', 'env', 'log',
+]);
 
 interface FilePreviewModalProps {
   open: boolean;
@@ -42,15 +47,19 @@ export function FilePreviewModal({ open, path, name, onClose, onSaved }: FilePre
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [mdView, setMdView] = useState<'preview' | 'edit'>('preview');
+  const [textView, setTextView] = useState<'preview' | 'edit'>('preview');
 
   const needsTextLoad = kind === 'text' || kind === 'markdown';
   const mediaUrl = previewUrl(path);
+  const ext = fileExtension(name);
+  const isCodeText = kind === 'text' && CODE_PREVIEW_EXTS.has(ext);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setContent('');
     setMdView('preview');
+    setTextView('preview');
     if (!needsTextLoad) return;
 
     let cancelled = false;
@@ -90,7 +99,7 @@ export function FilePreviewModal({ open, path, name, onClose, onSaved }: FilePre
   if (!open) return null;
 
   const canEdit = kind === 'text' || kind === 'markdown';
-  const showSave = canEdit && (kind !== 'markdown' || mdView === 'edit');
+  const showSave = canEdit && (kind !== 'markdown' || mdView === 'edit') && (kind !== 'text' || !isCodeText || textView === 'edit');
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/40" onClick={onClose}>
@@ -112,6 +121,24 @@ export function FilePreviewModal({ open, path, name, onClose, onSaved }: FilePre
                   type="button"
                   className={`px-2.5 py-1 flex items-center gap-1 border-l border-default-200 ${mdView === 'edit' ? 'bg-accent/15 text-accent' : 'hover:bg-default-100'}`}
                   onClick={() => setMdView('edit')}
+                >
+                  <RiEditLine className="w-3.5 h-3.5" /> 编辑
+                </button>
+              </div>
+            )}
+            {kind === 'text' && isCodeText && (
+              <div className="flex rounded-md overflow-hidden border border-default-200 text-xs shrink-0">
+                <button
+                  type="button"
+                  className={`px-2.5 py-1 flex items-center gap-1 ${textView === 'preview' ? 'bg-accent/15 text-accent' : 'hover:bg-default-100'}`}
+                  onClick={() => setTextView('preview')}
+                >
+                  <RiEyeLine className="w-3.5 h-3.5" /> 预览
+                </button>
+                <button
+                  type="button"
+                  className={`px-2.5 py-1 flex items-center gap-1 border-l border-default-200 ${textView === 'edit' ? 'bg-accent/15 text-accent' : 'hover:bg-default-100'}`}
+                  onClick={() => setTextView('edit')}
                 >
                   <RiEditLine className="w-3.5 h-3.5" /> 编辑
                 </button>
@@ -166,9 +193,7 @@ export function FilePreviewModal({ open, path, name, onClose, onSaved }: FilePre
               />
             )}
             {!loading && !error && kind === 'markdown' && mdView === 'preview' && (
-              <article className="dm-markdown max-w-3xl mx-auto">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-              </article>
+              <MarkdownPreview content={content} />
             )}
             {!loading && !error && kind === 'markdown' && mdView === 'edit' && (
               <textarea
@@ -178,7 +203,10 @@ export function FilePreviewModal({ open, path, name, onClose, onSaved }: FilePre
                 spellCheck={false}
               />
             )}
-            {!loading && !error && kind === 'text' && (
+            {!loading && !error && kind === 'text' && isCodeText && textView === 'preview' && (
+              <CodePreview content={content} filename={name} />
+            )}
+            {!loading && !error && kind === 'text' && (!isCodeText || textView === 'edit') && (
               <textarea
                 className="dm-input h-full min-h-[300px] font-mono text-xs resize-none"
                 value={content}
