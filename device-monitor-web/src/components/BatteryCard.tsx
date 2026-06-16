@@ -1,5 +1,5 @@
-import { Card, ProgressBar, Chip } from '@heroui/react';
-import { percentColor } from './utils';
+import { Card, ProgressBar } from '@heroui/react';
+import { batteryStatusLabel, percentColor } from './utils';
 import type { BatteryInfo } from '../types';
 
 interface BatteryCardProps {
@@ -14,78 +14,70 @@ function fmtTime(mins: number): string {
   return `${m}分`;
 }
 
-function fmtPower(battery: BatteryInfo): { label: string; watts: string; color: string } {
-  const w = battery.power_w ?? (battery.voltage_v * Math.abs(battery.current_ma) / 1000);
-  const watts = w.toFixed(1);
+function batteryMeta(battery: BatteryInfo): { powerLabel: string; timeText: string } {
+  const status = battery.status;
+  const w = (battery.power_w ?? (battery.voltage_v * Math.abs(battery.current_ma) / 1000)).toFixed(1);
 
-  if (battery.status === 'Charging') {
-    return { label: '充电功率', watts: `${watts} W`, color: 'var(--accent)' };
-  }
-  if (battery.status === 'Discharging') {
-    return { label: '消耗功率', watts: `${watts} W`, color: 'var(--warning)' };
-  }
-  return { label: '功率', watts: `${watts} W`, color: 'var(--default)' };
-}
+  let powerLabel = `${w} W`;
+  if (status === 'Charging') powerLabel = `+${w} W 充电`;
+  else if (status === 'Discharging') powerLabel = `-${w} W 消耗`;
+  else if (status === 'Not charging') powerLabel = `${w} W 待机`;
+  else if (status === 'Full') powerLabel = '已充满';
 
-export function BatteryCard({ battery }: BatteryCardProps) {
-  const isCharging = battery.status === 'Charging';
-  const color = percentColor(100 - battery.capacity);
-  const power = fmtPower(battery);
-
-  let statusText = isCharging ? '充电中' : '放电中';
   let timeText = '';
-  if (battery.time_left_min > 0) {
-    statusText = '放电中';
+  if (status === 'Discharging' && battery.time_left_min > 0) {
     timeText = `剩余 ${fmtTime(battery.time_left_min)}`;
-  } else if (battery.time_left_min < 0) {
-    statusText = '充电中';
+  } else if (status === 'Charging' && battery.time_left_min < 0) {
     timeText = `充满 ${fmtTime(battery.time_left_min)}`;
   }
 
+  return { powerLabel, timeText };
+}
+
+export function BatteryCard({ battery }: BatteryCardProps) {
+  const color = percentColor(100 - battery.capacity);
+  const statusText = batteryStatusLabel(battery.status);
+  const { powerLabel, timeText } = batteryMeta(battery);
+  const statusColor =
+    battery.status === 'Charging'
+      ? 'text-accent'
+      : battery.status === 'Full'
+        ? 'text-success'
+        : battery.capacity < 20
+          ? 'text-danger'
+          : 'opacity-60';
+
   return (
-    <Card className="p-4 sm:p-5 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">电池</span>
-        <Chip
-          size="sm"
-          color={isCharging ? 'accent' : battery.capacity < 20 ? 'danger' : 'default'}
-          variant="secondary"
-        >
-          {statusText}
-        </Chip>
-      </div>
+    <Card className="p-3 sm:p-4 flex flex-col gap-2">
+      <span className="text-[9px] sm:text-[10px] font-mono uppercase tracking-widest opacity-50">电池</span>
 
-      <div className="flex items-center gap-3">
-        <div className="flex-1">
-          <ProgressBar
-            value={battery.capacity}
-            size="md"
-            color={color as any}
-          >
-            <ProgressBar.Track>
-              <ProgressBar.Fill />
-            </ProgressBar.Track>
-          </ProgressBar>
-        </div>
-        <span className="font-mono text-xl sm:text-2xl font-light w-14 text-right" style={{ color: `var(--${color})` }}>
-          {battery.capacity}<span className="text-[10px] opacity-50">%</span>
-        </span>
-      </div>
-
-      {/* 充电/消耗瓦数 */}
       <div className="flex items-baseline gap-2">
-        <span className="text-[10px] sm:text-[11px] font-mono opacity-50">{power.label}</span>
-        <span className="font-mono text-lg sm:text-xl font-medium" style={{ color: power.color }}>
-          {power.watts}
+        <span
+          className="font-mono text-xl sm:text-2xl lg:text-3xl font-light leading-none"
+          style={{ color: `var(--${color})` }}
+        >
+          {battery.capacity}
+          <span className="text-[10px] opacity-50">%</span>
         </span>
+        <span className={`text-[9px] sm:text-[10px] font-mono ${statusColor}`}>{statusText}</span>
       </div>
 
-      <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] sm:text-[11px] opacity-50">
-        <span>电压 {battery.voltage_v.toFixed(2)} V</span>
-        <span>电流 {Math.abs(battery.current_ma).toFixed(0)} mA</span>
-        {battery.temp_celsius > 0 && <span>温度 {battery.temp_celsius.toFixed(1)} °C</span>}
-        {timeText && <span className="opacity-70">{timeText}</span>}
+      <ProgressBar value={battery.capacity} size="sm" color={color as any}>
+        <ProgressBar.Track>
+          <ProgressBar.Fill />
+        </ProgressBar.Track>
+      </ProgressBar>
+
+      <div className="flex flex-col gap-0.5">
+        <span className="text-[9px] sm:text-[10px] font-mono opacity-50">{powerLabel}</span>
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] sm:text-[10px] font-mono opacity-40">
+          <span>{battery.voltage_v.toFixed(2)} V</span>
+          <span>{Math.abs(battery.current_ma).toFixed(0)} mA</span>
+          {battery.temp_celsius > 0 && <span>{battery.temp_celsius.toFixed(1)} °C</span>}
+        </div>
       </div>
+
+      {timeText && <span className="text-[9px] font-mono opacity-25">{timeText}</span>}
     </Card>
   );
 }

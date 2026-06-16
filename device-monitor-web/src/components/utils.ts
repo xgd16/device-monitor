@@ -47,3 +47,18 @@ export function percentColor(v: number): string {
   if (v > 50) return 'warning';
   return 'success';
 }
+
+export function batteryStatusLabel(status: string): string {
+  switch (status) {
+    case 'Charging':
+      return '充电中';
+    case 'Discharging':
+      return '放电中';
+    case 'Not charging':
+      return '未充电';
+    case 'Full':
+      return '已充满';
+    default:
+      return status;
+  }
+}
