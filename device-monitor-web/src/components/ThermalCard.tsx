@@ -4,13 +4,19 @@ import type { ThermalZone } from '../types';
 
 interface ThermalCardProps {
   thermal: ThermalZone[];
+  className?: string;
 }
 
-export function ThermalCard({ thermal }: ThermalCardProps) {
+export function ThermalCard({ thermal, className }: ThermalCardProps) {
   const sorted = [...thermal].sort((a, b) => b.temp_celsius - a.temp_celsius);
   return (
-    <Card className="p-4 sm:p-5 flex flex-col gap-3">
-      <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">温度传感器</span>
+    <Card className={`p-4 sm:p-5 flex flex-col gap-3 h-full min-h-0 ${className ?? ''}`}>
+      <span className="text-[10px] font-mono uppercase tracking-widest opacity-50 shrink-0">
+        温度传感器
+        {sorted.length > 0 && (
+          <span className="opacity-40"> ({sorted.length})</span>
+        )}
+      </span>
       {sorted.length === 0 ? (
         <p className="text-xs font-mono opacity-30">未检测到传感器</p>
       ) : (

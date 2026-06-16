@@ -9,6 +9,7 @@ import { CpuCard } from './components/CpuCard';
 import { MemoryCard } from './components/MemoryCard';
 import { MetricsBar } from './components/MetricsBar';
 import { CoreBars } from './components/CoreBars';
+import { MonitorDetailRow } from './components/MonitorDetailRow';
 import { ThermalCard } from './components/ThermalCard';
 import { NetworkCard } from './components/NetworkCard';
 import { WirelessCard } from './components/WirelessCard';
@@ -189,14 +190,14 @@ export default function App() {
               <BatteryCard battery={data.battery} />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <CoreBars cores={cpu.cores} />
-              <ThermalCard thermal={data.thermal} />
-              <div className="flex flex-col gap-3">
-                <NetworkCard network={network} netSpeed={netSpeed} />
-                <WirelessCard wifi={wifi} bluetooth={bluetooth} />
-              </div>
-            </div>
+            <MonitorDetailRow
+              cores={cpu.cores}
+              thermal={data.thermal}
+              network={network}
+              netSpeed={netSpeed}
+              wifi={wifi}
+              bluetooth={bluetooth}
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <DiskCard />
