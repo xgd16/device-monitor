@@ -185,3 +185,114 @@ pub fn set_governor(governor: &str) -> Result<(), String> {
         Err(format!("部分核心设置失败: {}", errors.join(", ")))
     }
 }
+
+/// CPU 频率信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CpuFrequency {
+    /// 当前最小频率 (kHz)
+    pub min_freq: u64,
+    /// 当前最大频率 (kHz)
+    pub max_freq: u64,
+    /// 硬件支持的最小频率 (kHz)
+    pub hw_min_freq: u64,
+    /// 硬件支持的最大频率 (kHz)
+    pub hw_max_freq: u64,
+    /// 可用频率列表 (kHz)
+    pub available_freqs: Vec<u64>,
+}
+
+/// 读取 CPU 频率信息
+pub fn get_frequency() -> CpuFrequency {
+    let min_freq = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq")
+        .unwrap_or_default()
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    
+    let max_freq = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq")
+        .unwrap_or_default()
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    
+    let hw_min_freq = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
+        .unwrap_or_default()
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    
+    let hw_max_freq = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+        .unwrap_or_default()
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    
+    let freqs_str = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies")
+        .unwrap_or_default();
+    let available_freqs: Vec<u64> = freqs_str
+        .trim()
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    CpuFrequency {
+        min_freq,
+        max_freq,
+        hw_min_freq,
+        hw_max_freq,
+        available_freqs,
+    }
+}
+
+/// 设置 CPU 最大频率限制
+/// 通过 userspace governor + 设置频率实现低频模式
+pub fn set_max_frequency_limit(max_freq_khz: u64) -> Result<CpuGovernor, String> {
+    // 验证频率是否可用
+    let freqs_str = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies")
+        .unwrap_or_default();
+    let available_freqs: Vec<u64> = freqs_str
+        .trim()
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    
+    if !available_freqs.contains(&max_freq_khz) {
+        return Err(format!("频率 {} kHz 不可用。可用频率: {:?}", max_freq_khz, available_freqs));
+    }
+
+    // 切换到 userspace governor
+    set_governor("userspace")?;
+
+    // 设置所有核心的频率
+    let mut errors = Vec::new();
+    for i in 0..8 {
+        let setspeed_path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_setspeed", i);
+        if std::path::Path::new(&setspeed_path).exists() {
+            if let Err(e) = fs::write(&setspeed_path, max_freq_khz.to_string()) {
+                errors.push(format!("CPU{}: {}", i, e));
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(format!("部分核心设置频率失败: {}", errors.join(", ")));
+    }
+
+    Ok(get_governor())
+}
+
+/// 设置低频模式（限制最大频率为最低可用频率）
+pub fn set_low_power_mode() -> Result<CpuGovernor, String> {
+    let freq_info = get_frequency();
+    if let Some(&min_freq) = freq_info.available_freqs.first() {
+        set_max_frequency_limit(min_freq)
+    } else {
+        Err("无法获取可用频率列表".to_string())
+    }
+}
+
+/// 恢复正常模式（使用 schedutil governor）
+pub fn set_normal_mode() -> Result<CpuGovernor, String> {
+    set_governor("schedutil")?;
+    Ok(get_governor())
+}

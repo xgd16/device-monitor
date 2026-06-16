@@ -18,6 +18,7 @@ const governorDescriptions: Record<string, string> = {
   schedutil: '智能调度',
   ondemand: '按需调频',
   conservative: '保守调频',
+  userspace: '用户控制',
 };
 
 export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
@@ -25,6 +26,7 @@ export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
   const [governor, setGovernor] = useState<CpuGovernor | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'normal' | 'low-power'>('normal');
 
   // 获取 governor 信息
   useEffect(() => {
@@ -37,6 +39,12 @@ export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
       const data = await res.json();
       if (data.code === 0) {
         setGovernor(data.data);
+        // 判断当前模式
+        if (data.data.current === 'userspace') {
+          setMode('low-power');
+        } else {
+          setMode('normal');
+        }
       }
     } catch (err) {
       console.error('Failed to fetch governor:', err);
@@ -60,6 +68,66 @@ export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
       
       if (data.code === 0) {
         setGovernor(data.data.governor);
+        if (newGovernor === 'userspace') {
+          setMode('low-power');
+        } else {
+          setMode('normal');
+        }
+      } else {
+        setError(data.error || '设置失败');
+        setTimeout(() => setError(null), 3000);
+      }
+    } catch (err) {
+      setError('网络错误');
+      setTimeout(() => setError(null), 3000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 切换到低频模式
+  const handleLowPowerMode = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const res = await fetch('/api/cpu/low-power', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      
+      if (data.code === 0) {
+        setGovernor(data.data.governor);
+        setMode('low-power');
+      } else {
+        setError(data.error || '设置失败');
+        setTimeout(() => setError(null), 3000);
+      }
+    } catch (err) {
+      setError('网络错误');
+      setTimeout(() => setError(null), 3000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 恢复正常模式
+  const handleNormalMode = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const res = await fetch('/api/cpu/normal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      
+      if (data.code === 0) {
+        setGovernor(data.data.governor);
+        setMode('normal');
       } else {
         setError(data.error || '设置失败');
         setTimeout(() => setError(null), 3000);
@@ -93,6 +161,32 @@ export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
             </select>
           </div>
         )}
+      </div>
+
+      {/* 快捷模式切换按钮 */}
+      <div className="flex gap-2">
+        <button
+          onClick={handleLowPowerMode}
+          disabled={loading || mode === 'low-power'}
+          className={`flex-1 px-3 py-1.5 text-xs font-mono rounded-lg transition-colors ${
+            mode === 'low-power'
+              ? 'bg-warning text-warning-foreground'
+              : 'bg-content2 hover:bg-content3 disabled:opacity-50'
+          }`}
+        >
+          🔋 低频省电
+        </button>
+        <button
+          onClick={handleNormalMode}
+          disabled={loading || mode === 'normal'}
+          className={`flex-1 px-3 py-1.5 text-xs font-mono rounded-lg transition-colors ${
+            mode === 'normal'
+              ? 'bg-success text-success-foreground'
+              : 'bg-content2 hover:bg-content3 disabled:opacity-50'
+          }`}
+        >
+          ⚡ 正常模式
+        </button>
       </div>
 
       {error && (

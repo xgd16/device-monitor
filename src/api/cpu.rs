@@ -3,6 +3,9 @@
 //! - `GET /api/cpu` — 返回 CPU 总体使用率、各核心使用率与频率。
 //! - `GET /api/cpu/governor` — 返回 CPU governor 信息（当前策略、可用策略）。
 //! - `POST /api/cpu/governor` — 设置 CPU governor。
+//! - `GET /api/cpu/frequency` — 返回 CPU 频率信息。
+//! - `POST /api/cpu/low-power` — 设置低频省电模式。
+//! - `POST /api/cpu/normal` — 恢复正常模式。
 
 use axum::Json;
 use serde::Deserialize;
@@ -39,6 +42,49 @@ pub async fn set_governor(Json(req): Json<SetGovernorRequest>) -> Json<Value> {
                 "governor": governor
             }))
         }
+        Err(e) => error(&e),
+    }
+}
+
+/// GET /api/cpu/frequency
+pub async fn get_frequency() -> Json<Value> {
+    let freq = collector::cpu::get_frequency();
+    success(freq)
+}
+
+/// POST /api/cpu/low-power 的请求体
+#[derive(Deserialize)]
+pub struct SetFrequencyRequest {
+    /// 最大频率限制 (kHz)，可选。不提供则使用最低可用频率。
+    pub max_freq: Option<u64>,
+}
+
+/// POST /api/cpu/low-power
+/// 设置低频省电模式
+pub async fn set_low_power_mode(Json(req): Json<SetFrequencyRequest>) -> Json<Value> {
+    let result = if let Some(freq) = req.max_freq {
+        collector::cpu::set_max_frequency_limit(freq)
+    } else {
+        collector::cpu::set_low_power_mode()
+    };
+    
+    match result {
+        Ok(governor) => success(serde_json::json!({
+            "message": "已切换到低频省电模式",
+            "governor": governor
+        })),
+        Err(e) => error(&e),
+    }
+}
+
+/// POST /api/cpu/normal
+/// 恢复正常模式
+pub async fn set_normal_mode() -> Json<Value> {
+    match collector::cpu::set_normal_mode() {
+        Ok(governor) => success(serde_json::json!({
+            "message": "已恢复正常模式",
+            "governor": governor
+        })),
         Err(e) => error(&e),
     }
 }
