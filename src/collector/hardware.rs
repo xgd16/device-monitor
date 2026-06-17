@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::thread;
 
@@ -66,6 +66,8 @@ pub struct CpuStatusLedLinkState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChargingState {
     pub current_max_ua: u32,
+    /// 用户请求的目标限流；驱动可能因 AICL/协议协商把实际值压低。
+    pub target_current_max_ua: u32,
     pub current_now_ua: i32,
     pub voltage_now_uv: u32,
     pub power_w: f64,
@@ -147,6 +149,8 @@ static CPU_STATUS_LED_LINK: AtomicBool = AtomicBool::new(false);
 /// 仅供电不充电模式（qcom_smbx 通过 status 挂起输入充电）。
 static CHARGE_POWER_ONLY: AtomicBool = AtomicBool::new(false);
 static LAST_CHARGER_ONLINE: AtomicBool = AtomicBool::new(false);
+/// 最后一次用户请求的充电电流上限，和驱动当前实际限流分开展示。
+static TARGET_CHARGE_CURRENT_UA: AtomicU32 = AtomicU32::new(0);
 /// 振动模式的后台线程句柄
 static VIBRATE_HANDLE: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(None);
 
@@ -299,6 +303,10 @@ fn maybe_reapply_charge_mode(charger_online: bool) {
     if charger_online && !was_online {
         let power_only = CHARGE_POWER_ONLY.load(Ordering::Relaxed);
         let _ = apply_charge_mode_hw(power_only);
+        let target_ua = TARGET_CHARGE_CURRENT_UA.load(Ordering::Relaxed);
+        if target_ua > 0 && !power_only {
+            let _ = write_sysfs(CHARGER_CURRENT_MAX, &target_ua.to_string());
+        }
     }
 }
 
@@ -329,6 +337,7 @@ fn read_charging_state() -> ChargingState {
 
     ChargingState {
         current_max_ua,
+        target_current_max_ua: TARGET_CHARGE_CURRENT_UA.load(Ordering::Relaxed),
         current_now_ua,
         voltage_now_uv,
         power_w,
@@ -544,6 +553,7 @@ pub fn set_charge_current_max(microamps: u32) -> Result<u32, String> {
     }
     let capped = cap_charge_current(microamps, &state.charge_source)?;
     write_sysfs(CHARGER_CURRENT_MAX, &capped.to_string())?;
+    TARGET_CHARGE_CURRENT_UA.store(capped, Ordering::Relaxed);
     let actual: u32 = read_sysfs(CHARGER_CURRENT_MAX).parse().unwrap_or(0);
     // 未接入充电器时驱动可能读回 0，返回写入值供前端展示
     Ok(if actual == 0 && capped > 0 {

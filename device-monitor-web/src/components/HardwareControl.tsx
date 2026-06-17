@@ -26,6 +26,7 @@ interface HardwareState {
   vibrating: boolean;
   charging: {
     current_max_ua: number;
+    target_current_max_ua: number;
     current_now_ua: number;
     voltage_now_uv: number;
     power_w: number;
@@ -188,6 +189,7 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
 
   const span2 = embedded ? 'md:col-span-2 xl:col-span-2' : '';
   const spanFull = embedded ? 'md:col-span-2 xl:col-span-3' : 'sm:col-span-2 xl:col-span-3';
+  const activeChargeUa = hw.charging.target_current_max_ua || hw.charging.current_max_ua;
 
   const cards = (
     <>
@@ -275,8 +277,13 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
           </Button>
         </div>
         <div className="font-mono text-sm">
-          上限 <span className="text-lg">{formatUa(hw.charging.current_max_ua)}</span>
+          目标 <span className="text-lg">{formatUa(activeChargeUa)}</span>
           <span className="ml-2 text-[10px] opacity-40">{chargeModeLabel(hw.charging.charge_mode)}</span>
+          {hw.charging.target_current_max_ua > 0 && hw.charging.current_max_ua !== hw.charging.target_current_max_ua && (
+            <span className="ml-2 text-[10px] opacity-40">
+              实际 {formatUa(hw.charging.current_max_ua)}
+            </span>
+          )}
           {hw.charging.charger_online && hw.charging.power_w > 0 && hw.charging.charge_mode === 'normal' && (
             <span className="ml-2 text-[10px] opacity-40">
               实时 {hw.charging.power_w.toFixed(1)}W · {Math.round(hw.charging.current_now_ua / 1000)}mA
@@ -297,7 +304,7 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
               <Button
                 key={p.ua}
                 size="sm"
-                variant={isChargePresetSelected(hw.charging.current_max_ua, p.ua) ? 'secondary' : 'ghost'}
+                variant={isChargePresetSelected(activeChargeUa, p.ua) ? 'secondary' : 'ghost'}
                 isDisabled={loading === 'charge' || wirelessLimited || powerOnly}
                 onPress={() => handleChargeCurrent(p.ua)}
                 className="font-mono text-xs"

@@ -33,6 +33,7 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
     screen_on: boolean;
     charging: {
       current_max_ua: number;
+      target_current_max_ua: number;
       current_now_ua: number;
       power_w: number;
       charger_online: boolean;
@@ -130,7 +131,9 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
             {hw.charging.charge_mode === 'power_only' && (
               <Chip size="sm" color="warning" variant="secondary">仅供电</Chip>
             )}
-            <span className="opacity-40">{fmtUa(hw.charging.current_max_ua)}</span>
+            <span className="opacity-40">
+              {fmtUa(hw.charging.target_current_max_ua || hw.charging.current_max_ua)}
+            </span>
             {hw.charging.charger_online && hw.charging.power_w > 0 && (
               <span className="opacity-40">{hw.charging.power_w.toFixed(1)}W</span>
             )}
