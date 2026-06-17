@@ -179,6 +179,30 @@ fn trunc_name(name: &str, max: usize) -> String {
     format!("{}...", name.chars().take(take).collect::<String>())
 }
 
+fn clean_proxy_name(name: &str) -> String {
+    let without_url = name
+        .split_whitespace()
+        .filter(|part| !part.starts_with("网址:") && !part.starts_with("网址："))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if without_url.is_empty() {
+        "unknown".to_string()
+    } else {
+        without_url
+    }
+}
+
+fn ascii_proxy_name(name: &str) -> String {
+    let ascii = clean_proxy_name(name)
+        .chars()
+        .map(|c| if c.is_ascii_graphic() || c == ' ' { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if ascii.is_empty() { "selected".to_string() } else { ascii }
+}
+
 fn char_width(c: char) -> usize {
     if c.is_ascii() { 1 } else { 2 }
 }
@@ -717,6 +741,44 @@ fn render(
             fmt_speed(rx_s),
             rx_mb,
         ));
+    }
+    if o.mihomo.available {
+        let vpn_kind = if o.mihomo.tun_enabled {
+            if utf8 { "TUN" } else { "tun" }
+        } else if utf8 {
+            "代理"
+        } else {
+            "proxy"
+        };
+        let proxy_name = if utf8 {
+            clean_proxy_name(&o.mihomo.active_proxy)
+        } else {
+            ascii_proxy_name(&o.mihomo.active_proxy)
+        };
+        let proxy = trunc_display(&proxy_name, if utf8 { 30 } else { 36 });
+        if utf8 {
+            out.push_str(&format!(
+                "    \x1b[35mVPN: {} {} | 节点:{} | 连接:{} | ↓{} ↑{}\x1b[0m\r\n",
+                vpn_kind,
+                o.mihomo.mode,
+                proxy,
+                o.mihomo.connection_count,
+                fmt_bytes(o.mihomo.download_total as f64),
+                fmt_bytes(o.mihomo.upload_total as f64),
+            ));
+        } else {
+            out.push_str(&format!(
+                "    \x1b[35mVPN: {} {} | node:{} | conn:{} | D:{} U:{}\x1b[0m\r\n",
+                vpn_kind,
+                o.mihomo.mode,
+                proxy,
+                o.mihomo.connection_count,
+                fmt_bytes(o.mihomo.download_total as f64),
+                fmt_bytes(o.mihomo.upload_total as f64),
+            ));
+        }
+    } else {
+        out.push_str(if utf8 { "    VPN: 未连接\r\n" } else { "    VPN: disconnected\r\n" });
     }
     out.push_str(gap);
 

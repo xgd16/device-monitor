@@ -56,6 +56,21 @@ export interface NetworkInterface {
   tx_packets: number;
 }
 
+export interface MihomoInfo {
+  available: boolean;
+  controller: string;
+  version: string;
+  mode: string;
+  tun_enabled: boolean;
+  active_group: string;
+  active_proxy: string;
+  proxy_chain: string[];
+  connection_count: number;
+  upload_total: number;
+  download_total: number;
+  error: string;
+}
+
 export interface ProcessInfo {
   pid: number;
   name: string;
@@ -90,6 +105,7 @@ export interface SystemOverview {
   thermal: ThermalZone[];
   battery: BatteryInfo;
   network: NetworkInterface[];
+  mihomo: MihomoInfo;
   uptime: number;
   load_avg: number[];
   process_count: number;

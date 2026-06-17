@@ -17,6 +17,20 @@ function fmtSpeed(bps: number) {
   return `${bps.toFixed(0)} B/s`;
 }
 
+function fmtBytes(bytes: number) {
+  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)}GB`;
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)}MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${bytes}B`;
+}
+
+function shortProxyName(name: string) {
+  return name
+    .replace(/网址[:：]\S+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim() || '未知';
+}
+
 function fmtUa(ua: number) {
   return fmtChargeUa(ua);
 }
@@ -114,6 +128,22 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
       ),
     });
   }
+
+  rows.push({
+    label: 'VPN',
+    value: data.mihomo?.available ? (
+      <span className="font-mono text-[11px] flex flex-col items-end gap-0.5">
+        <span className="text-success">
+          {data.mihomo.tun_enabled ? 'TUN' : '代理'} · {shortProxyName(data.mihomo.active_proxy)}
+        </span>
+        <span className="opacity-40 text-[10px]">
+          {data.mihomo.mode || 'rule'} · {data.mihomo.connection_count} 连接 · ↓{fmtBytes(data.mihomo.download_total)} ↑{fmtBytes(data.mihomo.upload_total)}
+        </span>
+      </span>
+    ) : (
+      <span className="font-mono text-[11px] opacity-40">未连接</span>
+    ),
+  });
 
   if (hw) {
     rows.push(

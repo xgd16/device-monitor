@@ -11,6 +11,7 @@ pub mod network;
 pub mod process;
 pub mod hardware;
 pub mod disk;
+pub mod mihomo;
 
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,9 @@ pub struct SystemOverview {
     pub thermal: Vec<ThermalZone>,
     pub battery: BatteryInfo,
     pub network: Vec<NetworkInterface>,
+    /// Mihomo / Clash Meta 代理状态。
+    #[serde(default)]
+    pub mihomo: MihomoInfo,
     /// 系统运行时间（秒），来自 `/proc/uptime`
     pub uptime: f64,
     /// 1/5/15 分钟平均负载，来自 `/proc/loadavg`
@@ -30,6 +34,23 @@ pub struct SystemOverview {
     pub process_count: usize,
     /// 采集时刻 Unix 时间戳（秒）
     pub timestamp: i64,
+}
+
+/// Mihomo / Clash Meta 当前连接状态。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MihomoInfo {
+    pub available: bool,
+    pub controller: String,
+    pub version: String,
+    pub mode: String,
+    pub tun_enabled: bool,
+    pub active_group: String,
+    pub active_proxy: String,
+    pub proxy_chain: Vec<String>,
+    pub connection_count: usize,
+    pub upload_total: u64,
+    pub download_total: u64,
+    pub error: String,
 }
 
 /// CPU 总体与各核心信息。
@@ -148,6 +169,7 @@ pub fn collect_system_overview() -> SystemOverview {
         thermal: thermal::collect(),
         battery: battery::collect(),
         network: network::collect_interfaces(),
+        mihomo: mihomo::collect(),
         uptime: read_uptime(),
         load_avg: read_load_avg(),
         process_count: process::count_processes(),
