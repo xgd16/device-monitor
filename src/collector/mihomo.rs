@@ -165,7 +165,54 @@ fn get_json(controller: &str, path: &str) -> Result<Value, String> {
         return Err(format!("mihomo {} returned {}", path, head.lines().next().unwrap_or("")));
     }
 
-    serde_json::from_str(body).map_err(|e| format!("parse mihomo {} failed: {}", path, e))
+    let body = if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        decode_chunked_body(body)?
+    } else {
+        body.to_string()
+    };
+
+    serde_json::from_str(&body).map_err(|e| format!("parse mihomo {} failed: {}", path, e))
+}
+
+fn decode_chunked_body(body: &str) -> Result<String, String> {
+    let bytes = body.as_bytes();
+    let mut pos = 0usize;
+    let mut decoded = Vec::new();
+
+    loop {
+        let line_end = find_crlf(bytes, pos)
+            .ok_or_else(|| "invalid chunked mihomo response".to_string())?;
+        let size_line = std::str::from_utf8(&bytes[pos..line_end])
+            .map_err(|e| format!("invalid chunk size encoding: {}", e))?;
+        let size_hex = size_line.split(';').next().unwrap_or(size_line).trim();
+        let size = usize::from_str_radix(size_hex, 16)
+            .map_err(|_| format!("invalid chunk size: {}", size_hex))?;
+        pos = line_end + 2;
+
+        if size == 0 {
+            break;
+        }
+        if bytes.len() < pos + size + 2 {
+            return Err("truncated chunked mihomo response".to_string());
+        }
+
+        decoded.extend_from_slice(&bytes[pos..pos + size]);
+        pos += size;
+        if bytes.get(pos..pos + 2) != Some(b"\r\n") {
+            return Err("invalid chunk terminator".to_string());
+        }
+        pos += 2;
+    }
+
+    String::from_utf8(decoded).map_err(|e| format!("invalid mihomo json utf8: {}", e))
+}
+
+fn find_crlf(bytes: &[u8], from: usize) -> Option<usize> {
+    bytes
+        .get(from..)?
+        .windows(2)
+        .position(|w| w == b"\r\n")
+        .map(|idx| from + idx)
 }
 
 fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
