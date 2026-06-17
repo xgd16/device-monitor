@@ -20,7 +20,12 @@ import { fmtChargeUa, chargeSourceLabel, chargeModeLabel, isChargePresetSelected
 interface HardwareState {
   flashlight: { white_on: boolean; yellow_on: boolean; max_brightness: number };
   status_led: { on: boolean; brightness: number; max_brightness: number; percent: number };
-  cpu_status_led_link: { enabled: boolean };
+  cpu_status_led_link: {
+    enabled: boolean;
+    threshold_pct: number;
+    link_brightness_pct: number;
+    smoothed_cpu_pct: number;
+  };
   brightness: { current: number; max: number; percent: number };
   screen_on: boolean;
   vibrating: boolean;
@@ -228,7 +233,15 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
           <span className="inline-block w-3 h-3 rounded-full border-2 border-default-300 bg-white" style={{ opacity: hw.status_led.on ? 1 : 0.2 }} />
           <span className="font-mono text-sm">white:status</span>
           <span className="font-mono text-[10px] opacity-30">{hw.status_led.brightness}/{hw.status_led.max_brightness}</span>
+          {hw.cpu_status_led_link.enabled && (
+            <span className="font-mono text-[10px] opacity-40">
+              联动 {hw.cpu_status_led_link.link_brightness_pct}%
+            </span>
+          )}
         </div>
+        <span className="font-mono text-[10px] opacity-30">
+          CPU 联动：{hw.cpu_status_led_link.threshold_pct}% 以下不亮，超过后平滑增亮
+        </span>
         <Button
           size="sm"
           variant={hw.cpu_status_led_link.enabled ? 'danger' : 'secondary'}

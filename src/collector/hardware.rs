@@ -60,6 +60,12 @@ pub struct StatusLedState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuStatusLedLinkState {
     pub enabled: bool,
+    /// 低于该 CPU 使用率时不亮灯
+    pub threshold_pct: u32,
+    /// 联动模式下当前目标亮度（0-100%）
+    pub link_brightness_pct: u32,
+    /// 平滑后的 CPU 使用率（供 UI 展示）
+    pub smoothed_cpu_pct: f64,
 }
 
 /// 充电电流限制（pmi8998-charger current_max，单位 µA）。
@@ -146,6 +152,17 @@ const WIFI_IFACE: &str = "wlan0";
 static VIBRATING: AtomicBool = AtomicBool::new(false);
 /// CPU 使用率是否联动状态 LED 亮度。
 static CPU_STATUS_LED_LINK: AtomicBool = AtomicBool::new(false);
+/// CPU 联动：低于此使用率熄灭
+const CPU_LINK_THRESHOLD: f64 = 30.0;
+/// CPU 联动：超过阈值后的最低亮度（%）
+const CPU_LINK_MIN_BRIGHTNESS: u32 = 8;
+/// 指数平滑系数（越大响应越快）
+const CPU_LINK_SMOOTH_ALPHA: f64 = 0.35;
+/// 亮度变化小于该值时不写 sysfs（%）
+const CPU_LINK_WRITE_THRESHOLD: u32 = 2;
+static CPU_LINK_SMOOTHED: Mutex<f64> = Mutex::new(0.0);
+static CPU_LINK_LAST_WRITTEN: AtomicU32 = AtomicU32::new(0);
+static CPU_LINK_CURRENT_BRIGHTNESS: AtomicU32 = AtomicU32::new(0);
 /// 仅供电不充电模式（qcom_smbx 通过 status 挂起输入充电）。
 static CHARGE_POWER_ONLY: AtomicBool = AtomicBool::new(false);
 static LAST_CHARGER_ONLINE: AtomicBool = AtomicBool::new(false);
@@ -226,9 +243,7 @@ pub fn get_state() -> HardwareState {
             max_brightness: status_max,
             percent: status_pct,
         },
-        cpu_status_led_link: CpuStatusLedLinkState {
-            enabled: CPU_STATUS_LED_LINK.load(Ordering::Relaxed),
-        },
+        cpu_status_led_link: read_cpu_status_led_link_state(),
         brightness: BrightnessState {
             current: brightness,
             max: brightness_max,
@@ -509,6 +524,7 @@ pub fn stop_vibrate() {
 /// 开关状态 LED（white:status）。
 pub fn set_status_led(on: bool) -> Result<(), String> {
     CPU_STATUS_LED_LINK.store(false, Ordering::Relaxed);
+    reset_cpu_link_smoothing();
     let max: u32 = read_sysfs(STATUS_LED_MAX).parse().unwrap_or(511);
     let val = if on { max.to_string() } else { "0".to_string() };
     write_sysfs(STATUS_LED, &val)
@@ -517,6 +533,7 @@ pub fn set_status_led(on: bool) -> Result<(), String> {
 /// 设置状态 LED 亮度（0-100%）。
 pub fn set_status_led_brightness(percent: u32) -> Result<(), String> {
     CPU_STATUS_LED_LINK.store(false, Ordering::Relaxed);
+    reset_cpu_link_smoothing();
     set_status_led_brightness_raw(percent)
 }
 
@@ -526,23 +543,78 @@ fn set_status_led_brightness_raw(percent: u32) -> Result<(), String> {
     write_sysfs(STATUS_LED, &val.to_string())
 }
 
+fn read_cpu_status_led_link_state() -> CpuStatusLedLinkState {
+    CpuStatusLedLinkState {
+        enabled: CPU_STATUS_LED_LINK.load(Ordering::Relaxed),
+        threshold_pct: CPU_LINK_THRESHOLD as u32,
+        link_brightness_pct: CPU_LINK_CURRENT_BRIGHTNESS.load(Ordering::Relaxed),
+        smoothed_cpu_pct: *CPU_LINK_SMOOTHED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+    }
+}
+
+fn reset_cpu_link_smoothing() {
+    *CPU_LINK_SMOOTHED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = 0.0;
+    CPU_LINK_LAST_WRITTEN.store(0, Ordering::Relaxed);
+    CPU_LINK_CURRENT_BRIGHTNESS.store(0, Ordering::Relaxed);
+}
+
+/// 将平滑 CPU 使用率映射为联动亮度：<= 阈值熄灭，30..100 映射 8..100。
+fn map_cpu_to_link_brightness(smoothed_cpu: f64) -> u32 {
+    if smoothed_cpu <= CPU_LINK_THRESHOLD {
+        return 0;
+    }
+    let range = 100.0 - CPU_LINK_THRESHOLD;
+    let normalized = ((smoothed_cpu - CPU_LINK_THRESHOLD) / range).clamp(0.0, 1.0);
+    let min_b = CPU_LINK_MIN_BRIGHTNESS as f64;
+    (min_b + normalized * (100.0 - min_b)).round() as u32
+}
+
+fn should_write_link_brightness(target: u32, last: u32) -> bool {
+    if target == last {
+        return false;
+    }
+    if target == 0 || last == 0 {
+        return true;
+    }
+    target.abs_diff(last) >= CPU_LINK_WRITE_THRESHOLD
+}
+
 /// 开关 CPU 使用率联动状态 LED。
 pub fn set_cpu_status_led_link(enabled: bool) -> Result<bool, String> {
     CPU_STATUS_LED_LINK.store(enabled, Ordering::Relaxed);
-    if !enabled {
+    if enabled {
+        reset_cpu_link_smoothing();
+    } else {
+        reset_cpu_link_smoothing();
         set_status_led_brightness_raw(0)?;
     }
     Ok(enabled)
 }
 
-/// 后台采集时调用：开启联动后按 CPU 使用率线性映射到 LED 亮度。
+/// 后台采集时调用：开启联动后按 CPU 使用率平滑映射到 LED 亮度。
 pub fn apply_cpu_status_led_link(cpu_usage: f64) -> Result<Option<u32>, String> {
     if !CPU_STATUS_LED_LINK.load(Ordering::Relaxed) {
         return Ok(None);
     }
-    let percent = cpu_usage.clamp(0.0, 100.0).round() as u32;
-    set_status_led_brightness_raw(percent)?;
-    Ok(Some(percent))
+    let cpu = cpu_usage.clamp(0.0, 100.0);
+    let mut smoothed = CPU_LINK_SMOOTHED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    *smoothed = CPU_LINK_SMOOTH_ALPHA * cpu + (1.0 - CPU_LINK_SMOOTH_ALPHA) * *smoothed;
+
+    let target = map_cpu_to_link_brightness(*smoothed);
+    CPU_LINK_CURRENT_BRIGHTNESS.store(target, Ordering::Relaxed);
+
+    let last = CPU_LINK_LAST_WRITTEN.load(Ordering::Relaxed);
+    if should_write_link_brightness(target, last) {
+        set_status_led_brightness_raw(target)?;
+        CPU_LINK_LAST_WRITTEN.store(target, Ordering::Relaxed);
+    }
+    Ok(Some(target))
 }
 
 /// 设置充电电流上限（µA）。0 表示不限流（由驱动默认处理）。

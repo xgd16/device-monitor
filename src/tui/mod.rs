@@ -252,6 +252,17 @@ fn fmt_charge_ua(ua: u32) -> String {
     }
 }
 
+fn fmt_cpu_led_link(link: &collector::hardware::CpuStatusLedLinkState, utf8: bool) -> String {
+    if !link.enabled {
+        return if utf8 { "手动".into() } else { "manual".into() };
+    }
+    format!(
+        "{}%+ {}%",
+        link.threshold_pct,
+        link.link_brightness_pct
+    )
+}
+
 fn fmt_charge_source(source: &str, utf8: bool) -> &'static str {
     match (source, utf8) {
         ("wired", true) => "有线",
@@ -602,7 +613,7 @@ fn render(
             if hw.charging.charge_mode == "power_only" { "仅供电" } else { "充电" },
             fmt_charge_ua(hw.charging.current_max_ua),
             if hw.wifi_power_save.enabled { "开" } else { "关" },
-            if hw.cpu_status_led_link.enabled { "联动" } else { "手动" },
+            fmt_cpu_led_link(&hw.cpu_status_led_link, true),
             if hw.vibrating { "运行" } else { "空闲" },
         ));
         if hw.charging.charger_online && hw.charging.power_w > 0.0 {
@@ -622,11 +633,12 @@ fn render(
             on_off(hw.status_led.on),
         ));
         out.push_str(&format!(
-            "    Charge: {} {} {} | WiFi PS: {} | Vibrate: {}\r\n",
+            "    Charge: {} {} {} | WiFi PS: {} | CPU LED: {} | Vibrate: {}\r\n",
             fmt_charge_source(&hw.charging.charge_source, false),
             if hw.charging.charge_mode == "power_only" { "pwr" } else { "chg" },
             fmt_charge_ua(hw.charging.current_max_ua),
             if hw.wifi_power_save.enabled { "on" } else { "off" },
+            fmt_cpu_led_link(&hw.cpu_status_led_link, false),
             if hw.vibrating { "active" } else { "idle" },
         ));
         if hw.charging.charger_online && hw.charging.power_w > 0.0 {
