@@ -138,6 +138,7 @@ async fn main() {
         .route("/hardware/status-led", post(api::hardware::status_led_control))
         .route("/hardware/cpu-status-led-link", post(api::hardware::cpu_status_led_link_control))
         .route("/hardware/charge-current", post(api::hardware::charge_current_control))
+        .route("/hardware/charge-mode", post(api::hardware::charge_mode_control))
         .route("/hardware/gpu-max-freq", post(api::hardware::gpu_max_freq_control))
         .route("/hardware/wifi-power-save", post(api::hardware::wifi_power_save_control))
         .route("/hardware/clear-memory", post(api::hardware::clear_memory))

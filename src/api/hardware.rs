@@ -128,6 +128,20 @@ pub async fn charge_current_control(Json(params): Json<ChargeCurrentParams>) -> 
 }
 
 #[derive(Deserialize)]
+pub struct ChargeModeParams {
+    /// true = 仅供电不充电，false = 正常充电
+    pub power_only: bool,
+}
+
+/// `POST /api/hardware/charge-mode` — 切换充电模式。
+pub async fn charge_mode_control(Json(params): Json<ChargeModeParams>) -> Json<Value> {
+    match collector::hardware::set_charge_mode(params.power_only) {
+        Ok(mode) => success(serde_json::json!({ "charge_mode": mode })),
+        Err(e) => error(&e),
+    }
+}
+
+#[derive(Deserialize)]
 pub struct GpuMaxFreqParams {
     /// GPU 最大频率（MHz）
     pub max_mhz: u32,

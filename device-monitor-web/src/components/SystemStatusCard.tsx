@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Card, Chip } from '@heroui/react';
 import type { SystemOverview, ProcessInfo } from '../types';
 import { fetchHardware } from '../api';
-import { percentColor, tempColor } from './utils';
+import { percentColor, tempColor, fmtChargeUa, chargeSourceLabel } from './utils';
 
 interface SystemStatusCardProps {
   data: SystemOverview;
@@ -18,9 +18,7 @@ function fmtSpeed(bps: number) {
 }
 
 function fmtUa(ua: number) {
-  if (ua === 0) return '不限';
-  if (ua >= 1_000_000) return `${(ua / 1_000_000).toFixed(1)}A`;
-  return `${Math.round(ua / 1000)}mA`;
+  return fmtChargeUa(ua);
 }
 
 function fmtUptime(sec: number) {
@@ -33,7 +31,15 @@ function fmtUptime(sec: number) {
 export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCardProps) {
   const [hw, setHw] = useState<{
     screen_on: boolean;
-    charging: { current_max_ua: number; charger_online: boolean };
+    charging: {
+      current_max_ua: number;
+      current_now_ua: number;
+      power_w: number;
+      charger_online: boolean;
+      charge_source: string;
+      usb_type: string;
+      charge_mode: string;
+    };
     wifi_power_save: { enabled: boolean };
   } | null>(null);
 
@@ -119,9 +125,15 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
         value: (
           <span className="font-mono text-[11px] flex items-center gap-2">
             <Chip size="sm" color={hw.charging.charger_online ? 'success' : 'default'} variant="secondary">
-              {hw.charging.charger_online ? '已接入' : '未接入'}
+              {chargeSourceLabel(hw.charging.charge_source)}
             </Chip>
+            {hw.charging.charge_mode === 'power_only' && (
+              <Chip size="sm" color="warning" variant="secondary">仅供电</Chip>
+            )}
             <span className="opacity-40">{fmtUa(hw.charging.current_max_ua)}</span>
+            {hw.charging.charger_online && hw.charging.power_w > 0 && (
+              <span className="opacity-40">{hw.charging.power_w.toFixed(1)}W</span>
+            )}
           </span>
         ),
       },

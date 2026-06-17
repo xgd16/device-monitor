@@ -42,6 +42,8 @@ export const setCpuStatusLedLink = (enabled: boolean) =>
   api.post('/hardware/cpu-status-led-link', { enabled }).then(r => r.data);
 export const setChargeCurrent = (microamps: number) =>
   api.post('/hardware/charge-current', { microamps }).then(r => r.data);
+export const setChargeMode = (powerOnly: boolean) =>
+  api.post('/hardware/charge-mode', { power_only: powerOnly }).then(r => r.data);
 export const setGpuMaxFreq = (max_mhz: number) =>
   api.post('/hardware/gpu-max-freq', { max_mhz }).then(r => r.data);
 export const setWifiPowerSave = (enabled: boolean) =>

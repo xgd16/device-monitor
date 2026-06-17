@@ -63,6 +63,32 @@ export function batteryStatusLabel(status: string): string {
   }
 }
 
+export function fmtChargeUa(ua: number) {
+  if (ua === 0) return '不限';
+  if (ua >= 1_000_000) return `${(ua / 1_000_000).toFixed(1)}A`;
+  return `${Math.round(ua / 1000)}mA`;
+}
+
+export function chargeModeLabel(mode: string) {
+  return mode === 'power_only' ? '仅供电' : '正常充电';
+}
+
+export function chargeSourceLabel(source: string) {
+  switch (source) {
+    case 'wired':
+      return '有线';
+    case 'wireless':
+      return '无线';
+    default:
+      return '未接入';
+  }
+}
+
+export function isChargePresetSelected(currentUa: number, presetUa: number) {
+  if (presetUa === 0) return currentUa === 0;
+  return Math.abs(currentUa - presetUa) < 50_000;
+}
+
 export function thermalSensorLabel(name: string): { title: string; description: string } {
   const normalized = name.toLowerCase();
 

@@ -228,6 +228,17 @@ fn fmt_charge_ua(ua: u32) -> String {
     }
 }
 
+fn fmt_charge_source(source: &str, utf8: bool) -> &'static str {
+    match (source, utf8) {
+        ("wired", true) => "有线",
+        ("wireless", true) => "无线",
+        ("wired", false) => "wired",
+        ("wireless", false) => "wls",
+        (_, true) => "未接",
+        (_, false) => "unplug",
+    }
+}
+
 fn fmt_freq_khz(khz: u64) -> String {
     if khz >= 1_000_000 {
         format!("{:.2}GHz", khz as f64 / 1_000_000.0)
@@ -562,13 +573,21 @@ fn render(
             on_off_label(hw.status_led.on, true),
         ));
         out.push_str(&format!(
-            "    充电:{} {} | WiFi省电:{} | CPU灯:{} | 震动:{}\r\n",
-            if hw.charging.charger_online { "接入" } else { "未接" },
+            "    充电:{} {} {} | WiFi省电:{} | CPU灯:{} | 震动:{}\r\n",
+            fmt_charge_source(&hw.charging.charge_source, true),
+            if hw.charging.charge_mode == "power_only" { "仅供电" } else { "充电" },
             fmt_charge_ua(hw.charging.current_max_ua),
             if hw.wifi_power_save.enabled { "开" } else { "关" },
             if hw.cpu_status_led_link.enabled { "联动" } else { "手动" },
             if hw.vibrating { "运行" } else { "空闲" },
         ));
+        if hw.charging.charger_online && hw.charging.power_w > 0.0 {
+            out.push_str(&format!(
+                "    充电功率:{:.1}W {:.0}mA\r\n",
+                hw.charging.power_w,
+                hw.charging.current_now_ua.max(0) as f64 / 1000.0,
+            ));
+        }
     } else {
         out.push_str(&format!(
             "    Screen: {} {}% | Flash W:{} Y:{} | Status LED: {}\r\n",
@@ -579,12 +598,20 @@ fn render(
             on_off(hw.status_led.on),
         ));
         out.push_str(&format!(
-            "    Charge: {} {} | WiFi PS: {} | Vibrate: {}\r\n",
-            if hw.charging.charger_online { "plugged" } else { "unplug" },
+            "    Charge: {} {} {} | WiFi PS: {} | Vibrate: {}\r\n",
+            fmt_charge_source(&hw.charging.charge_source, false),
+            if hw.charging.charge_mode == "power_only" { "pwr" } else { "chg" },
             fmt_charge_ua(hw.charging.current_max_ua),
             if hw.wifi_power_save.enabled { "on" } else { "off" },
             if hw.vibrating { "active" } else { "idle" },
         ));
+        if hw.charging.charger_online && hw.charging.power_w > 0.0 {
+            out.push_str(&format!(
+                "    Charge pwr: {:.1}W {:.0}mA\r\n",
+                hw.charging.power_w,
+                hw.charging.current_now_ua.max(0) as f64 / 1000.0,
+            ));
+        }
     }
     out.push_str(gap);
 

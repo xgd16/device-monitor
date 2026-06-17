@@ -66,8 +66,32 @@ pub struct CpuStatusLedLinkState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChargingState {
     pub current_max_ua: u32,
+    pub current_now_ua: i32,
+    pub voltage_now_uv: u32,
+    pub power_w: f64,
     pub charger_online: bool,
+    /// 充电器协议类型（SDP / DCP / CDP / Unknown 等）
+    pub usb_type: String,
+    /// 充电来源：`wired` / `wireless` / `none`
+    pub charge_source: String,
+    /// 有线充电最大输入电流（µA，18W@5V）
+    pub wired_max_ua: u32,
+    /// 无线充电最大输入电流（µA，10W@5V）
+    pub wireless_max_ua: u32,
+    /// 充电模式：`normal` 正常充电，`power_only` 仅供电不充电
+    pub charge_mode: String,
 }
+
+/// Mi Mix 3 有线最大充电功率（W）
+const WIRED_MAX_POWER_W: f64 = 18.0;
+/// Mi Mix 3 无线最大充电功率（W）
+const WIRELESS_MAX_POWER_W: f64 = 10.0;
+/// 有线最大输入电流（µA）：18W @ 5V
+const WIRED_MAX_UA: u32 = 3_600_000;
+/// 无线最大输入电流（µA）：10W @ 5V
+const WIRELESS_MAX_UA: u32 = 2_000_000;
+/// qcom_smbx 驱动允许的最大输入电流（µA）
+const DRIVER_MAX_UA: u32 = 4_800_000;
 
 /// Adreno GPU devfreq 状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,8 +129,14 @@ pub struct VibePattern {
 const BACKLIGHT: &str = "/sys/class/backlight/ae94000.dsi.0";
 const STATUS_LED: &str = "/sys/class/leds/white:status/brightness";
 const STATUS_LED_MAX: &str = "/sys/class/leds/white:status/max_brightness";
+const CHARGER_SUPPLY: &str = "pmi8998-charger";
 const CHARGER_CURRENT_MAX: &str = "/sys/class/power_supply/pmi8998-charger/current_max";
+const CHARGER_CURRENT_NOW: &str = "/sys/class/power_supply/pmi8998-charger/current_now";
+const CHARGER_VOLTAGE_NOW: &str = "/sys/class/power_supply/pmi8998-charger/voltage_now";
 const CHARGER_ONLINE: &str = "/sys/class/power_supply/pmi8998-charger/online";
+const CHARGER_USB_TYPE: &str = "/sys/class/power_supply/pmi8998-charger/usb_type";
+const CHARGER_STATUS: &str = "/sys/class/power_supply/pmi8998-charger/status";
+const BATTERY_SUPPLY: &str = "qcom-battery";
 const GPU_DEVFREQ: &str = "/sys/class/devfreq/5000000.gpu";
 const WIFI_IFACE: &str = "wlan0";
 
@@ -114,6 +144,9 @@ const WIFI_IFACE: &str = "wlan0";
 static VIBRATING: AtomicBool = AtomicBool::new(false);
 /// CPU 使用率是否联动状态 LED 亮度。
 static CPU_STATUS_LED_LINK: AtomicBool = AtomicBool::new(false);
+/// 仅供电不充电模式（qcom_smbx 通过 status 挂起输入充电）。
+static CHARGE_POWER_ONLY: AtomicBool = AtomicBool::new(false);
+static LAST_CHARGER_ONLINE: AtomicBool = AtomicBool::new(false);
 /// 振动模式的后台线程句柄
 static VIBRATE_HANDLE: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(None);
 
@@ -205,12 +238,137 @@ pub fn get_state() -> HardwareState {
     }
 }
 
+fn read_supply_field(supply: &str, field: &str) -> String {
+    read_sysfs(&format!("/sys/class/power_supply/{supply}/{field}"))
+}
+
+fn wireless_charger_online() -> bool {
+    let dir = Path::new("/sys/class/power_supply");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == CHARGER_SUPPLY || name == BATTERY_SUPPLY || name == "battery" {
+            continue;
+        }
+        if read_supply_field(&name, "type") != "Wireless" {
+            continue;
+        }
+        if read_supply_field(&name, "online") == "1" {
+            return true;
+        }
+    }
+    false
+}
+
+fn detect_charge_source(charger_online: bool, usb_type: &str) -> String {
+    if !charger_online {
+        return "none".into();
+    }
+    if wireless_charger_online() || usb_type.to_ascii_lowercase().contains("wireless") {
+        return "wireless".into();
+    }
+    "wired".into()
+}
+
+fn charge_power_w(voltage_uv: u32, current_ua: i32) -> f64 {
+    if voltage_uv == 0 || current_ua <= 0 {
+        return 0.0;
+    }
+    (voltage_uv as f64 * current_ua as f64) / 1_000_000_000_000.0
+}
+
+fn charge_mode_name(power_only: bool) -> String {
+    if power_only {
+        "power_only".into()
+    } else {
+        "normal".into()
+    }
+}
+
+/// 向 qcom_smbx 写入充电挂起：0 = 仅供电，1 = 恢复充电。
+fn apply_charge_mode_hw(power_only: bool) -> Result<(), String> {
+    let val = if power_only { "0" } else { "1" };
+    write_sysfs(CHARGER_STATUS, val)
+}
+
+fn maybe_reapply_charge_mode(charger_online: bool) {
+    let was_online = LAST_CHARGER_ONLINE.swap(charger_online, Ordering::Relaxed);
+    if charger_online && !was_online {
+        let power_only = CHARGE_POWER_ONLY.load(Ordering::Relaxed);
+        let _ = apply_charge_mode_hw(power_only);
+    }
+}
+
 fn read_charging_state() -> ChargingState {
     let current_max_ua: u32 = read_sysfs(CHARGER_CURRENT_MAX).parse().unwrap_or(0);
     let charger_online = read_sysfs(CHARGER_ONLINE) == "1";
+    maybe_reapply_charge_mode(charger_online);
+    let usb_type = read_sysfs(CHARGER_USB_TYPE);
+    let charge_source = detect_charge_source(charger_online, &usb_type);
+    let charge_mode = charge_mode_name(CHARGE_POWER_ONLY.load(Ordering::Relaxed));
+
+    let mut voltage_now_uv: u32 = read_sysfs(CHARGER_VOLTAGE_NOW).parse().unwrap_or(0);
+    let mut current_now_ua: i32 = read_sysfs(CHARGER_CURRENT_NOW).parse().unwrap_or(0);
+
+    if charger_online && (voltage_now_uv == 0 || current_now_ua <= 0) {
+        voltage_now_uv = read_supply_field(BATTERY_SUPPLY, "voltage_now")
+            .parse()
+            .unwrap_or(voltage_now_uv);
+        let battery_current: i32 = read_supply_field(BATTERY_SUPPLY, "current_now")
+            .parse()
+            .unwrap_or(0);
+        if battery_current > 0 {
+            current_now_ua = battery_current;
+        }
+    }
+
+    let power_w = charge_power_w(voltage_now_uv, current_now_ua);
+
     ChargingState {
         current_max_ua,
+        current_now_ua,
+        voltage_now_uv,
+        power_w,
         charger_online,
+        usb_type,
+        charge_source,
+        wired_max_ua: WIRED_MAX_UA,
+        wireless_max_ua: WIRELESS_MAX_UA,
+        charge_mode,
+    }
+}
+
+fn cap_charge_current(microamps: u32, charge_source: &str) -> Result<u32, String> {
+    if microamps == 0 {
+        return Ok(0);
+    }
+    let type_max = match charge_source {
+        "wireless" => WIRELESS_MAX_UA,
+        _ => WIRED_MAX_UA,
+    };
+    if microamps > type_max {
+        return Err(format!(
+            "超过{}充电上限 {}（约 {}W）",
+            if charge_source == "wireless" { "无线" } else { "有线" },
+            fmt_ua_label(type_max),
+            if charge_source == "wireless" {
+                WIRELESS_MAX_POWER_W
+            } else {
+                WIRED_MAX_POWER_W
+            }
+        ));
+    }
+    Ok(microamps.min(DRIVER_MAX_UA))
+}
+
+fn fmt_ua_label(ua: u32) -> String {
+    if ua >= 1_000_000 {
+        format!("{:.1}A", ua as f64 / 1_000_000.0)
+    } else {
+        format!("{}mA", ua / 1000)
     }
 }
 
@@ -380,8 +538,26 @@ pub fn apply_cpu_status_led_link(cpu_usage: f64) -> Result<Option<u32>, String> 
 
 /// 设置充电电流上限（µA）。0 表示不限流（由驱动默认处理）。
 pub fn set_charge_current_max(microamps: u32) -> Result<u32, String> {
-    write_sysfs(CHARGER_CURRENT_MAX, &microamps.to_string())?;
-    Ok(microamps)
+    let state = read_charging_state();
+    if state.charge_mode == "power_only" {
+        return Err("仅供电模式下无法设置充电电流，请先切换为正常充电".into());
+    }
+    let capped = cap_charge_current(microamps, &state.charge_source)?;
+    write_sysfs(CHARGER_CURRENT_MAX, &capped.to_string())?;
+    let actual: u32 = read_sysfs(CHARGER_CURRENT_MAX).parse().unwrap_or(0);
+    // 未接入充电器时驱动可能读回 0，返回写入值供前端展示
+    Ok(if actual == 0 && capped > 0 {
+        capped
+    } else {
+        actual
+    })
+}
+
+/// 设置充电模式：`power_only` = 仅供电不充电，`normal` = 正常充电。
+pub fn set_charge_mode(power_only: bool) -> Result<String, String> {
+    apply_charge_mode_hw(power_only)?;
+    CHARGE_POWER_ONLY.store(power_only, Ordering::Relaxed);
+    Ok(charge_mode_name(power_only))
 }
 
 /// 设置 GPU 最大频率（MHz），会写入 devfreq max_freq。

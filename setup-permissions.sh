@@ -13,8 +13,9 @@ chmod 666 /sys/class/leds/white:status/brightness
 chmod 666 /sys/class/backlight/ae94000.dsi.0/brightness
 chmod 666 /sys/class/backlight/ae94000.dsi.0/bl_power
 
-# Charging current limit
+# Charging current limit + charge suspend (power-only mode)
 chmod 666 /sys/class/power_supply/pmi8998-charger/current_max 2>/dev/null || true
+chmod 666 /sys/class/power_supply/pmi8998-charger/status 2>/dev/null || true
 
 # GPU devfreq
 chmod 666 /sys/class/devfreq/5000000.gpu/max_freq 2>/dev/null || true

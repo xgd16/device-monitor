@@ -12,8 +12,10 @@ import {
   setStatusLed,
   setCpuStatusLedLink,
   setChargeCurrent,
+  setChargeMode,
   setWifiPowerSave,
 } from '../api';
+import { fmtChargeUa, chargeSourceLabel, chargeModeLabel, isChargePresetSelected } from './utils';
 
 interface HardwareState {
   flashlight: { white_on: boolean; yellow_on: boolean; max_brightness: number };
@@ -22,18 +24,32 @@ interface HardwareState {
   brightness: { current: number; max: number; percent: number };
   screen_on: boolean;
   vibrating: boolean;
-  charging: { current_max_ua: number; charger_online: boolean };
+  charging: {
+    current_max_ua: number;
+    current_now_ua: number;
+    voltage_now_uv: number;
+    power_w: number;
+    charger_online: boolean;
+    usb_type: string;
+    charge_source: string;
+    wired_max_ua: number;
+    wireless_max_ua: number;
+    charge_mode: string;
+  };
   wifi_power_save: { enabled: boolean; iface: string };
 }
 
 const BRIGHTNESS_PRESETS = [0, 25, 50, 75, 100];
 
-const CHARGE_PRESETS: { label: string; ua: number }[] = [
+const CHARGE_PRESETS: { label: string; ua: number; wiredOnly?: boolean }[] = [
   { label: '不限', ua: 0 },
   { label: '500mA', ua: 500_000 },
   { label: '1A', ua: 1_000_000 },
   { label: '1.5A', ua: 1_500_000 },
-  { label: '2A', ua: 2_000_000 },
+  { label: '10W', ua: 2_000_000 },
+  { label: '2.5A', ua: 2_500_000, wiredOnly: true },
+  { label: '3A', ua: 3_000_000, wiredOnly: true },
+  { label: '18W', ua: 3_600_000, wiredOnly: true },
 ];
 
 const VIBE_PRESETS: { name: string; ms: number; strong: number; weak: number }[] = [
@@ -53,9 +69,7 @@ const PATTERNS: Record<string, [number, number, number][]> = {
 };
 
 function formatUa(ua: number) {
-  if (ua === 0) return '不限';
-  if (ua >= 1_000_000) return `${(ua / 1_000_000).toFixed(1)}A`;
-  return `${Math.round(ua / 1000)}mA`;
+  return fmtChargeUa(ua);
 }
 
 export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
@@ -112,6 +126,12 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
   const handleChargeCurrent = async (ua: number) => {
     setLoading('charge');
     try { await setChargeCurrent(ua); refresh(); } catch {}
+    setLoading(null);
+  };
+
+  const handleChargeMode = async (powerOnly: boolean) => {
+    setLoading('charge-mode');
+    try { await setChargeMode(powerOnly); refresh(); } catch {}
     setLoading(null);
   };
 
@@ -225,26 +245,67 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
       <Card className="p-4 sm:p-5 flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">充电电流</span>
-          <Chip size="sm" color={hw.charging.charger_online ? 'success' : 'default'} variant="secondary">
-            {hw.charging.charger_online ? '已接入' : '未接入'}
-          </Chip>
+          <div className="flex items-center gap-2">
+            {hw.charging.charge_mode === 'power_only' && (
+              <Chip size="sm" color="warning" variant="secondary">仅供电</Chip>
+            )}
+            <Chip size="sm" color={hw.charging.charger_online ? 'success' : 'default'} variant="secondary">
+              {chargeSourceLabel(hw.charging.charge_source)}
+            </Chip>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant={hw.charging.charge_mode === 'normal' ? 'secondary' : 'ghost'}
+            isDisabled={loading === 'charge-mode'}
+            onPress={() => handleChargeMode(false)}
+            className="flex-1 font-mono text-xs"
+          >
+            正常充电
+          </Button>
+          <Button
+            size="sm"
+            variant={hw.charging.charge_mode === 'power_only' ? 'secondary' : 'ghost'}
+            isDisabled={loading === 'charge-mode'}
+            onPress={() => handleChargeMode(true)}
+            className="flex-1 font-mono text-xs"
+          >
+            仅供电
+          </Button>
         </div>
         <div className="font-mono text-sm">
           上限 <span className="text-lg">{formatUa(hw.charging.current_max_ua)}</span>
+          <span className="ml-2 text-[10px] opacity-40">{chargeModeLabel(hw.charging.charge_mode)}</span>
+          {hw.charging.charger_online && hw.charging.power_w > 0 && hw.charging.charge_mode === 'normal' && (
+            <span className="ml-2 text-[10px] opacity-40">
+              实时 {hw.charging.power_w.toFixed(1)}W · {Math.round(hw.charging.current_now_ua / 1000)}mA
+            </span>
+          )}
         </div>
+        <span className="font-mono text-[10px] opacity-30">
+          有线最大 18W · 无线最大 10W · 仅供电时挂起电池充电
+          {hw.charging.charger_online && hw.charging.usb_type && (
+            <> · {hw.charging.usb_type}</>
+          )}
+        </span>
         <div className="flex flex-wrap gap-2">
-          {CHARGE_PRESETS.map(p => (
-            <Button
-              key={p.ua}
-              size="sm"
-              variant={hw.charging.current_max_ua === p.ua ? 'secondary' : 'ghost'}
-              isDisabled={loading === 'charge'}
-              onPress={() => handleChargeCurrent(p.ua)}
-              className="font-mono text-xs"
-            >
-              {p.label}
-            </Button>
-          ))}
+          {CHARGE_PRESETS.map(p => {
+            const wirelessLimited = hw.charging.charge_source === 'wireless' && p.wiredOnly;
+            const powerOnly = hw.charging.charge_mode === 'power_only';
+            return (
+              <Button
+                key={p.ua}
+                size="sm"
+                variant={isChargePresetSelected(hw.charging.current_max_ua, p.ua) ? 'secondary' : 'ghost'}
+                isDisabled={loading === 'charge' || wirelessLimited || powerOnly}
+                onPress={() => handleChargeCurrent(p.ua)}
+                className="font-mono text-xs"
+              >
+                {p.label}
+              </Button>
+            );
+          })}
         </div>
       </Card>
 
