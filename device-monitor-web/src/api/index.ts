@@ -48,6 +48,8 @@ export const setGpuMaxFreq = (max_mhz: number) =>
   api.post('/hardware/gpu-max-freq', { max_mhz }).then(r => r.data);
 export const setWifiPowerSave = (enabled: boolean) =>
   api.post('/hardware/wifi-power-save', { enabled }).then(r => r.data);
+export const updateMihomoSubscription = () =>
+  api.post('/mihomo/subscription/update', {}, { timeout: 120000 }).then(r => r.data.data);
 
 // ── 文件管理 ──
 

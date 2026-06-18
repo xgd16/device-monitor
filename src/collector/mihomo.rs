@@ -11,6 +11,14 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 const DEFAULT_CONTROLLER: &str = "http://192.168.1.110:9090";
+const SUBSCRIPTION_LAST_UPDATE_PATH: &str = "/etc/mihomo/.last_subscription_update";
+
+pub fn subscription_last_update() -> i64 {
+    std::fs::read_to_string(SUBSCRIPTION_LAST_UPDATE_PATH)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
 
 pub fn collect() -> MihomoInfo {
     let controller = std::env::var("MIHOMO_CONTROLLER")
@@ -72,6 +80,7 @@ fn collect_inner(controller: &str) -> Result<MihomoInfo, String> {
             .get("downloadTotal")
             .and_then(Value::as_u64)
             .unwrap_or(0),
+        subscription_last_update: subscription_last_update(),
         error: String::new(),
     })
 }

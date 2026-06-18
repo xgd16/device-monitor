@@ -142,6 +142,7 @@ async fn main() {
         .route("/hardware/gpu-max-freq", post(api::hardware::gpu_max_freq_control))
         .route("/hardware/wifi-power-save", post(api::hardware::wifi_power_save_control))
         .route("/hardware/clear-memory", post(api::hardware::clear_memory))
+        .route("/mihomo/subscription/update", post(api::mihomo::update_subscription))
         .route("/database/stats", get(api::database::get_stats))
         .route("/database/cleanup", post(api::database::cleanup))
         .route("/history/metrics", get(api::history::metrics_history))

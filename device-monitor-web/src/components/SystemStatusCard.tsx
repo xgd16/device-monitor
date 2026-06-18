@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { Card, Chip } from '@heroui/react';
+import { Card, Chip, Button } from '@heroui/react';
 import type { SystemOverview, ProcessInfo } from '../types';
-import { fetchHardware } from '../api';
+import { fetchHardware, updateMihomoSubscription } from '../api';
 import { percentColor, tempColor, fmtChargeUa, chargeSourceLabel, batteryStatusLabel } from './utils';
 
 interface SystemStatusCardProps {
@@ -57,6 +57,7 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
     };
     wifi_power_save: { enabled: boolean };
   } | null>(null);
+  const [subUpdating, setSubUpdating] = useState(false);
 
   const refresh = useCallback(() => {
     fetchHardware()
@@ -141,6 +142,29 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
         </span>
         <span className="opacity-40 text-[10px]">
           {data.mihomo.mode || 'rule'} · {data.mihomo.connection_count} 连接 · ↓{fmtBytes(data.mihomo.download_total)} ↑{fmtBytes(data.mihomo.upload_total)}
+        </span>
+        <span className="opacity-40 text-[10px] flex items-center gap-1.5">
+          {data.mihomo.subscription_last_update > 0
+            ? `订阅 ${new Date(data.mihomo.subscription_last_update * 1000).toLocaleString()}`
+            : '订阅未更新'}
+          <Button
+            size="sm"
+            variant="secondary"
+            className="min-h-5 h-5 px-1.5 text-[10px]"
+            isDisabled={subUpdating}
+            onPress={async () => {
+              setSubUpdating(true);
+              try {
+                await updateMihomoSubscription();
+              } catch {
+                /* ignore */
+              } finally {
+                setSubUpdating(false);
+              }
+            }}
+          >
+            {subUpdating ? '更新中' : '更新'}
+          </Button>
         </span>
       </span>
     ) : (

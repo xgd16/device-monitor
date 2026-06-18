@@ -72,6 +72,7 @@ export interface MihomoInfo {
   connection_count: number;
   upload_total: number;
   download_total: number;
+  subscription_last_update: number;
   error: string;
 }
 

@@ -17,6 +17,7 @@ pub mod database;
 pub mod history;
 pub mod files;
 pub mod archive;
+pub mod mihomo;
 
 use axum::Json;
 use serde_json::{json, Value};

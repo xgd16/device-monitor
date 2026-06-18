@@ -50,6 +50,8 @@ pub struct MihomoInfo {
     pub connection_count: usize,
     pub upload_total: u64,
     pub download_total: u64,
+    /// 上次订阅更新时间（Unix 秒），来自 `/etc/mihomo/.last_subscription_update`
+    pub subscription_last_update: i64,
     pub error: String,
 }
 
