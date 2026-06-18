@@ -44,6 +44,10 @@ export interface BatteryInfo {
   power_w: number;
   temp_celsius: number;
   time_left_min: number;
+  effective_max_pct?: number;
+  display_capacity_pct?: number;
+  is_degraded?: boolean;
+  at_charge_limit?: boolean;
 }
 
 export interface NetworkInterface {

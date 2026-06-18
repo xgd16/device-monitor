@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Card, Chip } from '@heroui/react';
 import type { SystemOverview, ProcessInfo } from '../types';
 import { fetchHardware } from '../api';
-import { percentColor, tempColor, fmtChargeUa, chargeSourceLabel } from './utils';
+import { percentColor, tempColor, fmtChargeUa, chargeSourceLabel, batteryStatusLabel } from './utils';
 
 interface SystemStatusCardProps {
   data: SystemOverview;
@@ -97,8 +97,11 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
       label: '电池',
       value: (
         <span className="font-mono text-sm flex items-center gap-2">
-          <span style={{ color: `var(--${percentColor(battery.capacity)})` }}>{battery.capacity}%</span>
-          <span className="opacity-40 text-[10px]">{battery.status}</span>
+          <span style={{ color: `var(--${percentColor(battery.display_capacity_pct ?? battery.capacity)})` }}>{battery.capacity}%</span>
+          <span className="opacity-40 text-[10px]">{batteryStatusLabel(battery.status, battery)}</span>
+          {battery.is_degraded && (
+            <span className="opacity-40 text-[10px]">上限 {battery.effective_max_pct}%</span>
+          )}
           {battery.power_w > 0 && <span className="opacity-40 text-[10px]">{battery.power_w.toFixed(1)}W</span>}
         </span>
       ),

@@ -1,3 +1,5 @@
+import type { BatteryInfo } from '../types';
+
 export function fmtUptime(s: number): string {
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
@@ -48,7 +50,13 @@ export function percentColor(v: number): string {
   return 'success';
 }
 
-export function batteryStatusLabel(status: string): string {
+export function batteryStatusLabel(status: string, battery?: Pick<BatteryInfo, 'is_degraded' | 'at_charge_limit' | 'effective_max_pct'>) {
+  if (battery?.at_charge_limit && battery.is_degraded) {
+    return `实际已满 (${battery.effective_max_pct ?? 100}%)`;
+  }
+  if (battery?.at_charge_limit) {
+    return '已充满';
+  }
   switch (status) {
     case 'Charging':
       return '充电中';
@@ -57,10 +65,19 @@ export function batteryStatusLabel(status: string): string {
     case 'Not charging':
       return '未充电';
     case 'Full':
-      return '已充满';
+      return battery?.is_degraded ? `实际已满 (${battery.effective_max_pct ?? 100}%)` : '已充满';
     default:
       return status;
   }
+}
+
+export function batteryDisplayCapacity(battery: BatteryInfo) {
+  return battery.display_capacity_pct ?? battery.capacity;
+}
+
+export function batteryCapacityHint(battery: BatteryInfo) {
+  if (!battery.is_degraded) return null;
+  return `上限 ${battery.effective_max_pct ?? 100}%`;
 }
 
 export function fmtChargeUa(ua: number) {

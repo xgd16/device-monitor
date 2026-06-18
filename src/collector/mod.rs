@@ -104,6 +104,22 @@ pub struct BatteryInfo {
     pub temp_celsius: f64,
     /// 放电: 剩余可用分钟(正数)；充电: 距充满分钟(负数)；未知: 0
     pub time_left_min: i64,
+    /// 学习到的实际上限 SOC（老化电池可能低于 100）
+    #[serde(default = "default_battery_hundred")]
+    pub effective_max_pct: u8,
+    /// 相对实际上限映射后的显示电量（0-100，用于进度条）
+    #[serde(default = "default_battery_hundred")]
+    pub display_capacity_pct: u8,
+    /// 实际上限明显低于 100%
+    #[serde(default)]
+    pub is_degraded: bool,
+    /// 已到达实际上限（接入电源且充电停滞）
+    #[serde(default)]
+    pub at_charge_limit: bool,
+}
+
+fn default_battery_hundred() -> u8 {
+    100
 }
 
 /// 网络接口信息。

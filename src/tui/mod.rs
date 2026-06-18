@@ -694,25 +694,70 @@ fn render(
 
     // ── 电池状态 ──
     let b = &o.battery;
-    let bc = if b.capacity < 20 { 31 } else if b.capacity < 50 { 33 } else { 32 };
-    let bs = if utf8 {
-        match b.status.as_str() { "Charging" => "充电", "Discharging" => "电池", "Full" => "已满", _ => &b.status }
+    let display_pct = if b.display_capacity_pct > 0 {
+        b.display_capacity_pct
     } else {
-        match b.status.as_str() { "Charging" => "CHG", "Discharging" => "BAT", "Full" => "FULL", _ => &b.status }
+        b.capacity
     };
-    let time = if b.time_left_min > 0 {
+    let bc = if display_pct < 20 { 31 } else if display_pct < 50 { 33 } else { 32 };
+    let bs = if utf8 {
+        if b.at_charge_limit && b.is_degraded {
+            format!("满{}%", b.effective_max_pct)
+        } else {
+            match b.status.as_str() {
+                "Charging" => "充电".into(),
+                "Discharging" => "电池".into(),
+                "Full" => "已满".into(),
+                _ => b.status.clone(),
+            }
+        }
+    } else if b.at_charge_limit && b.is_degraded {
+        format!("FULL{}%", b.effective_max_pct)
+    } else {
+        match b.status.as_str() {
+            "Charging" => "CHG".into(),
+            "Discharging" => "BAT".into(),
+            "Full" => "FULL".into(),
+            _ => b.status.clone(),
+        }
+    };
+    let time = if b.at_charge_limit {
+        String::new()
+    } else if b.time_left_min > 0 {
         if utf8 { format!("余{}h{}m", b.time_left_min/60, b.time_left_min%60) }
         else { format!("Left {}h{}m", b.time_left_min/60, b.time_left_min%60) }
-    }
-        else if b.time_left_min < 0 { let a = b.time_left_min.unsigned_abs(); if utf8 { format!("满{}h{}m", a/60, a%60) } else { format!("Full {}h{}m", a/60, a%60) } }
-        else { String::new() };
+    } else if b.time_left_min < 0 {
+        let a = b.time_left_min.unsigned_abs();
+        if utf8 {
+            if b.is_degraded {
+                format!("至{}% {}h{}m", b.effective_max_pct, a/60, a%60)
+            } else {
+                format!("满{}h{}m", a/60, a%60)
+            }
+        } else if b.is_degraded {
+            format!("To{}% {}h{}m", b.effective_max_pct, a/60, a%60)
+        } else {
+            format!("Full {}h{}m", a/60, a%60)
+        }
+    } else {
+        String::new()
+    };
+    let cap_label = if b.is_degraded && b.capacity != display_pct {
+        if utf8 {
+            format!("{}/{}% rel{}", b.capacity, b.effective_max_pct, display_pct)
+        } else {
+            format!("{}/{}% r{}", b.capacity, b.effective_max_pct, display_pct)
+        }
+    } else {
+        format!("{}", b.capacity)
+    };
     let power_label = match b.status.as_str() {
         "Charging" => format!("+{:.1}W", b.power_w),
         "Discharging" => format!("-{:.1}W", b.power_w),
         _ => format!("{:.1}W", b.power_w),
     };
     out.push_str(&format!("\x1b[{}m  {} {} {}% {} {} {:.1}V {:.0}mA {} {}\x1b[0m\r\n",
-        bc, if utf8 { "【电池】" } else { "BAT" }, progress_bar(b.capacity as f64, w_bat, utf8), b.capacity, bs, power_label, b.voltage_v, b.current_ma, fmt_temp(b.temp_celsius, utf8), time));
+        bc, if utf8 { "【电池】" } else { "BAT" }, progress_bar(display_pct as f64, w_bat, utf8), cap_label, bs, power_label, b.voltage_v, b.current_ma, fmt_temp(b.temp_celsius, utf8), time));
     out.push_str(gap);
 
     // ── 温度传感器（按温度降序，显示前 N 个）──
