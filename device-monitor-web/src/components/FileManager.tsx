@@ -22,10 +22,11 @@ import {
   RiClipboardLine,
   RiCloseLine,
   RiEyeLine,
+  RiDownloadLine,
 } from '@remixicon/react';
 import type { FileEntry } from '../types';
 import {
-  listFiles, uploadFiles,
+  listFiles, uploadFiles, downloadUrl,
   mkdir, moveFile, copyFile, deleteFile,
   compressFiles, extractFiles, type ArchiveFormat,
 } from '../api';
@@ -53,6 +54,25 @@ function formatTime(ts: number): string {
 function isArchiveName(name: string): boolean {
   const ext = name.split('.').pop()?.toLowerCase();
   return ext === 'zip' || ext === '7z' || ext === 'rar';
+}
+
+function defaultCompressOutput(paths: string[], dirPath: string, format: ArchiveFormat): string {
+  const dir = dirPath === '/' ? '' : dirPath;
+  const join = (name: string) => (dir ? `${dir}/${name}` : `/${name}`);
+  const baseName = paths.length === 1
+    ? (paths[0].split('/').filter(Boolean).pop() ?? 'archive')
+    : 'archive';
+  return `${join(baseName)}.${format}`;
+}
+
+function triggerDownload(path: string, name: string) {
+  const a = document.createElement('a');
+  a.href = downloadUrl(path);
+  a.download = name;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function FileTypeIcon({ entry, className = 'w-4 h-4 shrink-0' }: { entry: FileEntry; className?: string }) {
@@ -319,20 +339,18 @@ export function FileManager({ fullPage = false }: FileManagerProps) {
   };
 
   const openCompressFor = (entry: FileEntry) => {
-    const base = currentPath === '/' ? '/archive' : `${currentPath}/archive`;
     setCompressPaths([entry.path]);
     setCompressFormat('zip');
-    setCompressOutput(`${base}.zip`);
+    setCompressOutput(defaultCompressOutput([entry.path], currentPath, 'zip'));
     setCompressOpen(true);
   };
 
   const openCompressBulk = () => {
     const paths = entries.filter((e) => checkedPaths.has(e.path)).map((e) => e.path);
     if (paths.length === 0) return;
-    const base = currentPath === '/' ? '/archive' : `${currentPath}/archive`;
     setCompressPaths(paths);
     setCompressFormat('zip');
-    setCompressOutput(`${base}.zip`);
+    setCompressOutput(defaultCompressOutput(paths, currentPath, 'zip'));
     setCompressOpen(true);
   };
 
@@ -391,6 +409,24 @@ export function FileManager({ fullPage = false }: FileManagerProps) {
     }
   };
 
+  const handleDownload = (entry: FileEntry) => {
+    if (entry.is_dir) return;
+    triggerDownload(entry.path, entry.name);
+  };
+
+  const handleDownloadBulk = () => {
+    const files = entries.filter((e) => checkedPaths.has(e.path) && !e.is_dir);
+    if (files.length === 0) return;
+    for (const entry of files) {
+      triggerDownload(entry.path, entry.name);
+    }
+  };
+
+  const selectedFileCount = useMemo(
+    () => entries.filter((e) => checkedPaths.has(e.path) && !e.is_dir).length,
+    [entries, checkedPaths],
+  );
+
   const handleUpload = async (files: FileList | File[]) => {
     const list = Array.from(files);
     if (list.length === 0) return;
@@ -435,6 +471,11 @@ export function FileManager({ fullPage = false }: FileManagerProps) {
         {checkedPaths.size > 0 && (
           <Button size="sm" variant="secondary" onPress={openCompressBulk}>
             <RiFileZipLine className="w-3.5 h-3.5" /> 压缩 ({checkedPaths.size})
+          </Button>
+        )}
+        {selectedFileCount > 0 && (
+          <Button size="sm" variant="secondary" onPress={handleDownloadBulk}>
+            <RiDownloadLine className="w-3.5 h-3.5" /> 下载 ({selectedFileCount})
           </Button>
         )}
         <input ref={fileInputRef} type="file" multiple className="hidden"
@@ -528,6 +569,11 @@ export function FileManager({ fullPage = false }: FileManagerProps) {
                           <RiEyeLine className="w-4 h-4" />
                         </IconBtn>
                       )}
+                      {!entry.is_dir && (
+                        <IconBtn label="下载" onClick={() => handleDownload(entry)}>
+                          <RiDownloadLine className="w-4 h-4" />
+                        </IconBtn>
+                      )}
                       <IconBtn label="复制" onClick={() => handleCopyEntry(entry)}>
                         <RiFileCopyLine className="w-4 h-4" />
                       </IconBtn>
@@ -579,7 +625,10 @@ export function FileManager({ fullPage = false }: FileManagerProps) {
         <div className="flex gap-2 mb-3">
           {(['zip', '7z', 'rar'] as ArchiveFormat[]).map((f) => (
             <button key={f} type="button"
-              onClick={() => { setCompressFormat(f); setCompressOutput((p) => p.replace(/\.(zip|7z|rar)$/i, `.${f}`)); }}
+              onClick={() => {
+                setCompressFormat(f);
+                setCompressOutput(defaultCompressOutput(compressPaths, currentPath, f));
+              }}
               className={`text-xs px-3 py-1.5 rounded-md uppercase transition-colors ${
                 compressFormat === f ? 'bg-accent/15 text-accent font-medium' : 'text-foreground/50 hover:bg-default-100'
               }`}>{f}</button>
