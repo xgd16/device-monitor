@@ -27,6 +27,7 @@ pub struct HardwareState {
     pub charging: ChargingState,
     pub gpu: GpuState,
     pub wifi_power_save: WifiPowerSaveState,
+    pub speaker: SpeakerState,
 }
 
 /// 手电筒双 LED 状态。
@@ -118,6 +119,17 @@ pub struct WifiPowerSaveState {
     pub iface: String,
 }
 
+/// 外放扬声器（PulseAudio perseus_speaker 或 ALSA hw:0,2）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakerState {
+    pub available: bool,
+    pub muted: bool,
+    pub volume_percent: u32,
+    pub sink_name: String,
+    /// `pulseaudio` 或 `alsa`
+    pub backend: String,
+}
+
 /// 振动模式中的一个时间段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VibeSegment {
@@ -147,6 +159,10 @@ const CHARGER_STATUS: &str = "/sys/class/power_supply/pmi8998-charger/status";
 const BATTERY_SUPPLY: &str = "qcom-battery";
 const GPU_DEVFREQ: &str = "/sys/class/devfreq/5000000.gpu";
 const WIFI_IFACE: &str = "wlan0";
+const SPEAKER_SINK: &str = "perseus_speaker";
+const PULSE_SOCKET: &str = "/run/pulse/native";
+const ALSA_SPEAKER_PCM: &str = "hw:0,2";
+const RX7_VOLUME_MAX: u32 = 124;
 
 /// 振动是否正在进行（供状态查询）
 static VIBRATING: AtomicBool = AtomicBool::new(false);
@@ -190,6 +206,145 @@ fn command_path(candidates: &[&str]) -> String {
 
 fn iw_cmd() -> String {
     command_path(&["/usr/sbin/iw", "/sbin/iw", "/usr/bin/iw", "/bin/iw", "iw"])
+}
+
+fn amixer_cmd() -> String {
+    command_path(&["/usr/sbin/amixer", "/usr/bin/amixer", "amixer"])
+}
+
+fn pactl_cmd() -> String {
+    command_path(&["/usr/bin/pactl", "/bin/pactl", "pactl"])
+}
+
+fn pulse_server_available() -> bool {
+    Path::new(PULSE_SOCKET).exists()
+}
+
+fn run_command(name: &str, args: &[&str], env: Option<(&str, &str)>) -> Result<String, String> {
+    let mut cmd = std::process::Command::new(name);
+    cmd.args(args);
+    if let Some((key, val)) = env {
+        cmd.env(key, val);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("{name} failed: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Err(if stderr.is_empty() { stdout } else { stderr })
+    }
+}
+
+fn run_pactl(args: &[&str]) -> Result<String, String> {
+    let server = format!("unix:{PULSE_SOCKET}");
+    run_command(&pactl_cmd(), args, Some(("PULSE_SERVER", &server)))
+}
+
+fn run_amixer_cset(control: &str, value: &str) {
+    let _ = std::process::Command::new(amixer_cmd())
+        .args(["-c", "0", "cset", control, value])
+        .output();
+}
+
+/// 确保外放 mixer 路由已打开（MultiMedia3 / QUAT_MI2S_RX）。
+fn apply_speaker_alsa_route() {
+    const CSETS: [(&str, &str); 10] = [
+        ("name=QUAT_MI2S_RX Audio Mixer MultiMedia3", "1"),
+        ("name=COMP7 Switch", "1"),
+        ("name=COMP8 Switch", "1"),
+        ("name=RX INT7_1 MIX1 INP0", "RX0"),
+        ("name=RX INT8_1 MIX1 INP0", "RX1"),
+        ("name=RX INT7_1 INTERP", "RX INT7_1 MIX1"),
+        ("name=RX INT8_1 INTERP", "RX INT8_1 MIX1"),
+        ("name=MultiMedia2 Mixer SLIMBUS_0_TX", "0"),
+        ("name=SLIMBUS_0_RX Audio Mixer MultiMedia1", "0"),
+        ("name=SLIMBUS_0_RX Audio Mixer MultiMedia2", "0"),
+    ];
+    for (control, value) in CSETS {
+        run_amixer_cset(control, value);
+    }
+}
+
+fn alsa_rx_volume_to_percent(raw: u32) -> u32 {
+    if RX7_VOLUME_MAX == 0 {
+        return 0;
+    }
+    ((raw.min(RX7_VOLUME_MAX) as f64 / RX7_VOLUME_MAX as f64) * 100.0).round() as u32
+}
+
+fn percent_to_alsa_rx_volume(percent: u32) -> u32 {
+    ((percent.min(100) as f64 / 100.0) * RX7_VOLUME_MAX as f64).round() as u32
+}
+
+fn parse_pactl_volume_percent(text: &str) -> Option<u32> {
+    for part in text.split_whitespace() {
+        if part.ends_with('%') {
+            return part.trim_end_matches('%').parse().ok();
+        }
+    }
+    None
+}
+
+fn parse_pactl_mute(text: &str) -> bool {
+    text.lines()
+        .find(|line| line.starts_with("Mute:"))
+        .map(|line| line.contains("yes"))
+        .unwrap_or(false)
+}
+
+fn pulse_sink_available() -> bool {
+    if !pulse_server_available() {
+        return false;
+    }
+    run_pactl(&["list", "short", "sinks"])
+        .map(|out| out.lines().any(|line| line.contains(SPEAKER_SINK)))
+        .unwrap_or(false)
+}
+
+fn read_speaker_state() -> SpeakerState {
+    apply_speaker_alsa_route();
+
+    if pulse_sink_available() {
+        let volume_percent = run_pactl(&["get-sink-volume", SPEAKER_SINK])
+            .ok()
+            .and_then(|out| parse_pactl_volume_percent(&out))
+            .unwrap_or(0);
+        let muted = run_pactl(&["get-sink-mute", SPEAKER_SINK])
+            .ok()
+            .map(|out| parse_pactl_mute(&out))
+            .unwrap_or(false);
+        return SpeakerState {
+            available: true,
+            muted,
+            volume_percent,
+            sink_name: SPEAKER_SINK.to_string(),
+            backend: "pulseaudio".into(),
+        };
+    }
+
+    let card_exists = Path::new("/proc/asound/card0").exists();
+    let rx7_raw: u32 = std::process::Command::new(amixer_cmd())
+        .args(["-c", "0", "cget", "name=RX7 Digital Volume"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .find_map(|line| line.strip_prefix(": values="))
+                .and_then(|v| v.parse().ok())
+        })
+        .unwrap_or(0);
+
+    SpeakerState {
+        available: card_exists,
+        muted: rx7_raw == 0,
+        volume_percent: alsa_rx_volume_to_percent(rx7_raw),
+        sink_name: ALSA_SPEAKER_PCM.to_string(),
+        backend: if card_exists { "alsa".into() } else { "none".into() },
+    }
 }
 
 /// 调用外部 vibrate 命令触发一次振动。
@@ -254,6 +409,7 @@ pub fn get_state() -> HardwareState {
         charging: read_charging_state(),
         gpu: read_gpu_state(),
         wifi_power_save: read_wifi_power_save(),
+        speaker: read_speaker_state(),
     }
 }
 
@@ -679,4 +835,88 @@ pub fn set_wifi_power_save(enabled: bool) -> Result<bool, String> {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     Ok(enabled)
+}
+
+/// 设置外放音量（0-100%）。
+pub fn set_speaker_volume(percent: u32) -> Result<u32, String> {
+    let percent = percent.min(100);
+    apply_speaker_alsa_route();
+
+    let alsa_val = percent_to_alsa_rx_volume(percent);
+    run_amixer_cset("name=RX7 Digital Volume", &alsa_val.to_string());
+    run_amixer_cset("name=RX8 Digital Volume", &alsa_val.to_string());
+
+    if pulse_sink_available() {
+        run_pactl(&[
+            "set-sink-volume",
+            SPEAKER_SINK,
+            &format!("{percent}%"),
+        ])?;
+        if percent > 0 {
+            run_pactl(&["set-sink-mute", SPEAKER_SINK, "0"])?;
+        }
+    }
+
+    Ok(read_speaker_state().volume_percent)
+}
+
+/// 静音/取消静音外放。
+pub fn set_speaker_mute(muted: bool) -> Result<bool, String> {
+    apply_speaker_alsa_route();
+
+    if pulse_sink_available() {
+        run_pactl(&[
+            "set-sink-mute",
+            SPEAKER_SINK,
+            if muted { "1" } else { "0" },
+        ])?;
+    }
+
+    if muted {
+        run_amixer_cset("name=RX7 Digital Volume", "0");
+        run_amixer_cset("name=RX8 Digital Volume", "0");
+    } else if read_speaker_state().volume_percent == 0 {
+        set_speaker_volume(50)?;
+    }
+
+    Ok(read_speaker_state().muted)
+}
+
+/// 播放 1 秒测试音（880Hz）。
+pub fn play_speaker_test() -> Result<(), String> {
+    apply_speaker_alsa_route();
+    let state = read_speaker_state();
+    if !state.available {
+        return Err("扬声器不可用".into());
+    }
+    if state.muted || state.volume_percent == 0 {
+        set_speaker_mute(false)?;
+        if state.volume_percent == 0 {
+            set_speaker_volume(50)?;
+        }
+    }
+
+    if pulse_sink_available() {
+        let server = format!("unix:{PULSE_SOCKET}");
+        run_command(
+            "sh",
+            &[
+                "-c",
+                "ffmpeg -hide_banner -loglevel error -f lavfi -i 'sine=frequency=880:duration=1' -f s16le -ar 48000 -ac 2 - 2>/dev/null | pacat --raw --format=s16le --rate=48000 --channels=2",
+            ],
+            Some(("PULSE_SERVER", &server)),
+        )?;
+    } else {
+        run_command(
+            "sh",
+            &[
+                "-c",
+                &format!(
+                    "ffmpeg -hide_banner -loglevel error -f lavfi -i 'sine=frequency=880:duration=1' -f s16le -ar 48000 -ac 2 - 2>/dev/null | aplay -D {ALSA_SPEAKER_PCM} -f S16_LE -r 48000 -c 2 -q"
+                ),
+            ],
+            None,
+        )?;
+    }
+    Ok(())
 }

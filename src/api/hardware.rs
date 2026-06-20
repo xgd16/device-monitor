@@ -168,6 +168,40 @@ pub async fn wifi_power_save_control(Json(params): Json<WifiPowerSaveParams>) ->
     }
 }
 
+#[derive(Deserialize)]
+pub struct SpeakerVolumeParams {
+    pub percent: u32,
+}
+
+/// `POST /api/hardware/speaker/volume` — 设置外放音量（0-100%）。
+pub async fn speaker_volume_control(Json(params): Json<SpeakerVolumeParams>) -> Json<Value> {
+    match collector::hardware::set_speaker_volume(params.percent) {
+        Ok(percent) => success(serde_json::json!({ "volume_percent": percent })),
+        Err(e) => error(&e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SpeakerMuteParams {
+    pub muted: bool,
+}
+
+/// `POST /api/hardware/speaker/mute` — 静音/取消静音外放。
+pub async fn speaker_mute_control(Json(params): Json<SpeakerMuteParams>) -> Json<Value> {
+    match collector::hardware::set_speaker_mute(params.muted) {
+        Ok(muted) => success(serde_json::json!({ "muted": muted })),
+        Err(e) => error(&e),
+    }
+}
+
+/// `POST /api/hardware/speaker/test` — 播放 1 秒测试音。
+pub async fn speaker_test() -> Json<Value> {
+    match collector::hardware::play_speaker_test() {
+        Ok(()) => success(serde_json::json!({ "played": true })),
+        Err(e) => error(&e),
+    }
+}
+
 /// `POST /api/hardware/clear-memory` — 释放页缓存（需 root 权限）。
 ///
 /// 执行 sync + echo 3 > /proc/sys/vm/drop_caches，返回清理前后内存对比。

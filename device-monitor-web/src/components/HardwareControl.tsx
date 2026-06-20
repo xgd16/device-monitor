@@ -14,6 +14,9 @@ import {
   setChargeCurrent,
   setChargeMode,
   setWifiPowerSave,
+  setSpeakerVolume,
+  setSpeakerMute,
+  playSpeakerTest,
 } from '../api';
 import { fmtChargeUa, chargeSourceLabel, chargeModeLabel, isChargePresetSelected } from './utils';
 
@@ -43,9 +46,17 @@ interface HardwareState {
     charge_mode: string;
   };
   wifi_power_save: { enabled: boolean; iface: string };
+  speaker: {
+    available: boolean;
+    muted: boolean;
+    volume_percent: number;
+    sink_name: string;
+    backend: string;
+  };
 }
 
 const BRIGHTNESS_PRESETS = [0, 25, 50, 75, 100];
+const SPEAKER_PRESETS = [0, 25, 50, 75, 100];
 
 const CHARGE_PRESETS: { label: string; ua: number; wiredOnly?: boolean }[] = [
   { label: '不限', ua: 0 },
@@ -144,6 +155,24 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
   const handleWifiPowerSave = async (enabled: boolean) => {
     setLoading('wifi-ps');
     try { await setWifiPowerSave(enabled); refresh(); } catch {}
+    setLoading(null);
+  };
+
+  const handleSpeakerVolume = async (percent: number) => {
+    setLoading('speaker-vol');
+    try { await setSpeakerVolume(percent); refresh(); } catch {}
+    setLoading(null);
+  };
+
+  const handleSpeakerMute = async (muted: boolean) => {
+    setLoading('speaker-mute');
+    try { await setSpeakerMute(muted); refresh(); } catch {}
+    setLoading(null);
+  };
+
+  const handleSpeakerTest = async () => {
+    setLoading('speaker-test');
+    try { await playSpeakerTest(); } catch {}
     setLoading(null);
   };
 
@@ -347,6 +376,71 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
         >
           {hw.wifi_power_save.enabled ? '关闭省电模式' : '开启省电模式'}
         </Button>
+      </Card>
+
+      {/* 扬声器 */}
+      <Card className={`p-4 sm:p-5 flex flex-col gap-4 ${span2}`}>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">扬声器</span>
+          <div className="flex items-center gap-2">
+            <Chip size="sm" color={hw.speaker.available ? 'success' : 'default'} variant="secondary">
+              {hw.speaker.available ? hw.speaker.backend : '不可用'}
+            </Chip>
+            {hw.speaker.muted && (
+              <Chip size="sm" color="warning" variant="secondary">静音</Chip>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-xl font-light">
+            {hw.speaker.muted ? 0 : hw.speaker.volume_percent}
+            <span className="text-[10px] opacity-50">%</span>
+          </span>
+          <span className="font-mono text-[10px] opacity-30">{hw.speaker.sink_name}</span>
+        </div>
+        <div className="flex gap-2">
+          {SPEAKER_PRESETS.map(pct => (
+            <Button
+              key={pct}
+              size="sm"
+              variant={!hw.speaker.muted && hw.speaker.volume_percent === pct ? 'secondary' : 'ghost'}
+              isDisabled={loading?.startsWith('speaker') || !hw.speaker.available}
+              onPress={() => handleSpeakerVolume(pct)}
+              className="flex-1 font-mono text-xs"
+            >
+              {pct === 0 ? '关' : `${pct}%`}
+            </Button>
+          ))}
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={hw.speaker.muted ? 0 : hw.speaker.volume_percent}
+          onChange={e => handleSpeakerVolume(Number(e.target.value))}
+          disabled={loading?.startsWith('speaker') || !hw.speaker.available}
+          className="w-full accent-accent h-1.5"
+        />
+        <div className="flex gap-2">
+          <Button
+            size="md"
+            variant={hw.speaker.muted ? 'secondary' : 'ghost'}
+            isDisabled={loading?.startsWith('speaker') || !hw.speaker.available}
+            onPress={() => handleSpeakerMute(!hw.speaker.muted)}
+            className="flex-1 font-mono text-sm"
+          >
+            {hw.speaker.muted ? '取消静音' : '静音'}
+          </Button>
+          <Button
+            size="md"
+            variant="secondary"
+            isDisabled={loading === 'speaker-test' || !hw.speaker.available}
+            onPress={handleSpeakerTest}
+            className="flex-1 font-mono text-sm"
+          >
+            {loading === 'speaker-test' ? '播放中...' : '测试音'}
+          </Button>
+        </div>
       </Card>
 
       {/* 屏幕 — 较高，占 2 列与 WiFi 同行 */}
