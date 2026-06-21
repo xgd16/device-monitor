@@ -8,7 +8,6 @@ use std::io::Read;
 use std::mem;
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 use std::thread;
 use std::time::Instant;
 
@@ -34,13 +33,13 @@ const DOUBLE_CLICK_MS: u128 = 400;
 /// 屏幕是否亮着（电源键切换用）
 static SCREEN_ON: AtomicBool = AtomicBool::new(true);
 
+/// 闪光灯是否亮着
+static FLASHLIGHT_ON: AtomicBool = AtomicBool::new(false);
+
 /// 电源键监听线程是否已启动
 static LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
 
-/// 上次电源键按下的时间（用于双击检测）
-static LAST_PRESS: Mutex<Option<Instant>> = Mutex::new(None);
-
-/// 单击动作
+/// 单击动作：切换屏幕
 fn on_single_click() {
     let was_on = SCREEN_ON.load(Ordering::Relaxed);
     let new_state = !was_on;
@@ -53,16 +52,19 @@ fn on_single_click() {
     }
 }
 
-/// 双击动作：打开所有闪光灯
+/// 双击动作：切换所有闪光灯
 fn on_double_click() {
-    match hardware::set_flashlight("white", true) {
-        Ok(()) => println!("power-key: 双击 → 白色闪光灯开"),
+    let new_state = !FLASHLIGHT_ON.load(Ordering::Relaxed);
+    match hardware::set_flashlight("white", new_state) {
+        Ok(()) => {}
         Err(e) => eprintln!("power-key: 白色闪光灯失败: {e}"),
     }
-    match hardware::set_flashlight("yellow", true) {
-        Ok(()) => println!("power-key: 双击 → 黄色闪光灯开"),
+    match hardware::set_flashlight("yellow", new_state) {
+        Ok(()) => {}
         Err(e) => eprintln!("power-key: 黄色闪光灯失败: {e}"),
     }
+    FLASHLIGHT_ON.store(new_state, Ordering::Relaxed);
+    println!("power-key: 双击 → 闪光灯{}", if new_state { "开" } else { "关" });
 }
 
 /// 获取当前屏幕状态
@@ -119,9 +121,21 @@ pub fn start_listener() {
             .unwrap_or(0);
             SCREEN_ON.store(bl_power == 0, Ordering::Relaxed);
 
+            // 双击检测状态
+            let mut pending_single: Option<Instant> = None;
+
             println!("power-key: 监听已启动（支持单击/双击）");
 
             loop {
+                // 检查是否有待处理的单击已超时
+                if let Some(press_time) = pending_single {
+                    if press_time.elapsed().as_millis() >= DOUBLE_CLICK_MS {
+                        // 超时，确认为单击
+                        pending_single = None;
+                        on_single_click();
+                    }
+                }
+
                 match file.read_exact(&mut buf) {
                     Ok(()) => {
                         let ev: InputEvent = unsafe { mem::transmute(buf) };
@@ -131,38 +145,23 @@ pub fn start_listener() {
                         {
                             // 电源键按下
                             let now = Instant::now();
-                            let mut last = LAST_PRESS.lock().unwrap_or_else(|e| e.into_inner());
 
-                            if let Some(prev) = *last {
+                            if let Some(prev) = pending_single.take() {
                                 let elapsed = now.duration_since(prev).as_millis();
                                 if elapsed < DOUBLE_CLICK_MS {
                                     // 双击！
-                                    *last = None;
                                     on_double_click();
                                     continue;
                                 }
                             }
 
-                            // 记录本次按下时间，等一下看有没有第二次
-                            *last = Some(now);
-                            drop(last);
-
-                            // 延迟等双击窗口，期间如果第二次按下会被上面的分支捕获
-                            thread::sleep(std::time::Duration::from_millis(
-                                DOUBLE_CLICK_MS as u64,
-                            ));
-
-                            // 超时，检查是否被双击消费了
-                            let mut last = LAST_PRESS.lock().unwrap_or_else(|e| e.into_inner());
-                            if last.is_some() {
-                                // 没有第二次按下，是单击
-                                *last = None;
-                                on_single_click();
-                            }
+                            // 记录按下时间，等下一次
+                            pending_single = Some(now);
                         }
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(std::time::Duration::from_millis(50));
+                        // 没有事件，短暂休眠避免空转
+                        thread::sleep(std::time::Duration::from_millis(20));
                     }
                     Err(e) => {
                         eprintln!("power-key: 读取错误: {e}");
