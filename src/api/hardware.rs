@@ -54,6 +54,19 @@ pub async fn screen_power_control(Json(params): Json<ScreenPowerParams>) -> Json
     }
 }
 
+/// `POST /api/hardware/screen/toggle` — 切换屏幕背光（电源键行为）。
+pub async fn screen_toggle() -> Json<Value> {
+    let was_on = collector::power_key::is_screen_on();
+    let new_state = !was_on;
+    match collector::hardware::set_screen_power(new_state) {
+        Ok(()) => {
+            collector::power_key::update_screen_state(new_state);
+            success(serde_json::json!({ "screen_on": new_state }))
+        }
+        Err(e) => error(&e),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct VibrateParams {
     pub duration_ms: u32,

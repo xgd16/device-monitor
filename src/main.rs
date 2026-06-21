@@ -54,6 +54,9 @@ async fn main() {
         latest: rx,
     };
 
+    // ── 启动电源键监听 ──
+    collector::power_key::start_listener();
+
     // ── 后台采集任务 ──
     let db_bg = db.clone();
     let ae_bg = alert_engine.clone();
@@ -132,6 +135,7 @@ async fn main() {
         .route("/hardware/flashlight", post(api::hardware::flashlight_control))
         .route("/hardware/brightness", post(api::hardware::brightness_control))
         .route("/hardware/screen", post(api::hardware::screen_power_control))
+        .route("/hardware/screen/toggle", post(api::hardware::screen_toggle))
         .route("/hardware/vibrate", post(api::hardware::vibrate_control))
         .route("/hardware/vibrate/pattern", post(api::hardware::vibrate_pattern))
         .route("/hardware/vibrate/stop", post(api::hardware::vibrate_stop))

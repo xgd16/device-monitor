@@ -10,6 +10,7 @@ pub mod battery;
 pub mod network;
 pub mod process;
 pub mod hardware;
+pub mod power_key;
 pub mod disk;
 pub mod mihomo;
 
