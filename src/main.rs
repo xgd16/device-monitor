@@ -79,9 +79,6 @@ async fn main() {
     let alert_engine = Arc::new(RwLock::new(alert::AlertEngine::new(db.clone())));
 
     // watch channel：后台采集任务 send，API/WebSocket/TUI receive
-    // 初始化大核调度状态（同步实际硬件在线状态）
-    collector::cpu_power::init();
-
     let initial = collector::collect_system_overview();
     let (tx, rx) = watch::channel(initial);
 
@@ -127,15 +124,6 @@ async fn main() {
                 // 按刷新间隔采集一次系统指标
                 _ = interval.tick() => {
                     let overview = collector::collect_system_overview();
-                    // CPU 大核调度：判据用等效繁忙核心数（与在线核数无关），
-                    // 温度只取 CPU/集群相关传感器，避免被电池、modem 等区域干扰
-                    let max_cpu_temp = overview
-                        .thermal
-                        .iter()
-                        .filter(|z| z.name.contains("cpu") || z.name.contains("cluster"))
-                        .map(|z| z.temp_celsius)
-                        .fold(0.0_f64, f64::max);
-                    collector::cpu_power::auto_schedule(overview.cpu.busy_cores, max_cpu_temp);
                     if let Err(e) = collector::hardware::apply_cpu_status_led_link(overview.cpu.overall_usage as f64) {
                         tracing::error!("CPU 状态灯联动失败: {}", e);
                     }

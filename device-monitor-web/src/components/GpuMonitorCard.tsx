@@ -10,6 +10,7 @@ interface GpuState {
   max_freq_mhz: number;
   governor: string;
   available_freqs_mhz: number[];
+  suspended?: boolean;
 }
 
 export function GpuMonitorCard() {
@@ -23,7 +24,8 @@ export function GpuMonitorCard() {
       .then((d) => {
         setGpu(d.gpu);
         const now = Math.floor(Date.now() / 1000);
-        setHistory((prev) => [...prev.slice(-119), d.gpu.cur_freq_mhz]);
+        const freq = d.gpu.suspended ? 0 : d.gpu.cur_freq_mhz;
+        setHistory((prev) => [...prev.slice(-119), freq]);
         setTimestamps((prev) => [...prev.slice(-119), now]);
       })
       .catch(() => {});
@@ -61,8 +63,12 @@ export function GpuMonitorCard() {
   const hwPeak = Math.max(...freqs);
   const isIdleMin = gpu.cur_freq_mhz <= gpu.min_freq_mhz;
   const isCapped = gpu.max_freq_mhz < hwPeak;
-  const usagePct =
-    gpu.max_freq_mhz > 0 ? Math.min((gpu.cur_freq_mhz / gpu.max_freq_mhz) * 100, 100) : 0;
+  const isSuspended = !!gpu.suspended;
+  const usagePct = isSuspended
+    ? 0
+    : gpu.max_freq_mhz > 0
+    ? Math.min((gpu.cur_freq_mhz / gpu.max_freq_mhz) * 100, 100)
+    : 0;
 
   return (
     <Panel
@@ -72,11 +78,11 @@ export function GpuMonitorCard() {
       hint={
         <Chip
           size="sm"
-          color={isCapped ? 'warning' : isIdleMin ? 'default' : 'accent'}
+          color={isSuspended ? 'default' : isCapped ? 'warning' : isIdleMin ? 'default' : 'accent'}
           variant="secondary"
           className="font-mono text-[10px]"
         >
-          {isCapped ? '已限频' : isIdleMin ? '空闲' : '运行中'} · {gpu.governor}
+          {isSuspended ? '休眠' : isCapped ? '已限频' : isIdleMin ? '空闲' : '运行中'} · {gpu.governor}
         </Chip>
       }
       bodyClassName="gap-3"
@@ -84,10 +90,10 @@ export function GpuMonitorCard() {
       <div className="grid shrink-0 grid-cols-2 gap-2.5">
         <StatCell
           label="当前频率"
-          value={gpu.cur_freq_mhz}
-          unit="MHz"
-          color="accent"
-          sub={`相对上限 ${usagePct.toFixed(0)}%`}
+          value={isSuspended ? '休眠' : gpu.cur_freq_mhz}
+          unit={isSuspended ? '' : 'MHz'}
+          color={isSuspended ? undefined : 'accent'}
+          sub={isSuspended ? 'GPU 已挂起' : `相对上限 ${usagePct.toFixed(0)}%`}
         />
         <StatCell
           label="频率上限"
@@ -131,7 +137,11 @@ export function GpuMonitorCard() {
         ))}
       </div>
 
-      {isIdleMin && (
+      {isSuspended ? (
+        <p className="mt-auto border-t border-default-100 pt-2 text-center font-mono text-[9px] opacity-35 xl:text-[10px]">
+          GPU 已挂起，负载升高会自动唤醒
+        </p>
+      ) : isIdleMin && (
         <p className="mt-auto border-t border-default-100 pt-2 text-center font-mono text-[9px] opacity-35 xl:text-[10px]">
           GPU 空闲时维持在最低档，负载升高会自动升频
         </p>

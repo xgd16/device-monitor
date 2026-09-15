@@ -15,7 +15,6 @@ pub mod power_key;
 pub mod disk;
 pub mod mihomo;
 pub mod xtokenhub;
-pub mod cpu_power;
 
 use serde::{Deserialize, Serialize};
 
