@@ -606,8 +606,10 @@ DRM 直绘要求内核 framebuffer 控制台（fbcon）处于解绑状态，`dev
 # 记录数与时间跨度：oldest_metric/newest_metric 差值应 ≤ 保留天数
 curl -s http://127.0.0.1:3000/api/database/stats
 # 清理任务是否在跑（每小时一行）
-journalctl -u device-monitor | grep 数据清理
+grep -a 数据清理 screen.log || journalctl -u device-monitor | grep 数据清理
 ```
+
+> 服务由 `device-monitor-launcher.sh` 拉起时，其 stdout/stderr 被重定向到 `screen.log`，所以服务自身的日志（含清理记录）在那里；`journalctl` 只有启动器输出的几行。
 
 跨度正常就说明清理在跑，体积问题出在落库频率：调大 `METRICS_PERSIST_SECS`（如 60），或直接 `POST /api/database/cleanup` 立刻回收。
 
