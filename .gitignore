@@ -46,3 +46,10 @@ build/
 .codegraph
 .cursor
 static/
+
+# 运行时生成/状态文件
+/.device-monitor-tui-wrapper.sh
+/test_vibrate
+battery_effective_max.txt
+battery_low_streak.txt
+battery_session_peak.txt

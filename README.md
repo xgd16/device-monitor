@@ -95,7 +95,7 @@ flowchart TB
 |------|------|
 | 后端 | Rust 2024、Axum 0.8、Tokio、Rusqlite、Tracing |
 | 前端 | React 19、TypeScript、Vite 8、HeroUI、Zustand、ECharts |
-| 部署 | PM2（可选）、Shell 脚本 |
+| 部署 | systemd 服务单元（`device-monitor.service`）、`build.sh` |
 
 ---
 
@@ -119,9 +119,9 @@ device-monitor/
 │       └── api/                # Axios API 封装
 ├── static/                     # 前端构建产物（由 Vite 输出）
 ├── Cargo.toml
-├── start.sh                    # 一键构建并启动
-├── ecosystem.config.js         # PM2 配置
+├── build.sh                    # 构建前端+后端并重启服务
 ├── setup-permissions.sh        # 硬件 sysfs 权限修复
+├── SCREEN.md                   # 物理屏 DRM 直绘仪表说明
 └── test_vibrate.rs             # 振动马达 ioctl 测试工具
 ```
 
@@ -164,8 +164,8 @@ cd device-monitor
 ### 2. 构建并启动（生产模式）
 
 ```bash
-# 构建前端 → 构建后端 → 启动服务
-./start.sh
+# 构建前端 → 构建后端 → 重启服务（等价于 cargo build --release + pnpm build + systemctl restart）
+./build.sh
 ```
 
 或分步执行：
@@ -173,8 +173,8 @@ cd device-monitor
 ```bash
 # 前端构建（输出到 static/）
 cd device-monitor-web
-npm install
-npm run build
+pnpm install
+pnpm build
 cd ..
 
 # 后端构建
@@ -199,8 +199,8 @@ cargo run
 
 ```bash
 cd device-monitor-web
-npm install
-npm run dev
+pnpm install
+pnpm dev
 # Vite 开发服务器 http://0.0.0.0:3000
 ```
 
@@ -248,19 +248,22 @@ sudo ./test_vibrate 500   # 振动 500ms
 
 ---
 
-## PM2 部署
+## systemd 部署（当前使用）
+
+系统上以 `device-monitor.service` 常驻运行，工作目录 `device-monitor`，启动器为
+`device-monitor-launcher.sh`（DRM 横屏仪表 → kmscon UTF-8 TUI → 裸 ASCII 三级回退）。
 
 ```bash
-# 安装 PM2
-npm install
+# 构建前端 + 后端
+./build.sh
 
-# 修改 ecosystem.config.js 中的 cwd 为实际部署路径
-# 构建 release 二进制
+# 或分步执行
+cd device-monitor-web && ppnpm install && pnpm build && cd ..
 cargo build --release
 
-# 启动
-npx pm2 start ecosystem.config.js
-npx pm2 save
+# 重启服务
+sudo systemctl restart device-monitor
+journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
 ```
 
 ---
@@ -454,7 +457,7 @@ RUST_LOG=debug ./target/release/device-monitor-server
 
 ### 前端页面空白
 
-确认已执行 `npm run build`，且 `static/index.html` 存在。后端通过 `ServeDir` 托管 `static/` 目录。
+确认已执行 `pnpm build`，且 `static/index.html` 存在。后端通过 `ServeDir` 托管 `static/` 目录。
 
 ### 硬件控制返回权限错误
 

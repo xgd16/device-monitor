@@ -1,0 +1,68 @@
+# 订阅更新时保留的本地 mihomo 设置（覆盖订阅配置中的同名项）
+port: 7890
+socks-port: 7891
+redir-port: 7892
+allow-lan: false
+mode: rule
+log-level: silent
+external-controller: 0.0.0.0:9090
+external-ui: ui
+secret: ''
+tun:
+  enable: true
+  stack: system
+  auto-route: true
+  auto-detect-interface: true
+  dns-hijack:
+    - any:53
+    - tcp://any:53
+  mtu: 9000
+  route-exclude-address:
+    - 192.168.1.1/32
+    - 223.5.5.5/32
+    - 119.29.29.29/32
+  route-address:
+    - 0.0.0.0/0
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  use-hosts: true
+  prefer-h3: true
+  fake-ip-filter:
+    - '*.lan'
+    - '*.local'
+    - '*.localdomain'
+    - localhost.ptlogin2.qq.com
+    - +.srv.nintendo.net
+    - +.stun.playstation.net
+    - xbox.*.microsoft.com
+    - +.xboxlive.com
+    - +.google.com
+    - +.gstatic.com
+    - +.cloudflare.com
+    - +.apple.com
+    - cp.cloudflare.com
+    - connectivitycheck.platform.hicloud.com
+    - stun.*.*
+    - time.*.com
+    - +.pool.ntp.org
+  default-nameserver:
+    - 192.168.1.1
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://doh.pub/dns-query#h3=true
+    - https://dns.alidns.com/dns-query#h3=true
+  fallback:
+    - https://dns.google/dns-query#h3=true
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+  nameserver-policy:
+    domain:dv1.wowodekuku.com,dv2.wowodekuku.com:
+      - 192.168.1.1
+      - 223.5.5.5
+      - 119.29.29.29
