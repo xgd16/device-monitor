@@ -14,7 +14,7 @@
 //! 世界时钟只在跨分钟时局部重绘，避免 10s 采集间隔下分钟边界滞后。
 
 use std::process::Command;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -99,29 +99,39 @@ struct EnvSnapshot {
     /// RTC 硬件时钟时间（字符串，异常时也要显示出来）
     rtc: String,
     rtc_sane: bool,
+    /// 硬件时钟是否可写。本机（rtc-pm8xxx）内核返回 ENODEV，改不了。
+    rtc_writable: bool,
 }
 
 static ENV: OnceLock<Mutex<Option<EnvSnapshot>>> = OnceLock::new();
-/// 叠加到 `now_local()` 的秒偏移（默认 0，仅测试/预览使用）。
+/// 伪造的「当前时刻」（Unix 秒，`i64::MIN` 表示用真实时间）。仅测试/预览使用。
 ///
-/// 局部重绘的正确性只有让时间前进才能验证：同一秒内 `render_clock` 画出的内容与
-/// 整屏重绘完全一致，即使清除区域没盖住旧文本也不会露出差异。配合
-/// `--at/--tick`（见 main.rs）可以导出「整屏 @T+N」与「整屏 @T → 局部 @T+N」
-/// 两张图做逐像素比对，差异即幽灵像素。
-static TIME_OFFSET: AtomicI64 = AtomicI64::new(0);
+/// 必须是**绝对时刻**，不能是「相对真实时钟的偏移」：偏移每次都要拿真实时钟当基准
+/// 去换算，渲染结果就会带上真实时钟的亚秒相位。同进程逐像素比对时，两次渲染的
+/// 相位不同就可能跨过整秒边界（`距零点 02:00:11` vs `02:00:12`、秒数字宽度变化），
+/// 于是测试偶发失败且无法归因。改成冻结绝对时刻后，渲染结果完全可复现。
+static FAKE_NOW: AtomicI64 = AtomicI64::new(i64::MIN);
 
-/// 设置时间偏移（秒）。
-pub fn set_time_offset(secs: i64) {
-    TIME_OFFSET.store(secs, Ordering::Relaxed);
+/// 把页面渲染固定到某个绝对时刻；传 `None` 恢复真实时间。
+pub fn set_fake_now(unix: Option<i64>) {
+    FAKE_NOW.store(unix.unwrap_or(i64::MIN), Ordering::Relaxed);
 }
 
-/// 当前时刻（含测试偏移）。
+/// 当前时刻（测试/预览时可被 `set_fake_now` 冻结）。
 ///
 /// 注意这里必须直接调 `Local::now()`：全局把 `Local::now()` 替换成 `now_local()`
 /// 时很容易把函数体内的这一处也换掉，变成自我递归（编译器会给
 /// `function cannot return without recursing` 警告，运行即栈溢出）。
 fn now_local() -> chrono::DateTime<Local> {
-    Local::now() + chrono::Duration::seconds(TIME_OFFSET.load(Ordering::Relaxed))
+    let f = FAKE_NOW.load(Ordering::Relaxed);
+    if f != i64::MIN {
+        // 用 from_timestamp + with_timezone 而不是 Local.timestamp_opt：
+        // 后者需要把 `chrono::TimeZone` trait 引进作用域
+        if let Some(dt) = chrono::DateTime::from_timestamp(f, 0).map(|u| u.with_timezone(&Local)) {
+            return dt;
+        }
+    }
+    Local::now()
 }
 
 /// 清除卡片内部（保留圆角），返回清除区顶端。
@@ -175,7 +185,70 @@ fn refresh_env() -> EnvSnapshot {
         world.push(WorldRow { name, time, offset, day_delta });
     }
 
-    // 时间同步状态：NTP 是否同步 + RTC 硬件时钟（本机 RTC 走时异常，要让人看见）
+    // 时间同步状态：NTP + 硬件时钟
+    let st = read_clock_state();
+    let (mut ntp_synced, mut rtc, mut rtc_sane) = (st.ntp_synced, st.rtc, st.rtc_sane);
+
+    // RTC 明显不可信时**只探测一次**它能不能被写回：
+    // 可写就顺手校准（部分设备可行，屏上立刻变成正确值），
+    // 不可写就记住这个事实，不要每 30s 反复去动硬件时钟。
+    if !rtc_sane && RTC_WRITABLE.load(Ordering::Relaxed) == 0 {
+        let ok = probe_rtc_writable();
+        RTC_WRITABLE.store(if ok { 1 } else { 2 }, Ordering::Relaxed);
+        if ok {
+            let st2 = read_clock_state();
+            ntp_synced = st2.ntp_synced;
+            rtc = st2.rtc;
+            rtc_sane = st2.rtc_sane;
+        }
+    }
+
+    EnvSnapshot {
+        at: Instant::now(),
+        world,
+        ntp_synced,
+        tz_name: st.tz_name,
+        tz_abbr: st.tz_abbr,
+        rtc,
+        rtc_sane,
+        rtc_writable: RTC_WRITABLE.load(Ordering::Relaxed) == 1,
+    }
+}
+
+/// `timedatectl` 里的时钟状态。
+struct ClockState {
+    ntp_synced: bool,
+    tz_name: String,
+    tz_abbr: String,
+    rtc: String,
+    rtc_sane: bool,
+}
+
+/// RTC 可写性：0=未探测 1=可写 2=不可写。
+/// 探测方式是真的去写一次，所以必须保证只写一次（写硬件时钟不该是个循环动作）。
+static RTC_WRITABLE: AtomicU8 = AtomicU8::new(0);
+
+/// 尝试把系统时间写入硬件时钟，返回是否成功。
+///
+/// 本机实测：SDM845 + rtc-pm8xxx，内核 7.1.0-rc1，`RTC_SET_TIME` 返回 `ENODEV`
+/// （读写两种打开方式都一样），即该内核不允许写这个 PMIC RTC。此时硬件时钟会
+/// 一直停在 1972 年的错误基准上 —— 这是内核/驱动层面的限制，用户态无解，
+/// 屏上只能如实标注。**不要**为此去折腾 hwclock 参数或 /etc/adjtime，都试过了。
+fn probe_rtc_writable() -> bool {
+    let ok = Command::new("hwclock")
+        .args(["--systohc", "--utc"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        tracing::info!("硬件时钟可写：已把系统时间写入 RTC");
+    } else {
+        tracing::warn!("硬件时钟不可写（内核拒绝 RTC_SET_TIME），RTC 保持原值；开机时间由 NTP 校准");
+    }
+    ok
+}
+
+fn read_clock_state() -> ClockState {
     let mut ntp_synced = false;
     let mut tz_name = "本地".to_string();
     let mut tz_abbr = String::new();
@@ -203,9 +276,8 @@ fn refresh_env() -> EnvSnapshot {
             }
         }
     }
-    let rtc_sane = rtc.starts_with(&now_local().format("%Y").to_string());
-
-    EnvSnapshot { at: Instant::now(), world, ntp_synced, tz_name, tz_abbr, rtc, rtc_sane }
+    let rtc_sane = rtc_is_sane(&rtc, now_local().date_naive());
+    ClockState { ntp_synced, tz_name, tz_abbr, rtc, rtc_sane }
 }
 
 /// 取环境快照；超过 30s 或从未取过时刷新。锁中毒时降级为实时取一次。
@@ -235,6 +307,7 @@ fn env_cached() -> EnvSnapshot {
                 tz_abbr: s.tz_abbr.clone(),
                 rtc: s.rtc.clone(),
                 rtc_sane: s.rtc_sane,
+                rtc_writable: s.rtc_writable,
             };
         }
     }
@@ -257,6 +330,7 @@ fn env_cached() -> EnvSnapshot {
         tz_abbr: fresh.tz_abbr.clone(),
         rtc: fresh.rtc.clone(),
         rtc_sane: fresh.rtc_sane,
+        rtc_writable: fresh.rtc_writable,
     };
     *g = Some(fresh);
     snap
@@ -497,29 +571,77 @@ fn header_card(c: &mut Canvas, p: &Pane, o: &crate::collector::SystemOverview) {
     );
     c.text(x, p.y + 82, &sub, Type::LABEL, Weight::Regular, Palette::FG_MUTED);
 
-    page_tabs(c, p.x + p.w - 900, p.y + 32, 2);
+    // 页签条与右侧状态文字共用同一起点。原先两处各写一个「右边界」magic number，
+    // 结果 RTC 那行右对齐到卡片边缘、直接压到页签上被截断（屏上只剩「Fri」）。
+    let tabs_x = p.x + p.w - 900;
+    page_tabs(c, tabs_x, p.y + 32, 2);
 
-    // 右侧：NTP 状态 + RTC 异常提示（本机 RTC 走时明显偏离，要能在屏上看到）
-    let right = p.x + p.w - 26;
+    // 右侧状态区：右对齐到页签条左侧，绝不与页签重叠
+    let right = tabs_x - 24;
     let (ntp_txt, ntp_col) = if env.ntp_synced {
         ("NTP 已同步", Palette::SUCCESS)
     } else {
         ("NTP 未同步", Palette::WARNING)
     };
     c.text_right(right, p.y + 46, ntp_txt, Type::LABEL, Weight::Bold, ntp_col);
-    let rtc_txt = if env.rtc_sane {
-        format!("RTC {}", env.rtc)
+    let (rtc_txt, rtc_col) = rtc_label(&env);
+    c.text_right(right, p.y + 82, &rtc_txt, Type::TINY, Weight::Regular, rtc_col);
+}
+
+/// 硬件时钟那一行的措辞与配色。
+///
+/// 本机（SDM845 / rtc-pm8xxx）内核拒绝 `RTC_SET_TIME`（ENODEV），RTC 只读、基准停在
+/// 1972 年 —— 这是**永久性的内核限制，不是「异常」**。所以措辞不能说成故障，
+/// 也不能无条件标红：一直红着看两天就成了噪音，真正该注意的状态反而被淹没。
+/// 是否醒目取决于它是否真的影响时间：
+///   - NTP 已同步 → 系统时间是准的，RTC 值无所谓 → 淡灰
+///   - NTP 未同步且 RTC 不可信 → 此刻系统时间可能就是错的 → 警告色
+fn rtc_label(env: &EnvSnapshot) -> (String, u32) {
+    let (stamp, year) = split_rtc(&env.rtc);
+    if env.rtc_sane {
+        return (format!("RTC 已同步 {stamp}"), Palette::FG_MUTED);
+    }
+    let col = if env.ntp_synced { Palette::FG_MUTED } else { Palette::WARNING };
+    if env.rtc_writable {
+        (format!("RTC 待校准 {stamp}"), col)
     } else {
-        format!("RTC 异常 {}", env.rtc)
+        (format!("RTC 只读 {year} · 开机由 NTP 校准"), col)
+    }
+}
+
+/// `"Fri 1972-09-15 22:41:48"` → `("1972-09-15 22:41", "1972")`
+///
+/// 去掉星期与秒：星期缩写（`Fri`）在 TINY 字号下最容易被误读成「显示坏了」，
+/// 而屏上真正需要的只是日期与分钟。
+fn split_rtc(rtc: &str) -> (String, String) {
+    let parts: Vec<&str> = rtc.split_whitespace().collect();
+    let (date, time) = match parts.as_slice() {
+        [_, d, t, ..] if d.contains('-') => (*d, *t), // 有星期
+        [d, t, ..] if d.contains('-') => (*d, *t),
+        _ => return (rtc.to_string(), "----".to_string()),
     };
-    c.text_right(
-        right,
-        p.y + 82,
-        &rtc_txt,
-        Type::TINY,
-        Weight::Regular,
-        if env.rtc_sane { Palette::FG_MUTED } else { Palette::WARNING },
-    );
+    let hm: String = time.chars().take(5).collect(); // "22:41:48" → "22:41"
+    let year = date.split('-').next().unwrap_or("----").to_string();
+    (format!("{date} {hm}"), year)
+}
+
+/// 判断硬件时钟值是否可信：拿**日期**和今天比，允许 ±1 天。
+///
+/// 曾经写成 `rtc.starts_with(当前年份)` —— 但 `timedatectl` 给的是
+/// `"Tue 2026-09-15 22:41:48"`，开头是星期缩写，`starts_with("2026")` **恒为 false**。
+/// 后果不是「少报一次异常」，而是**任何设备、任何时刻都显示 RTC 异常**，
+/// 一个永远为真的告警等于没有告警（用户这次看到的「RTC 异常 Fri」就是它）。
+///
+/// 允许 ±1 天是为了时区边界：RTC 存 UTC 而本地是 UTC+8 时，跨零点附近会差一天。
+fn rtc_is_sane(rtc: &str, today: NaiveDate) -> bool {
+    let stamp = split_rtc(rtc).0;
+    let Some(d) = stamp.split_whitespace().next() else {
+        return false;
+    };
+    let Ok(d) = NaiveDate::parse_from_str(d, "%Y-%m-%d") else {
+        return false;
+    };
+    (d - today).num_days().abs() <= 1
 }
 
 // ── 大时钟卡 ──
@@ -736,7 +858,7 @@ fn sun_card_body(c: &mut Canvas, p: &Pane) {
     let now = now_local();
     let today = now.date_naive();
     let x = p.x + 26;
-    let (rise, set, from_api) = match sun_pair(today) {
+    let (rise, set, _from_api) = match sun_pair(today) {
         Some(v) => v,
         None => {
             c.text(
@@ -912,6 +1034,7 @@ mod tests {
 
     #[test]
     fn 进度百分比单调递增且在有界区间() {
+        // 本测试只验单调性与上下界，与具体时刻无关（幽灵测试可能并发冻结时间）
         let p = progress(now_local());
         assert_eq!(p.len(), 4);
         for it in &p {
@@ -936,17 +1059,17 @@ mod tests {
             return; // 无字体/无 DRM 环境跳过
         };
         let o = crate::collector::collect_system_overview();
-        // 固定基准：跨分钟（触发世界时钟/日出日落重绘）且秒数从个位走到十位
+        // 固定基准（绝对时刻，不受真实时钟影响）：跨分钟（触发世界时钟/日出日落
+        // 重绘）且秒数从个位走到十位（文本宽度变化最容易露残影）
         let base: i64 = 1_800_000_000;
-        let set = |ts: i64| set_time_offset(ts - Local::now().timestamp());
 
-        set(base + 61);
+        set_fake_now(Some(base + 61));
         render(&mut a, &o); // 参照：整屏直接画在 t2
 
-        set(base);
-        render(&mut b, &o);          // 打底：整屏画在 t1
-        set(base + 61);
-        render_clock(&mut b, &o);    // 局部推进到 t2
+        set_fake_now(Some(base));
+        render(&mut b, &o); // 打底：整屏画在 t1
+        set_fake_now(Some(base + 61));
+        render_clock(&mut b, &o); // 局部推进到 t2
 
         // 报出差异的包围盒。注意 `buf` 是**物理**缓冲（步长 pw），
         // 用 lw 当步长会算出一片不存在的坐标；这里按物理坐标算完再映射回逻辑坐标。
@@ -966,11 +1089,77 @@ mod tests {
                 y1 = y1.max(ly);
             }
         }
-        set_time_offset(0);
+        set_fake_now(None);
         assert_eq!(
             n, 0,
             "局部重绘与整屏重绘有 {n} 个像素不一致（幽灵像素），逻辑区域 x {x0}..{x1} y {y0}..{y1}"
         );
+    }
+
+    fn env_for(rtc: &str, ntp: bool, writable: bool) -> EnvSnapshot {
+        EnvSnapshot {
+            at: Instant::now(),
+            world: Vec::new(),
+            ntp_synced: ntp,
+            tz_name: "Asia/Shanghai".into(),
+            tz_abbr: "CST".into(),
+            rtc: rtc.into(),
+            rtc_sane: rtc_is_sane(rtc, NaiveDate::from_ymd_opt(2026, 9, 15).unwrap()),
+            rtc_writable: writable,
+        }
+    }
+
+    /// RTC 字符串要剪掉星期与秒：星期缩写被截成「Fri」正是用户看到的「屏坏了」。
+    #[test]
+    fn RTC字符串去掉星期与秒() {
+        assert_eq!(
+            split_rtc("Fri 1972-09-15 22:41:48"),
+            ("1972-09-15 22:41".to_string(), "1972".to_string())
+        );
+        assert_eq!(
+            split_rtc("2026-09-15 22:41:48"),
+            ("2026-09-15 22:41".to_string(), "2026".to_string())
+        );
+        // 未知/空值不能让屏上出现空白或 panic
+        let (t, y) = split_rtc("未知");
+        assert!(t.contains("未知") && !y.is_empty());
+    }
+
+    /// 回归测试：`rtc_sane` 曾经写成「年份前缀比对」，而 `timedatectl` 的 RTC 值
+    /// 是 `"Tue 2026-09-15 …"` 开头是星期 —— 前缀比对恒为 false，
+    /// 于是正常设备也永远显示「RTC 异常」。
+    #[test]
+    fn RTC正常值必须判为可信() {
+        let today = NaiveDate::from_ymd_opt(2026, 9, 15).unwrap();
+        assert!(rtc_is_sane("Tue 2026-09-15 22:41:48", today), "带星期的正常值被判成异常");
+        assert!(rtc_is_sane("2026-09-15 22:41:48", today), "不带星期也应正常");
+        assert!(rtc_is_sane("Wed 2026-09-16 00:30:00", today), "跨零点±1天应容忍");
+        assert!(!rtc_is_sane("Fri 1972-09-15 22:41:48", today), "明显错误的值不该放过");
+        assert!(!rtc_is_sane("未知", today), "无法解析的值应判为不可信，而不是 panic");
+        let (t, _) = rtc_label(&env_for("Tue 2026-09-15 22:41:48", true, true));
+        assert!(t.starts_with("RTC 已同步"), "正常 RTC 的屏上措辞应为已同步: {t}");
+    }
+
+    /// 措辞与配色规则：RTC 只读是永久性内核限制，不该在时间已经准的情况下标红。
+    #[test]
+    fn RTC只读不应在NTP已同步时标警告色() {
+        let bad = "Fri 1972-09-15 22:41:48";
+        let (t1, c1) = rtc_label(&env_for(bad, true, false));
+        assert!(t1.contains("只读") && t1.contains("1972"), "措辞应为只读+年份: {t1}");
+        assert!(t1.contains("NTP"), "应说明开机由 NTP 校准: {t1}");
+        assert!(c1 != Palette::WARNING, "NTP 已同步时不该标警告色");
+
+        // NTP 也没同步才真的可能时间不对 → 才该醒目
+        let (_, c2) = rtc_label(&env_for(bad, false, false));
+        assert!(c2 == Palette::WARNING, "NTP 未同步 + RTC 不可信时应标警告色");
+
+        // 可写的设备应提示待校准，而不是说只读
+        let (t3, _) = rtc_label(&env_for(bad, true, true));
+        assert!(t3.contains("待校准"), "可写设备应提示待校准: {t3}");
+
+        // 正常值
+        let (t4, _) = rtc_label(&env_for("Tue 2026-09-15 22:41:48", true, true));
+        assert!(t4.starts_with("RTC 已同步"), "{t4}");
     }
 
     #[test]

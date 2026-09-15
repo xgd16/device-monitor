@@ -63,16 +63,32 @@ async fn main() {
             Some("tokens") | Some("2") => 1u8,
             _ => 0u8,
         };
-        // --at <秒>：相对当前时间偏移若干秒再渲染，用于预览其他时段的版式
-        // （幽灵像素由 clock.rs 的同进程单测保证，不靠跨进程比对——两个进程的
-        //  电池读数、RTC 秒数等实时数据必然漂移，差异无法归因）
-        if let Some(n) = args
+        // --at <时刻>：把第 3 页冻结在指定时刻渲染，用于预览其他时段的版式。
+        //   绝对值：`--at 1800000061`（Unix 秒）
+        //   相对值：`--at +3600` / `--at -3600`（相对当前时间，便于「看一小时后」）
+        // 幽灵像素由 clock.rs 的同进程单测保证，不靠跨进程比对——两个进程的电池
+        // 读数、RTC 秒数等实时数据必然漂移，差异无法归因。
+        if let Some(raw) = args
             .iter()
             .position(|a| a == "--at")
             .and_then(|i| args.get(i + 1))
-            .and_then(|v| v.parse::<i64>().ok())
         {
-            screen::clock::set_time_offset(n);
+            let parsed = if let Some(digits) =
+                raw.strip_prefix('+').or_else(|| raw.strip_prefix('-'))
+            {
+                // 相对值：`+3600` / `-3600`
+                let sign = if raw.starts_with('-') { -1 } else { 1 };
+                digits
+                    .parse::<i64>()
+                    .ok()
+                    .map(|v| chrono::Local::now().timestamp() + sign * v)
+            } else {
+                raw.parse::<i64>().ok()
+            };
+            if parsed.is_none() {
+                eprintln!("--at 需要 Unix 秒（如 1800000061）或 ±偏移秒（如 +3600），收到 {raw:?}");
+            }
+            screen::clock::set_fake_now(parsed);
         }
         let overview = collector::collect_system_overview();
         match screen::dump(&overview, rot, &path, page) {
