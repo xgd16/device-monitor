@@ -244,6 +244,8 @@ pub fn dump(o: &SystemOverview, rot: Rotation, path: &str, page: u8) -> Result<(
     // 预览要对齐真机所见：页脚会读 hotkeys::page() 显示「当前第 N 页」，
     // 新进程里它是 0，不同步就会导出「第 1/3 页」而真机在第 3 页。
     crate::collector::hotkeys::set_page(page);
+    // 朝向状态也要同步：页脚会按朝向显示按键方向，不同步就会导出「指示写反」的图
+    crate::collector::hotkeys::set_rot270(matches!(rot, Rotation::Rot270));
     if page == 1 {
         let feed = token::start_feed();
         // 等首轮 REST 快照 + WS 首帧吞吐（最多 8s），让预览接近真机所见

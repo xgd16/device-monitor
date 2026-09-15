@@ -93,6 +93,31 @@ impl TapTracker {
     }
 }
 
+/// 翻页方向随屏幕朝向翻转。
+///
+/// 面板换了 180° 等于手机在用户手里也转了 180°，物理音量键相对屏上内容
+/// 换到了另一侧 —— 方向不跟着翻，用户转到另一个朝向后按键就是反的。
+/// 所以这里不能让「音量上 = 下一页」写死。
+fn page_delta(base: i32) -> i32 {
+    if rot270() {
+        -base
+    } else {
+        base
+    }
+}
+
+/// 当前朝向下「音量上 / 音量下」各自对应的翻页方向文案。
+///
+/// 日志与屏上页脚都必须取这一处，别在两处各写一套判断：
+/// 朝向一变两处不同步，屏上就会指着按键写错方向，比不写还糟。
+pub fn up_down_labels() -> (&'static str, &'static str) {
+    if rot270() {
+        ("上一页", "下一页")
+    } else {
+        ("下一页", "上一页")
+    }
+}
+
 /// 翻转横向朝向并落盘。
 fn toggle_rotation() {
     let next = !ROT270.load(Ordering::Relaxed);
@@ -272,8 +297,9 @@ pub fn start_listener() {
                                             toggle_rotation();
                                         }
                                     } else if ev.ev_code == KEY_VOLUMEDOWN && down {
-                                        tracing::info!("hotkeys: KEY_VOLUMEDOWN → 上一页");
-                                        step(-1);
+                                        let (_, label) = up_down_labels();
+                                        tracing::info!("hotkeys: KEY_VOLUMEDOWN → {label}");
+                                        step(page_delta(-1));
                                     }
                                 }
                             }
@@ -288,8 +314,9 @@ pub fn start_listener() {
 
                 // 双击窗口过期 → 那一下就是单击：翻到下一页
                 if taps.expired(Instant::now()) {
-                    tracing::info!("hotkeys: KEY_VOLUMEUP → 下一页");
-                    step(1);
+                    let (label, _) = up_down_labels();
+                    tracing::info!("hotkeys: KEY_VOLUMEUP → {label}");
+                    step(page_delta(1));
                 }
             }
         })
@@ -345,6 +372,23 @@ mod tests {
         assert!(tr.tap(at(t, 120)));
         assert!(!tr.tap(at(t, 300)), "双击后的第一下是新候选");
         assert!(tr.expired(at(t, 300 + DOUBLE_CLICK_MS)));
+    }
+
+    /// 方向必须随朝向翻转：屏幕转 180° 后，同一个键对应的翻页方向要对调，
+    /// 否则用户转到另一个朝向按键就是反的。
+    #[test]
+    fn 翻页方向随朝向翻转() {
+        set_rot270(false);
+        assert_eq!(page_delta(1), 1, "rot90：音量上应是下一页");
+        assert_eq!(page_delta(-1), -1);
+        assert_eq!(up_down_labels(), ("下一页", "上一页"));
+
+        set_rot270(true);
+        assert_eq!(page_delta(1), -1, "rot270：音量上应对调为上一页");
+        assert_eq!(page_delta(-1), 1);
+        assert_eq!(up_down_labels(), ("上一页", "下一页"));
+
+        set_rot270(false);
     }
 
     /// 朝向翻转状态：set/rot270 往返一致。
