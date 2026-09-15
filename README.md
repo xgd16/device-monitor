@@ -379,7 +379,7 @@ journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
 | GET | `/api/network` | 网络接口列表 |
 | GET | `/api/network/wifi` | WiFi 连接信息 |
 | GET | `/api/network/bluetooth` | 蓝牙适配器信息 |
-| GET | `/api/history/metrics` | 历史指标，查询参数：`range=1h\|6h\|24h\|7d`、`max_points`（默认 500，上限 2000） |
+| GET | `/api/history/metrics` | 历史指标时间序列。查询参数 `range=1h\|6h\|24h\|7d`（默认 1h）、`max_points`（默认 500，会被夹到 50–2000）。返回 `timestamps` 与 `cpu_usage`、`memory_percent`、`memory_used_mb`、`load_1/5/15`、`battery_capacity`、`battery_power_w`、`thermal_max`、`process_count`、`network_rx_kbps`、`network_tx_kbps` 等序列，以及 `count`、`range`、`from`、`to` |
 
 ### 进程管理
 
