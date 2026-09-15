@@ -86,8 +86,10 @@ fn collect_inner(controller: &str) -> Result<MihomoInfo, String> {
 }
 
 fn resolve_active_proxy(proxy_map: &serde_json::Map<String, Value>) -> (String, String, Vec<String>) {
-    let start = ["GLOBAL", "Proxy", "🚀 节点选择", "节点选择"]
-        .iter()
+    // 优先找实际流量经过的组（Proxy → 故障转移/Fallback → URLTest/Auto → GLOBAL）
+    let priority = ["故障转移", "Fallback", "Proxy", "自动选择", "Auto",
+                    "auto-select", "🚀 节点选择", "节点选择", "GLOBAL"];
+    let start = priority.iter()
         .find(|name| proxy_map.contains_key(**name))
         .map(|name| (*name).to_string())
         .or_else(|| proxy_map.keys().find(|name| is_selector(proxy_map.get(*name))).cloned())

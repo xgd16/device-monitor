@@ -48,9 +48,23 @@ pub fn collect() -> CpuInfo {
         state.prev_core_total.resize(core_samples.len(), 0);
     }
 
+    // 计算在线核心的使用率与等效繁忙核心数
+    let mut online_busy = 0u64;
+    let mut online_total = 0u64;
+    let mut n_online = 0u32;
+
     for (idx, (idle, total)) in core_samples.into_iter().enumerate() {
-        let usage = calc_core_usage(&mut state, idx, idle, total);
         let freq = freqs.get(idx).copied().unwrap_or(0);
+        // 在线核心（freq > 0；离线核心的 scaling_cur_freq 读不到）
+        // 必须先算 delta：calc_core_usage 会更新 prev 值
+        if freq > 0 {
+            n_online += 1;
+            let d_idle = idle.saturating_sub(state.prev_core_idle[idx]);
+            let d_total = total.saturating_sub(state.prev_core_total[idx]);
+            online_busy += d_total.saturating_sub(d_idle);
+            online_total += d_total;
+        }
+        let usage = calc_core_usage(&mut state, idx, idle, total);
         cores.push(CpuCore {
             id: idx,
             usage,
@@ -58,7 +72,30 @@ pub fn collect() -> CpuInfo {
         });
     }
 
-    CpuInfo { overall_usage, cores }
+    let online_usage = if online_total > 0 {
+        (online_busy as f32 / online_total as f32) * 100.0
+    } else {
+        0.0
+    };
+
+    // 等效繁忙核心数：把「在线核心的平均使用率」还原成绝对负载，
+    // 与在线核数无关。大核上线后分母从 4 变 8，使用率会腰斩，
+    // 但 busy_cores 保持不变 —— 这才是适合做升降档判据的量。
+    // 注意判据是 online_total 而非 n_online：首次采样时 prev 全为 0，
+    // 若 online_total 恰为 0 会除零得到 inf，被 min() 夹成 n_online。
+    let busy_cores = if online_total > 0 && n_online > 0 {
+        (online_busy as f32 / (online_total as f32 / n_online as f32)).min(n_online as f32)
+    } else {
+        0.0
+    };
+
+    CpuInfo {
+        overall_usage,
+        online_usage,
+        online_cores: n_online,
+        busy_cores,
+        cores,
+    }
 }
 
 /// 解析 `/proc/stat` 一行，返回 (idle+jiffies, total_jiffies)。

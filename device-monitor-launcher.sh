@@ -1,10 +1,17 @@
 #!/bin/sh
-# 单服务启动器：优先尝试 kmscon UTF-8 TUI，失败则自动回退 ASCII TUI。
+# 单服务启动器：优先启动 DRM 横屏仪表（--screen），失败依次回退 kmscon UTF-8 TUI、裸 ASCII TUI。
 # 由 systemd device-monitor.service 调用，保证 API 始终可用。
+#
+# 可用环境变量：
+#   SCREEN_ROTATE=90|270        横屏旋转方向（默认 90）
+#   DEVICE_MONITOR_FORCE_TUI=1  跳过 DRM 横屏，直接用 kmscon
+#   DEVICE_MONITOR_FORCE_ASCII=1 直接裸 ASCII TUI
+#   TUI_FONT_SIZE                kmscon 字号
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$DEPLOY_DIR/target/release/device-monitor-server"
 WRAPPER="$DEPLOY_DIR/.device-monitor-tui-wrapper.sh"
+SCREEN_LOG="$DEPLOY_DIR/screen.log"
 LOG_TAG="device-monitor-launcher"
 KMSCON="/usr/libexec/kmscon/kmscon"
 [ -x "$KMSCON" ] || KMSCON="/usr/bin/kmscon"
@@ -83,13 +90,66 @@ EOF
 
 fallback_ascii() {
   log "Falling back to ASCII TUI"
+  bind_fbcon
   cleanup_kmscon
   printf '\033[2J\033[H' > /dev/tty1 2>/dev/null || true
   export TUI_UTF8=0
   exec "$BIN" --tui
 }
 
+# 首选：DRM/KMS 直绘横屏仪表（自绘像素排版，不依赖 kmscon/终端字体）
+try_screen() {
+  if [ "${DEVICE_MONITOR_FORCE_TUI:-0}" = "1" ]; then
+    log "Skipping DRM screen (DEVICE_MONITOR_FORCE_TUI=1)"
+    return 1
+  fi
+  [ -x "$BIN" ] || { log "binary not found: $BIN"; return 1; }
+
+  cleanup_kmscon
+  # 解绑内核 framebuffer 控制台（fbcon）：否则我们服务的 stdout（tty1）、
+  # 内核 printk、以及面板 unblank 都会让 fbcon 把控制台画到面板上，抢走画面。
+  if [ -w /sys/class/vtconsole/vtcon1/bind ]; then
+    echo 0 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null && log "fbcon 已解绑（避免控制台抢屏）"
+  fi
+  rotate="${SCREEN_ROTATE:-90}"
+  log "Attempting DRM landscape screen (--screen --rotate $rotate)"
+  : > "$SCREEN_LOG"
+  env LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 TUI_UTF8=1 RUST_LOG="${RUST_LOG:-info}" \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    "$BIN" --screen --rotate "$rotate" >>"$SCREEN_LOG" 2>&1 &
+  screen_pid=$!
+
+  i=0
+  while [ "$i" -lt 20 ]; do
+    sleep 1
+    i=$((i + 1))
+    if ! kill -0 "$screen_pid" 2>/dev/null; then
+      log "DRM screen exited early (see $SCREEN_LOG)"
+      wait "$screen_pid" 2>/dev/null || true
+      return 1
+    fi
+    if health_check; then
+      log "DRM landscape screen healthy (pid=$screen_pid, rotate=$rotate)"
+      wait "$screen_pid"
+      return $?
+    fi
+  done
+
+  log "DRM screen health check timed out after 20s"
+  kill "$screen_pid" 2>/dev/null || true
+  wait "$screen_pid" 2>/dev/null || true
+  return 1
+}
+
+# 回退到字符 TUI 前必须把 fbcon 绑回来，否则控制台是哑设备、什么也显示不出来
+bind_fbcon() {
+  if [ -w /sys/class/vtconsole/vtcon1/bind ]; then
+    echo 1 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null && log "fbcon 已重新绑定"
+  fi
+}
+
 try_kmscon() {
+  bind_fbcon
   [ -x "$KMSCON" ] || { log "kmscon not found, skip UTF-8"; return 1; }
   [ -x "$BIN" ] || { log "binary not found: $BIN"; return 1; }
 
@@ -135,8 +195,15 @@ if [ "${DEVICE_MONITOR_FORCE_ASCII:-0}" = "1" ]; then
   fallback_ascii
 fi
 
+# 1) DRM 横屏仪表
+if try_screen; then
+  exit 0
+fi
+
+# 2) kmscon UTF-8 竖屏 TUI
 if try_kmscon; then
   exit 0
 fi
 
+# 3) 裸 ASCII TUI
 fallback_ascii

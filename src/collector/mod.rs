@@ -10,9 +10,12 @@ pub mod battery;
 pub mod network;
 pub mod process;
 pub mod hardware;
+pub mod hotkeys;
 pub mod power_key;
 pub mod disk;
 pub mod mihomo;
+pub mod xtokenhub;
+pub mod cpu_power;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +30,9 @@ pub struct SystemOverview {
     /// Mihomo / Clash Meta 代理状态。
     #[serde(default)]
     pub mihomo: MihomoInfo,
+    /// XTokenHub LLM 网关运行统计。
+    #[serde(default)]
+    pub xtokenhub: XTokenHubInfo,
     /// 系统运行时间（秒），来自 `/proc/uptime`
     pub uptime: f64,
     /// 1/5/15 分钟平均负载，来自 `/proc/loadavg`
@@ -61,6 +67,17 @@ pub struct MihomoInfo {
 pub struct CpuInfo {
     /// 总体 CPU 使用率（%，两次采样差分计算）
     pub overall_usage: f32,
+    /// 在线核心的使用率（排除离线核心）
+    #[serde(default)]
+    pub online_usage: f32,
+    /// 在线核心数量
+    #[serde(default)]
+    pub online_cores: u32,
+    /// 等效繁忙核心数 = online_usage/100 × online_cores。
+    /// 这是与在线核数无关的绝对负载：同一份工作量，无论 4 核还是 8 核在线
+    /// 都得到同一个值，因此适合作为大核升降档的判据。
+    #[serde(default)]
+    pub busy_cores: f32,
     pub cores: Vec<CpuCore>,
 }
 
@@ -137,6 +154,14 @@ pub struct NetworkInterface {
     pub tx_packets: u64,
 }
 
+/// XTokenHub 服务状态。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct XTokenHubInfo {
+    pub available: bool,
+    pub status: String,
+    pub error: String,
+}
+
 /// 进程摘要信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessInfo {
@@ -189,6 +214,7 @@ pub fn collect_system_overview() -> SystemOverview {
         battery: battery::collect(),
         network: network::collect_interfaces(),
         mihomo: mihomo::collect(),
+        xtokenhub: xtokenhub::collect(),
         uptime: read_uptime(),
         load_avg: read_load_avg(),
         process_count: process::count_processes(),

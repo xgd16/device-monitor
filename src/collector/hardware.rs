@@ -110,6 +110,9 @@ pub struct GpuState {
     pub max_freq_mhz: u32,
     pub governor: String,
     pub available_freqs_mhz: Vec<u32>,
+    /// GPU runtime PM 是否处于 suspended 状态
+    #[serde(default)]
+    pub suspended: bool,
 }
 
 /// WiFi 省电模式（iw dev wlan0 get/set power_save）。
@@ -573,12 +576,16 @@ fn read_gpu_state() -> GpuState {
         .map(hz_to_mhz)
         .collect();
 
+    let runtime_status = read_sysfs("/sys/bus/platform/devices/5000000.gpu/power/runtime_status");
+    let suspended = runtime_status.trim() == "suspended";
+
     GpuState {
         cur_freq_mhz: hz_to_mhz(cur),
         min_freq_mhz: hz_to_mhz(min),
         max_freq_mhz: hz_to_mhz(max),
         governor,
         available_freqs_mhz,
+        suspended,
     }
 }
 

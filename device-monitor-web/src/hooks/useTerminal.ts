@@ -62,7 +62,12 @@ export function useTerminal(
       cursorBlink: true,
       fontSize: 14,
       lineHeight: 1.2,
-      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace',
+      // 必须显式包含 CJK 字体：xterm 用 canvas 渲染，字体栈里没有中文字体时
+      // 手机浏览器不会自动 fallback，中文会显示为空白/方块
+      fontFamily:
+        'ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Cascadia Mono", Consolas, ' +
+        '"Noto Sans Mono CJK SC", "Noto Sans CJK SC", "PingFang SC", "Source Han Sans SC", ' +
+        '"WenQuanYi Zen Hei", "Microsoft YaHei", "Droid Sans Fallback", monospace',
       theme: TERMINAL_THEME,
       scrollback: 5000,
       allowTransparency: false,

@@ -179,16 +179,48 @@ fn trunc_name(name: &str, max: usize) -> String {
     format!("{}...", name.chars().take(take).collect::<String>())
 }
 
-fn clean_proxy_name(name: &str) -> String {
-    let without_url = name
+pub(crate) fn strip_emoji(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        // 国旗 emoji = 两个 Regional Indicator 字母 (U+1F1E6..U+1F1FF)
+        if i + 1 < chars.len() {
+            let c1 = chars[i] as u32;
+            let c2 = chars[i + 1] as u32;
+            if (0x1F1E6..=0x1F1FF).contains(&c1) && (0x1F1E6..=0x1F1FF).contains(&c2) {
+                out.push((c1 - 0x1F1E6 + 65) as u8 as char);
+                out.push((c2 - 0x1F1E6 + 65) as u8 as char);
+                i += 2;
+                continue;
+            }
+        }
+        let c = chars[i];
+        let cp = c as u32;
+        // 跳过 emoji 区域、变体选择符、ZWJ
+        if (0x1F000..=0x1FFFF).contains(&cp)
+            || cp == 0x200D || cp == 0xFE0F || cp == 0xFE0E
+        {
+            i += 1;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+pub(crate) fn clean_proxy_name(name: &str) -> String {
+    let stripped = strip_emoji(name);
+    let without_url = stripped
         .split_whitespace()
         .filter(|part| !part.starts_with("网址:") && !part.starts_with("网址："))
         .collect::<Vec<_>>()
         .join(" ");
-    if without_url.is_empty() {
+    if without_url.trim().is_empty() {
         "unknown".to_string()
     } else {
-        without_url
+        without_url.trim().to_string()
     }
 }
 
@@ -341,6 +373,7 @@ fn alert_to_ascii(title: &str, message: &str) -> (String, String) {
         "CPU 温度过高" => "CPU TEMP HIGH".to_string(),
         "内存使用率过高" => "MEM USAGE HIGH".to_string(),
         "电池电量低" => "BATTERY LOW".to_string(),
+        "XTokenHub 不可用" => "XTOKENHUB DOWN".to_string(),
         _ => {
             let t = to_ascii_lossy(title);
             if t.is_empty() { "ALERT".to_string() } else { t }
@@ -514,7 +547,9 @@ fn render(
     out.push_str("\r\n");
 
     // ── 标题栏 + 系统标识 ──
-    let ts = chrono::Local::now().format("%H:%M:%S");
+    let local_now = chrono::Local::now();
+    let tz_abbr = local_now.format("%Z").to_string();
+    let ts = format!("{} {}", local_now.format("%H:%M:%S"), tz_abbr);
     let up = fmt_uptime(o.uptime as u64);
     if utf8 {
         out.push_str(&format!(
@@ -579,21 +614,32 @@ fn render(
     out.push_str(gap);
 
     // ── GPU ──
-    let gpu_pct = if hw.gpu.max_freq_mhz > 0 {
-        (hw.gpu.cur_freq_mhz as f64 / hw.gpu.max_freq_mhz as f64 * 100.0).min(100.0)
-    } else {
+    let gpu_pct = if hw.gpu.suspended || hw.gpu.max_freq_mhz == 0 {
         0.0
+    } else {
+        (hw.gpu.cur_freq_mhz as f64 / hw.gpu.max_freq_mhz as f64 * 100.0).min(100.0)
     };
     let gpu_gov = trunc_name(&hw.gpu.governor, if utf8 { 10 } else { 12 });
-    out.push_str(&format!(
-        "\x1b[35m  【GPU】{} {:>3}MHz\x1b[0m {}{} {}:{}\r\n",
-        progress_bar(gpu_pct, w_gpu, utf8),
-        hw.gpu.cur_freq_mhz,
-        if utf8 { "上限" } else { "max" },
-        hw.gpu.max_freq_mhz,
-        if utf8 { "策略" } else { "gov" },
-        gpu_gov,
-    ));
+    if hw.gpu.suspended {
+        out.push_str(&format!(
+            "\x1b[35m  【GPU】{} 休眠\\x1b[0m {}{} {}:{}\r\n",
+            progress_bar(0.0, w_gpu, utf8),
+            if utf8 { "上限" } else { "max" },
+            hw.gpu.max_freq_mhz,
+            if utf8 { "策略" } else { "gov" },
+            gpu_gov,
+        ));
+    } else {
+        out.push_str(&format!(
+            "\x1b[35m  【GPU】{} {:>3}MHz\\x1b[0m {}{} {}:{}\r\n",
+            progress_bar(gpu_pct, w_gpu, utf8),
+            hw.gpu.cur_freq_mhz,
+            if utf8 { "上限" } else { "max" },
+            hw.gpu.max_freq_mhz,
+            if utf8 { "策略" } else { "gov" },
+            gpu_gov,
+        ));
+    }
     out.push_str(gap);
 
     // ── 硬件状态 ──
@@ -823,6 +869,13 @@ fn render(
                 fmt_bytes(o.mihomo.download_total as f64),
                 fmt_bytes(o.mihomo.upload_total as f64),
             ));
+            if !o.mihomo.proxy_chain.is_empty() {
+                let chain = o.mihomo.proxy_chain.join(" -> ");
+                out.push_str(&format!(
+                    "    \x1b[35m链路: {}\x1b[0m\r\n",
+                    trunc_display(&chain, cols.saturating_sub(10)),
+                ));
+            }
         } else {
             out.push_str(&format!(
                 "    \x1b[35mVPN: {} {} | node:{} | conn:{} | D:{} U:{}\x1b[0m\r\n",
@@ -833,6 +886,13 @@ fn render(
                 fmt_bytes(o.mihomo.download_total as f64),
                 fmt_bytes(o.mihomo.upload_total as f64),
             ));
+            if !o.mihomo.proxy_chain.is_empty() {
+                let chain = o.mihomo.proxy_chain.join(" -> ");
+                out.push_str(&format!(
+                    "    \x1b[35mChain: {}\x1b[0m\r\n",
+                    trunc_name(&chain, cols.saturating_sub(12)),
+                ));
+            }
         }
     } else {
         out.push_str(if utf8 { "    VPN: 未连接\r\n" } else { "    VPN: disconnected\r\n" });
@@ -879,6 +939,39 @@ fn render(
         }
     } else {
         out.push_str(if utf8 { "    BT:   关\r\n" } else { "    BT:   OFF\r\n" });
+    }
+    out.push_str(gap);
+
+    // ── 服务状态 ──
+    {
+        let services = ["mihomo", "syncthing", "device-monitor", "xtokenhub"];
+        out.push_str(if utf8 {
+            "\x1b[1m  【服务】服务:\x1b[0m\r\n  "
+        } else {
+            "\x1b[1m  Services:\x1b[0m\r\n  "
+        });
+        for (i, svc) in services.iter().enumerate() {
+            if i > 0 { out.push_str(" | "); }
+            let status = std::process::Command::new("systemctl")
+                .args(["is-active", svc])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let (label, color) = match status.as_str() {
+                "active" => (if utf8 { "运行" } else { "run" }, 32),
+                "inactive" => (if utf8 { "停止" } else { "stop" }, 33),
+                "failed" => (if utf8 { "失败" } else { "fail" }, 31),
+                _ => (if utf8 { "未知" } else { "unk" }, 37),
+            };
+            out.push_str(&format!(
+                "\x1b[{}m{}:{}\x1b[0m",
+                color,
+                svc,
+                label,
+            ));
+        }
+        out.push_str("\r\n");
     }
     out.push_str(gap);
 

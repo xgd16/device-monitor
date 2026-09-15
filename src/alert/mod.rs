@@ -42,6 +42,8 @@ pub struct AlertEngine {
     last_mem_alert: i64,
     /// 上次电池告警时间
     last_bat_alert: i64,
+    /// 上次 XTokenHub 告警时间
+    last_xth_alert: i64,
 }
 
 impl AlertEngine {
@@ -52,6 +54,7 @@ impl AlertEngine {
             last_cpu_alert: 0,
             last_mem_alert: 0,
             last_bat_alert: 0,
+            last_xth_alert: 0,
         }
     }
 
@@ -92,6 +95,16 @@ impl AlertEngine {
                 &format!("当前电量: {}% (阈值: {}%)", data.battery.capacity, self.config.battery_low_threshold),
             );
             self.last_bat_alert = now;
+        }
+
+        // XTokenHub 不可用
+        if !data.xtokenhub.available && now - self.last_xth_alert > 300 {
+            let _ = self.db.store_alert(
+                "warning",
+                "XTokenHub 不可用",
+                &format!("错误: {}", data.xtokenhub.error),
+            );
+            self.last_xth_alert = now;
         }
     }
 }

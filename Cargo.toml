@@ -21,6 +21,13 @@ crossterm = "0.29"
 portable-pty = "0.8"
 zip = "8.6.0"
 sevenz-rust = "0.6.1"
+# 物理屏横屏仪表：CJK 字形光栅化 + DRM/KMS 直绘
+ab_glyph = "0.2"
+drm = "0.15"
+drm-fourcc = "2"
+bytemuck = "1"
+ureq = { version = "2", default-features = false }
+tungstenite = "0.30.0"
 
 [[bin]]
 name = "device-monitor-server"

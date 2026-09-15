@@ -12,6 +12,7 @@ mod store;
 mod ws;
 mod alert;
 mod tui;
+mod screen;
 
 use axum::{Router, routing::{get, post, put, delete}};
 use tower_http::cors::{CorsLayer, Any};
@@ -39,12 +40,44 @@ async fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let enable_tui = args.contains(&"--tui".to_string());
+    let enable_screen = args.contains(&"--screen".to_string());
+
+    // ── 离屏导出预览（--screen-dump <path>，不需要 DRM，可在服务运行时执行）──
+    if let Some(i) = args.iter().position(|a| a == "--screen-dump") {
+        let path = args
+            .get(i + 1)
+            .cloned()
+            .unwrap_or_else(|| "/tmp/device-monitor-screen.ppm".to_string());
+        let rot = if args.iter().any(|a| a == "270") {
+            screen::Rotation::Rot270
+        } else {
+            screen::Rotation::Rot90
+        };
+        let page = match args.iter().position(|a| a == "--page").and_then(|i| args.get(i + 1)).map(|s| s.as_str()) {
+            Some("tokens") | Some("2") | Some("1") => 1u8,
+            _ => 0u8,
+        };
+        let overview = collector::collect_system_overview();
+        match screen::dump(&overview, rot, &path, page) {
+            Ok(()) => {
+                println!("已写出 {path} 与 {path}.raw.ppm");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("导出失败: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     // ── 初始化存储与告警 ──
     let db = Arc::new(store::Database::new("device_monitor.db").expect("Failed to init database"));
     let alert_engine = Arc::new(RwLock::new(alert::AlertEngine::new(db.clone())));
 
     // watch channel：后台采集任务 send，API/WebSocket/TUI receive
+    // 初始化大核调度状态（同步实际硬件在线状态）
+    collector::cpu_power::init();
+
     let initial = collector::collect_system_overview();
     let (tx, rx) = watch::channel(initial);
 
@@ -54,8 +87,10 @@ async fn main() {
         latest: rx,
     };
 
-    // ── 启动电源键监听 ──
+    // ── 启动电源键 / 音量键监听（音量键用于物理屏切页）──
     collector::power_key::start_listener();
+    collector::hotkeys::start_listener();
+    collector::hotkeys::install_debug_signals();
 
     // ── 后台采集任务 ──
     let db_bg = db.clone();
@@ -69,6 +104,15 @@ async fn main() {
                 // 每 5 秒采集一次系统指标
                 _ = interval.tick() => {
                     let overview = collector::collect_system_overview();
+                    // CPU 大核调度：判据用等效繁忙核心数（与在线核数无关），
+                    // 温度只取 CPU/集群相关传感器，避免被电池、modem 等区域干扰
+                    let max_cpu_temp = overview
+                        .thermal
+                        .iter()
+                        .filter(|z| z.name.contains("cpu") || z.name.contains("cluster"))
+                        .map(|z| z.temp_celsius)
+                        .fold(0.0_f64, f64::max);
+                    collector::cpu_power::auto_schedule(overview.cpu.busy_cores, max_cpu_temp);
                     if let Err(e) = collector::hardware::apply_cpu_status_led_link(overview.cpu.overall_usage as f64) {
                         tracing::error!("CPU 状态灯联动失败: {}", e);
                     }
@@ -95,6 +139,37 @@ async fn main() {
             }
         }
     });
+
+    // ── 可选物理屏横屏仪表（DRM/KMS 直绘 + 软件旋转）──
+    //
+    // 初始化失败必须让进程退出，启动器据此回退到 kmscon/ASCII TUI；
+    // 否则会出现「API 活着但屏幕空白」的静默失败。
+    if enable_screen {
+        let rotate_arg = args
+            .iter()
+            .position(|a| a == "--rotate")
+            .and_then(|i| args.get(i + 1))
+            .map(|s| s.as_str());
+        let rot = match rotate_arg {
+            Some("270") => screen::Rotation::Rot270,
+            _ => screen::Rotation::Rot90,
+        };
+        match screen::open(rot) {
+            Ok(scr) => {
+                let rx_screen = state.latest.clone();
+                let db_screen = db.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = screen::run(scr, rx_screen, Some(db_screen)) {
+                        tracing::error!("screen: 渲染循环退出: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                tracing::error!("screen: 初始化失败: {} — 退出以便回退 kmscon/ASCII", e);
+                std::process::exit(3);
+            }
+        }
+    }
 
     // ── 可选 TUI 模式 ──
     if enable_tui {

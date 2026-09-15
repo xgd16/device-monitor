@@ -1,0 +1,10 @@
+# Rust 代码规范配置
+max_width = 120
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_small_heuristics = "Max"
+fn_call_width = 80
+struct_lit_width = 80
+force_explicit_abi = true
+edition = "2024"

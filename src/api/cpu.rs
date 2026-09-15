@@ -8,14 +8,21 @@
 //! - `POST /api/cpu/normal` — 恢复正常模式。
 
 use axum::Json;
+use axum::extract::State;
 use serde::Deserialize;
 use serde_json::Value;
+use crate::AppState;
 use crate::collector;
 use super::{success, error};
 
 /// GET /api/cpu
-pub async fn cpu_info() -> Json<Value> {
-    let data = collector::cpu::collect();
+///
+/// 返回后台采集任务维护的最新快照，**不能**直接调 `cpu::collect()`：该函数靠
+/// 两次采样差分算使用率，与采集循环共用同一份 `STATE`。HTTP 请求插入采样会
+/// 让循环读到趋近于 0 的采样间隔，使用率出现 0%/100% 抖动，并污染大核调度
+/// 的输入。
+pub async fn cpu_info(State(state): State<AppState>) -> Json<Value> {
+    let data = state.latest.borrow().cpu.clone();
     success(data)
 }
 
