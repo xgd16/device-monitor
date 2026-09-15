@@ -32,8 +32,15 @@ const GAP: i32 = 16;
 const CARD_R: i32 = 16;
 const HEADER_H: i32 = 96;
 const FOOTER_H: i32 = 56;
-/// 迷你趋势图保留样本数（采集间隔 5s → 约 6 分钟）
+/// 迷你趋势图样本数基准（按采集间隔 5s 设计 → 约 6 分钟时间窗）
 const HIST_LEN: usize = 72;
+
+/// 迷你趋势图的实际样本上限：刷新间隔可调后按比例换算，
+/// 保持时间窗（约 6 分钟）不随刷新率变化（1s→360、3s→120、5s→72、10s→36）。
+pub fn hist_cap(refresh_secs: u64) -> usize {
+    const SPAN_SECS: usize = HIST_LEN * 5;
+    (SPAN_SECS / refresh_secs.max(1) as usize).max(HIST_LEN / 4)
+}
 
 /// 逻辑面板矩形。
 #[derive(Clone, Copy)]
@@ -191,9 +198,9 @@ impl History {
         }
     }
 
-    pub fn push(&mut self, o: &SystemOverview, a: &Aux) {
-        push_capped(&mut self.cpu, o.cpu.overall_usage);
-        push_capped(&mut self.mem, o.memory.usage_percent as f32);
+    pub fn push(&mut self, o: &SystemOverview, a: &Aux, cap: usize) {
+        push_capped(&mut self.cpu, o.cpu.overall_usage, cap);
+        push_capped(&mut self.mem, o.memory.usage_percent as f32, cap);
         // 有效网卡（up 且非 lo）的 rx 速率之和
         let mut total = 0.0f32;
         for n in o.network.iter().filter(|n| n.is_up && n.name != "lo") {
@@ -202,13 +209,13 @@ impl History {
             }
         }
         self.cur_net = total;
-        push_capped(&mut self.net, total);
+        push_capped(&mut self.net, total, cap);
     }
 }
 
-fn push_capped(v: &mut Vec<f32>, x: f32) {
+fn push_capped(v: &mut Vec<f32>, x: f32, cap: usize) {
     v.push(x);
-    if v.len() > HIST_LEN {
+    if v.len() > cap {
         v.remove(0);
     }
 }

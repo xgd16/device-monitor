@@ -10,7 +10,7 @@
 //! - demand >= 2.4 核 → 开 2 个大核
 //! - demand <= 2.0 核 → 关闭全部大核 + 小核限频
 //! - 2.0 ~ 2.4 核为滞回带，维持现状
-//! - 升档立即生效，降档需等保持期（6 × 5s = 30s）归零
+//! - 升档立即生效，降档需等保持期（30s，按墙钟计，与刷新率无关）到期
 //! - 温度 >= 75°C 时只允许降档或维持，禁止升档
 //!
 //! 所有 sysfs 写入后都回读校验：写失败或内核静默丢弃（例如传入不在
@@ -18,7 +18,7 @@
 //! 避免软件状态与硬件脱节。
 
 use std::fs;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 const BIG_CORES: &[usize] = &[4, 5, 6, 7];
 const SMALL_CORES: &[usize] = &[0, 1, 2, 3];
@@ -51,21 +51,29 @@ const IDLE_CORES: f32 = 2.0;
 /// 永久钉死在 2 核。95°C 只在接近满载温度时阻止再加核。
 const THERMAL_LIMIT_C: f64 = 95.0;
 
-/// 大核上线后最少保持的采样周期数（6 × 5s = 30秒）
-const MIN_HOLD_CYCLES: u32 = 6;
+/// 大核上线后最少保持时长（毫秒）。旧实现按采样周期计数（6 × 5s = 30s），
+/// 采集间隔改为 Web 端可调后改为绝对时限，保持期与刷新率解耦。
+const MIN_HOLD_MILLIS: u64 = 30_000;
 
 /// 当前在线的大核数量（0 / 2 / 4）
 static BIG_ONLINE_COUNT: AtomicU32 = AtomicU32::new(0);
 static ENABLED: AtomicBool = AtomicBool::new(true);
-/// 降档前的保持计数器，每次采样递减，归零后才允许降档
-static HOLD_COUNTER: AtomicU32 = AtomicU32::new(0);
+/// 降档保持期截止时间（Unix 毫秒），到期后才允许降档
+static HOLD_UNTIL_MILLIS: AtomicU64 = AtomicU64::new(0);
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 /// 启动时同步大核实际在线状态，避免重启后软件状态与硬件不一致
 /// （旧版默认 false，若重启前大核仍在线就会永远走不到降档分支）。
 pub fn init() {
     let actual = count_big_online();
     BIG_ONLINE_COUNT.store(actual, Ordering::Relaxed);
-    HOLD_COUNTER.store(0, Ordering::Relaxed);
+    HOLD_UNTIL_MILLIS.store(0, Ordering::Relaxed);
     if actual > 0 {
         tracing::info!("cpu-power: 启动时检测到 {actual} 个大核在线，同步状态");
     }
@@ -93,7 +101,7 @@ pub fn auto_schedule(demand_cores: f32, max_temp_c: f64) {
     }
 
     let current = BIG_ONLINE_COUNT.load(Ordering::Relaxed);
-    let hold = HOLD_COUNTER.load(Ordering::Relaxed);
+    let hold_active = now_millis() < HOLD_UNTIL_MILLIS.load(Ordering::Relaxed);
     let overheat = max_temp_c >= THERMAL_LIMIT_C;
 
     // 目标档位；滞回带内维持现状
@@ -117,7 +125,7 @@ pub fn auto_schedule(demand_cores: f32, max_temp_c: f64) {
         if apply_big_count(target) {
             BIG_ONLINE_COUNT.store(target, Ordering::Relaxed);
             set_small_max_freq(SMALL_FULL_FREQ);
-            HOLD_COUNTER.store(MIN_HOLD_CYCLES, Ordering::Relaxed);
+            HOLD_UNTIL_MILLIS.store(now_millis() + MIN_HOLD_MILLIS, Ordering::Relaxed);
             tracing::info!(
                 "cpu-power: 负载 {:.2} 核 → 升档 {current} → {target} 个大核{}",
                 demand_cores,
@@ -129,13 +137,13 @@ pub fn auto_schedule(demand_cores: f32, max_temp_c: f64) {
             );
         }
     } else if target < current {
-        if hold == 0 {
+        if !hold_active {
             if apply_big_count(target) {
                 BIG_ONLINE_COUNT.store(target, Ordering::Relaxed);
                 if target == 0 {
                     set_small_max_freq(SMALL_SAVE_FREQ);
                 }
-                HOLD_COUNTER.store(MIN_HOLD_CYCLES, Ordering::Relaxed);
+                HOLD_UNTIL_MILLIS.store(now_millis() + MIN_HOLD_MILLIS, Ordering::Relaxed);
                 tracing::info!(
                     "cpu-power: 负载 {:.2} 核 → 降档 {current} → {target} 个大核{}",
                     demand_cores,
@@ -150,16 +158,12 @@ pub fn auto_schedule(demand_cores: f32, max_temp_c: f64) {
                     "cpu-power: 降档到 {target} 个大核失败，保持 {current} 不变"
                 );
             }
-        } else {
-            HOLD_COUNTER.store(hold - 1, Ordering::Relaxed);
         }
     } else {
         // 维持当前档位
         if current > 0 && demand_cores >= TIER_HALF_CORES {
             // 负载仍在高位，保持期续期
-            HOLD_COUNTER.store(MIN_HOLD_CYCLES, Ordering::Relaxed);
-        } else if hold > 0 {
-            HOLD_COUNTER.store(hold - 1, Ordering::Relaxed);
+            HOLD_UNTIL_MILLIS.store(now_millis() + MIN_HOLD_MILLIS, Ordering::Relaxed);
         }
     }
 }

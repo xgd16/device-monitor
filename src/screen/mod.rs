@@ -17,6 +17,7 @@ pub mod layout;
 pub mod theme;
 pub mod token;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -90,9 +91,14 @@ pub fn open(rot: Rotation) -> Result<Screen, String> {
 
 /// 渲染主循环（阻塞线程内运行）。
 ///
-/// - 数据变化（采集周期 5s）→ 整屏重绘
+/// - 数据变化（采集周期即刷新间隔，Web 端可调 1/3/5/10s）→ 整屏重绘
 /// - 其余每秒 → 只重绘顶栏时钟，其余像素不动（差分刷新，避免闪烁）
-pub fn run(mut screen: Screen, mut rx: watch::Receiver<SystemOverview>, db: Option<Arc<Database>>) -> Result<(), String> {
+pub fn run(
+    mut screen: Screen,
+    mut rx: watch::Receiver<SystemOverview>,
+    db: Option<Arc<Database>>,
+    refresh_secs: Arc<AtomicU64>,
+) -> Result<(), String> {
     let mut hist = layout::History::new();
     let mut aux = layout::Aux::new();
     let tokens = token::start_feed();
@@ -160,7 +166,7 @@ pub fn run(mut screen: Screen, mut rx: watch::Receiver<SystemOverview>, db: Opti
             last_ts = o.timestamp;
             let t0 = std::time::Instant::now();
             aux.refresh(&o, db.as_deref());
-            hist.push(&o, &aux);
+            hist.push(&o, &aux, layout::hist_cap(refresh_secs.load(Ordering::Relaxed)));
             if force_full {
                 screen.canvas.invalidate_all();
                 force_full = false;
@@ -230,7 +236,8 @@ pub fn dump(o: &SystemOverview, rot: Rotation, path: &str, page: u8) -> Result<(
             o.memory.usage_percent as f32,
             120_000.0,
         );
-        hist.push(o, &aux);
+        // 预览按 5s 基准采样填充，与 seed_wave 的波形密度一致
+        hist.push(o, &aux, layout::hist_cap(5));
         layout::render(&mut canvas, o, &aux, &hist);
     }
 

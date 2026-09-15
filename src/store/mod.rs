@@ -2,6 +2,7 @@
 //!
 //! 当前实现为 SQLite 后端，存储指标快照与告警记录。
 
+pub mod settings;
 pub mod sqlite;
 pub use sqlite::Database;
 

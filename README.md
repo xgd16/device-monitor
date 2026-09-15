@@ -67,7 +67,7 @@
 
 ### 其他
 
-- **WebSocket 实时推送**：每 5 秒推送完整 `SystemOverview` JSON
+- **WebSocket 实时推送**：按界面刷新间隔推送完整 `SystemOverview` JSON（Web 端可调 **1/3/5/10 秒**，默认 5 秒；同一心跳同时驱动 DRM 物理屏与 TUI）
 - **SQLite 历史存储**：指标快照与告警记录，默认每 30 秒落库、自动清理 7 天前数据
 - **Web 前端**：React + HeroUI，暗色/亮色主题，ECharts 趋势图
 
@@ -176,7 +176,7 @@ device-monitor/
 └── test_vibrate.rs             # 振动马达 ioctl 测试工具（rustc 直接编译）
 ```
 
-运行时生成、不纳入版本管理的文件：`device_monitor.db*`、`screen.log`、`static/`、`target/`、`node_modules/`、`battery_effective_max.txt`、`battery_low_streak.txt`、`battery_session_peak.txt`、`.device-monitor-tui-wrapper.sh`。
+运行时生成、不纳入版本管理的文件：`device_monitor.db*`、`screen.log`、`static/`、`target/`、`node_modules/`、`battery_effective_max.txt`、`battery_low_streak.txt`、`battery_session_peak.txt`、`refresh_secs.txt`、`.device-monitor-tui-wrapper.sh`。
 
 ---
 
@@ -366,6 +366,8 @@ journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/system/overview` | 完整系统概览（后台采集的最新快照） |
+| GET | `/api/system/refresh` | 当前界面刷新间隔与可选项（秒） |
+| POST | `/api/system/refresh` | 设置刷新间隔，`body: { "secs": 1\|3\|5\|10 }`；立即改变采集心跳（WS 推送、DRM 屏跟随），持久化到 `refresh_secs.txt` |
 | GET | `/api/cpu` | CPU 使用率与频率（返回采集快照，避免插入采样污染差分） |
 | GET | `/api/cpu/governor` | 当前 governor 与可用策略 |
 | POST | `/api/cpu/governor` | 设置 governor，`body: { "governor": "schedutil" }` |
@@ -535,6 +537,7 @@ journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
 - **alerts 表**：告警记录（level、title、message）
 - 自动清理：后台任务每小时删除 **7 天**前的 metrics 和 alerts，随后 `VACUUM` 并 `PRAGMA wal_checkpoint(TRUNCATE)` 回收库与 WAL
 - 电池健康状态持久化在 `battery_effective_max.txt` / `battery_session_peak.txt` / `battery_low_streak.txt`
+- 界面刷新间隔（1/3/5/10 秒，即采集心跳）持久化在 `refresh_secs.txt`，由 `POST /api/system/refresh` 写入
 
 > WAL 模式下 `VACUUM` 会先整库重写进 WAL 再 checkpoint，清理后短时间内 WAL 可达库大小量级；清理任务已自动补一次 `wal_checkpoint(TRUNCATE)`，需要立刻回收空间时直接 `POST /api/database/cleanup`。
 
