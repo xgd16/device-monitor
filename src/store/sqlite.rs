@@ -86,7 +86,7 @@ impl Database {
         Ok(rows)
     }
 
-    /// 清理超过指定天数的旧数据，并执行 VACUUM 回收磁盘空间。
+    /// 清理超过指定天数的旧数据，并执行 VACUUM + WAL checkpoint 回收磁盘空间。
     ///
     /// 返回 `(删除的 metrics 条数, 删除的 alerts 条数)`。
     pub fn cleanup_old_data(&self, days: i64) -> Result<(usize, usize), rusqlite::Error> {
@@ -104,12 +104,14 @@ impl Database {
         )?;
         
         conn.execute_batch("VACUUM;")?;
+        // VACUUM 在 WAL 模式下把整库重写进 WAL，再 checkpoint 一次让 -wal 回落。
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         
         Ok((metrics_deleted, alerts_deleted))
     }
 
     /// 获取数据库统计信息（记录数、时间范围等）。
-    pub fn get_stats(&self) -> Result<Value, rusqlite::Error> {
+    pub fn get_stats(&self, retention_days: i64) -> Result<Value, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         
         let metrics_count: i64 = conn.query_row(
@@ -133,26 +135,40 @@ impl Database {
             "alerts_count": alerts_count,
             "oldest_metric": oldest_metric,
             "newest_metric": newest_metric,
-            "retention_days": 7
+            "retention_days": retention_days
         }))
     }
 
     /// 查询指定时间范围内的指标快照（按时间升序）。
+    ///
+    /// 分桶下推到 SQL：每个桶只取一条（桶内 id 最小＝最早），使返回行数受
+    /// `max_points` 约束。否则 7 天量级的整份概览 JSON 会全量进内存再降采样。
     pub fn get_metrics_in_range(
         &self,
         from_ts: i64,
         to_ts: i64,
         max_points: usize,
     ) -> Result<Vec<(i64, String)>, rusqlite::Error> {
+        if max_points == 0 {
+            return Ok(Vec::new());
+        }
+
+        let span = (to_ts - from_ts).max(1) as u64;
+        let bucket = span.div_ceil(max_points as u64).max(1) as i64;
+
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT timestamp, data FROM metrics
-             WHERE timestamp >= ?1 AND timestamp <= ?2
+             WHERE id IN (
+                 SELECT MIN(id) FROM metrics
+                 WHERE timestamp >= ?1 AND timestamp <= ?2
+                 GROUP BY (timestamp - ?1) / ?3
+             )
              ORDER BY timestamp ASC",
         )?;
 
         let rows: Vec<(i64, String)> = stmt
-            .query_map(params![from_ts, to_ts], |row| {
+            .query_map(params![from_ts, to_ts, bucket], |row| {
                 Ok((row.get(0)?, row.get(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;

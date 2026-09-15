@@ -68,7 +68,7 @@
 ### 其他
 
 - **WebSocket 实时推送**：每 5 秒推送完整 `SystemOverview` JSON
-- **SQLite 历史存储**：指标快照与告警记录，自动清理 7 天前数据
+- **SQLite 历史存储**：指标快照与告警记录，默认每 30 秒落库、自动清理 7 天前数据
 - **Web 前端**：React + HeroUI，暗色/亮色主题，ECharts 趋势图
 
 ---
@@ -452,7 +452,7 @@ journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/database/stats` | 记录数与时间范围 |
-| POST | `/api/database/cleanup` | 手动清理 7 天前数据 |
+| POST | `/api/database/cleanup` | 手动清理 7 天前数据并回收空间（VACUUM + WAL checkpoint） |
 
 ### 文件管理
 
@@ -530,12 +530,13 @@ journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
 ## 数据存储
 
 - 数据库文件：`device_monitor.db`（运行目录下，已在 `.gitignore` 排除，WAL 模式）
-- **metrics 表**：每次采集的完整 `SystemOverview` JSON 快照（约 3 KB/行，约 1.6 万行/天）
+- **metrics 表**：每次采集的完整 `SystemOverview` JSON 快照（实测约 3.3 KB/行，其中 thermal 的 23 个传感器占约 1.4 KB、network 占约 0.8 KB）
+- **落库间隔**默认 **30 秒**（`METRICS_PERSIST_SECS` 可调）：约 2 900 行/天，7 天约 60 MB。改回 5 秒即 1.7 万行/天、7 天约 370 MB —— 库体积由「行大小 × 落库频率」决定，与保留天数无关
 - **alerts 表**：告警记录（level、title、message）
-- 自动清理：后台任务每小时删除 **7 天**前的 metrics 和 alerts，并执行 `VACUUM`
+- 自动清理：后台任务每小时删除 **7 天**前的 metrics 和 alerts，随后 `VACUUM` 并 `PRAGMA wal_checkpoint(TRUNCATE)` 回收库与 WAL
 - 电池健康状态持久化在 `battery_effective_max.txt` / `battery_session_peak.txt` / `battery_low_streak.txt`
 
-> WAL 模式下 `VACUUM` 会先整库重写进 WAL 再 checkpoint，清理后短时间内 WAL 可达库大小量级；数据库偏大时优先用 `PRAGMA wal_checkpoint(TRUNCATE)` 回收。
+> WAL 模式下 `VACUUM` 会先整库重写进 WAL 再 checkpoint，清理后短时间内 WAL 可达库大小量级；清理任务已自动补一次 `wal_checkpoint(TRUNCATE)`，需要立刻回收空间时直接 `POST /api/database/cleanup`。
 
 ---
 
@@ -544,6 +545,8 @@ journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `RUST_LOG` | Rust 日志级别 | `info` |
+| `RETENTION_DAYS` | 历史数据保留天数 | `7` |
+| `METRICS_PERSIST_SECS` | 指标落库间隔（秒）；实时采集与推送仍为 5 秒 | `30` |
 | `MIHOMO_CONTROLLER` | mihomo 控制器地址（外置控制器，非本机也可） | `http://192.168.1.110:9090` |
 | `MIHOMO_FETCH_SUB_SCRIPT` | 订阅更新脚本路径 | `/home/user/code/fetch_sub.py` |
 | `BATTERY_EFFECTIVE_MAX_PCT` | 强制指定电池实际上限 SOC（跳过学习） | 未设置 |
@@ -597,7 +600,18 @@ DRM 直绘要求内核 framebuffer 控制台（fbcon）处于解绑状态，`dev
 
 ### 数据库越来越大
 
-`metrics` 表逐条存整份概览 JSON。确认清理任务在跑（`journalctl -u device-monitor | grep 数据清理`），必要时手动 `POST /api/database/cleanup`，并按上文回收 WAL。
+`metrics` 表逐条存整份概览 JSON，体积 ≈ **行大小（约 3.3 KB）× 落库频率 × 保留天数**，所以先确认是"清理没跑"还是"本来就这么大"：
+
+```bash
+# 记录数与时间跨度：oldest_metric/newest_metric 差值应 ≤ 保留天数
+curl -s http://127.0.0.1:3000/api/database/stats
+# 清理任务是否在跑（每小时一行）
+journalctl -u device-monitor | grep 数据清理
+```
+
+跨度正常就说明清理在跑，体积问题出在落库频率：调大 `METRICS_PERSIST_SECS`（如 60），或直接 `POST /api/database/cleanup` 立刻回收。
+
+> 启动日志会打印生效配置，例如 `历史数据：每 30 秒落库，保留 7 天`。
 
 ---
 

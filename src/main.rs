@@ -96,9 +96,19 @@ async fn main() {
     let db_bg = db.clone();
     let ae_bg = alert_engine.clone();
     let db_cleanup = db.clone();
+    let persist_interval = std::time::Duration::from_secs(store::persist_interval_secs());
+    tracing::info!(
+        "历史数据：每 {} 秒落库，保留 {} 天",
+        persist_interval.as_secs(),
+        store::retention_days()
+    );
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        // 采集与落库解耦：实时推送仍按 5 秒，落库按 persist_interval 节流。
+        let mut last_persist = std::time::Instant::now()
+            .checked_sub(persist_interval)
+            .unwrap_or_else(std::time::Instant::now);
         loop {
             tokio::select! {
                 // 每 5 秒采集一次系统指标
@@ -117,19 +127,26 @@ async fn main() {
                         tracing::error!("CPU 状态灯联动失败: {}", e);
                     }
                     let _ = tx.send(overview.clone());
-                    if let Err(e) = db_bg.store_metrics(&overview) {
-                        tracing::error!("Failed to store metrics: {}", e);
+                    if last_persist.elapsed() >= persist_interval {
+                        last_persist = std::time::Instant::now();
+                        if let Err(e) = db_bg.store_metrics(&overview) {
+                            tracing::error!("Failed to store metrics: {}", e);
+                        }
                     }
                     let mut engine = ae_bg.write().await;
                     engine.check(&overview);
                 }
-                // 每小时清理超过 7 天的历史数据
+                // 每小时清理超过保留期（默认 7 天）的历史数据
                 _ = cleanup_interval.tick() => {
-                    match db_cleanup.cleanup_old_data(7) {
+                    let days = store::retention_days();
+                    match db_cleanup.cleanup_old_data(days) {
                         Ok((metrics, alerts)) => {
-                            if metrics > 0 || alerts > 0 {
-                                tracing::info!("数据清理完成: 删除了 {} 条指标记录, {} 条告警记录", metrics, alerts);
-                            }
+                            tracing::info!(
+                                "数据清理完成: 删除 {} 条指标、{} 条告警（保留 {} 天）",
+                                metrics,
+                                alerts,
+                                days
+                            );
                         }
                         Err(e) => {
                             tracing::error!("数据清理失败: {}", e);
