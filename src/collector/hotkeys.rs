@@ -191,12 +191,15 @@ pub fn start_listener() {
                             Ok(()) => {
                                 let ev: InputEvent = unsafe { std::mem::transmute(buf) };
                                 if ev.ev_type == EV_KEY && ev.ev_value == 1 {
+                                    // 音量上 = 往右（下一页）。方向必须和顶栏页签的
+                                    // 左右顺序一致：页签是 系统监控 → Token用量 → 时钟
+                                    // 从左往右排的，按键却让「上」往左走，用起来就是反的。
                                     if ev.ev_code == KEY_VOLUMEUP && up {
-                                        tracing::info!("hotkeys: KEY_VOLUMEUP → 上一页");
-                                        step(-1);
-                                    } else if ev.ev_code == KEY_VOLUMEDOWN && down {
-                                        tracing::info!("hotkeys: KEY_VOLUMEDOWN → 下一页");
+                                        tracing::info!("hotkeys: KEY_VOLUMEUP → 下一页");
                                         step(1);
+                                    } else if ev.ev_code == KEY_VOLUMEDOWN && down {
+                                        tracing::info!("hotkeys: KEY_VOLUMEDOWN → 上一页");
+                                        step(-1);
                                     }
                                 }
                             }
