@@ -1,20 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
+import { areaGradient, chartPalette, chartThemeColors } from './chartTheme';
 
 interface TrendChartProps {
   data: number[];
   timestamps?: number[];
   variant: 'cpu' | 'mem' | 'gpu';
   unit?: string;
-  height?: number;
+  /** 像素高度；传 '100%' 让图表填满父容器（父级需有确定高度） */
+  height?: number | string;
 }
-
-const VARIANT_COLORS = {
-  cpu: { line: '#38bdf8', areaTop: 'rgba(56, 189, 248, 0.35)', areaBottom: 'rgba(56, 189, 248, 0.02)' },
-  mem: { line: '#4ade80', areaTop: 'rgba(74, 222, 128, 0.35)', areaBottom: 'rgba(74, 222, 128, 0.02)' },
-  gpu: { line: '#a78bfa', areaTop: 'rgba(167, 139, 250, 0.35)', areaBottom: 'rgba(167, 139, 250, 0.02)' },
-};
 
 function fmtTime(ts: number) {
   return new Date(ts * 1000).toLocaleTimeString('zh-CN', {
@@ -25,7 +21,13 @@ function fmtTime(ts: number) {
   });
 }
 
-export function TrendChart({ data, timestamps, variant, unit = '%', height = 80 }: TrendChartProps) {
+export function TrendChart({
+  data,
+  timestamps,
+  variant,
+  unit = '%',
+  height = 80,
+}: TrendChartProps) {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
   useEffect(() => {
@@ -40,12 +42,15 @@ export function TrendChart({ data, timestamps, variant, unit = '%', height = 80 
   const option = useMemo<EChartsOption>(() => {
     if (data.length < 2) return {};
 
-    const colors = VARIANT_COLORS[variant];
+    const pal = chartPalette(theme);
+    const tc = chartThemeColors(theme);
+    const lineColor = variant === 'cpu' ? pal.accent : variant === 'mem' ? pal.success : pal.violet;
     const isDark = theme === 'dark';
     const maxVal = Math.max(...data, 1);
-    const yMax = variant === 'gpu'
-      ? Math.ceil(maxVal * 1.15 + 20)
-      : Math.min(100, Math.ceil(maxVal * 1.2 + 8));
+    const yMax =
+      variant === 'gpu'
+        ? Math.ceil(maxVal * 1.15 + 20)
+        : Math.min(100, Math.ceil(maxVal * 1.2 + 8));
 
     const labels =
       timestamps && timestamps.length === data.length
@@ -59,12 +64,12 @@ export function TrendChart({ data, timestamps, variant, unit = '%', height = 80 
       tooltip: {
         trigger: 'axis',
         confine: true,
-        backgroundColor: isDark ? 'rgba(22, 22, 28, 0.96)' : 'rgba(255, 255, 255, 0.98)',
-        borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
+        backgroundColor: tc.tooltipBg,
+        borderColor: tc.tooltipBorder,
         borderWidth: 1,
         padding: [8, 12],
         textStyle: {
-          color: isDark ? '#e4e4e7' : '#27272a',
+          color: tc.tooltipText,
           fontSize: 11,
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         },
@@ -76,13 +81,13 @@ export function TrendChart({ data, timestamps, variant, unit = '%', height = 80 
           const val = typeof p.value === 'number' ? p.value.toFixed(1) : String(p.value ?? '');
           return `<div style="line-height:1.5">
             <div style="opacity:0.55;font-size:10px">${p.axisValue ?? ''}</div>
-            <div><span style="color:${colors.line}">●</span> <b>${val}${unit}</b></div>
+            <div><span style="color:${lineColor}">●</span> <b>${val}${unit}</b></div>
           </div>`;
         },
         axisPointer: {
           type: 'cross',
-          crossStyle: { color: colors.line, opacity: 0.35 },
-          lineStyle: { color: colors.line, opacity: 0.25, type: 'dashed' },
+          crossStyle: { color: lineColor, opacity: 0.35 },
+          lineStyle: { color: lineColor, opacity: 0.25, type: 'dashed' },
           label: {
             backgroundColor: isDark ? '#3f3f46' : '#e4e4e7',
             color: isDark ? '#fafafa' : '#18181b',
@@ -109,10 +114,7 @@ export function TrendChart({ data, timestamps, variant, unit = '%', height = 80 
         axisLabel: { show: false },
         splitLine: {
           show: true,
-          lineStyle: {
-            color: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-            type: 'dashed',
-          },
+          lineStyle: { color: tc.split, type: 'dashed' },
         },
       },
       series: [
@@ -127,27 +129,15 @@ export function TrendChart({ data, timestamps, variant, unit = '%', height = 80 
             focus: 'series',
             scale: 1.6,
             itemStyle: {
-              color: colors.line,
+              color: lineColor,
               borderColor: isDark ? '#18181b' : '#fff',
               borderWidth: 2,
               shadowBlur: 8,
-              shadowColor: colors.line,
+              shadowColor: lineColor,
             },
           },
-          lineStyle: { width: 2.5, color: colors.line, cap: 'round' },
-          areaStyle: {
-            color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: colors.areaTop },
-                { offset: 1, color: colors.areaBottom },
-              ],
-            },
-          },
+          lineStyle: { width: 2, color: lineColor, cap: 'round' },
+          areaStyle: { color: areaGradient(lineColor, 0.2) },
         },
       ],
     };
@@ -157,7 +147,7 @@ export function TrendChart({ data, timestamps, variant, unit = '%', height = 80 
     return (
       <div
         style={{ height }}
-        className="flex items-center justify-center rounded-lg border border-dashed border-default-200 text-[10px] font-mono opacity-35"
+        className="flex h-full items-center justify-center rounded-lg border border-dashed border-default-200 font-mono text-[10px] opacity-35"
       >
         等待历史数据...
       </div>

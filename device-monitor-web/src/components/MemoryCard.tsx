@@ -11,6 +11,7 @@ export function MemoryCard({ memory, history, timestamps }: MemoryCardProps) {
   const usedGb = (memory.used_mb / 1024).toFixed(1);
   const totalGb = (memory.total_mb / 1024).toFixed(1);
   const availGb = (memory.available_mb / 1024).toFixed(1);
+  const freeGb = (memory.free_mb / 1024).toFixed(1);
 
   return (
     <TrendMetricCard
@@ -19,21 +20,23 @@ export function MemoryCard({ memory, history, timestamps }: MemoryCardProps) {
       variant="mem"
       history={history}
       timestamps={timestamps}
+      index={1}
       headerExtra={
-        <span className="text-[10px] font-mono opacity-40 truncate">
-          可用 {availGb} GB
+        <span className="truncate">
+          可用 {availGb} GB · 空闲 {freeGb} GB
         </span>
       }
       footer={
         <>
           <span>
-            {usedGb} / {totalGb} GB
+            已用 {usedGb} / {totalGb} GB
           </span>
           {memory.swap_total_mb > 0 && (
             <>
-              <span className="mx-2 opacity-30">·</span>
+              <span>·</span>
               <span>
-                Swap {(memory.swap_used_mb / 1024).toFixed(1)} / {(memory.swap_total_mb / 1024).toFixed(1)} GB
+                Swap {(memory.swap_used_mb / 1024).toFixed(1)} /{' '}
+                {(memory.swap_total_mb / 1024).toFixed(1)} GB
               </span>
             </>
           )}

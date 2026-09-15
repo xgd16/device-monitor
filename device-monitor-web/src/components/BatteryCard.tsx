@@ -1,5 +1,10 @@
-import { Card, ProgressBar } from '@heroui/react';
-import { batteryStatusLabel, batteryDisplayCapacity, batteryCapacityHint, percentColor } from './utils';
+import { Hero, MeterRow, Panel } from './Panel';
+import {
+  batteryStatusLabel,
+  batteryDisplayCapacity,
+  batteryCapacityHint,
+  percentColor,
+} from './utils';
 import type { BatteryInfo } from '../types';
 
 interface BatteryCardProps {
@@ -16,16 +21,16 @@ function fmtTime(mins: number): string {
 
 function batteryMeta(battery: BatteryInfo): { powerLabel: string; timeText: string } {
   const status = battery.status;
-  const w = (battery.power_w ?? (battery.voltage_v * Math.abs(battery.current_ma) / 1000)).toFixed(1);
+  const w = (battery.power_w ?? (battery.voltage_v * Math.abs(battery.current_ma)) / 1000).toFixed(
+    1,
+  );
 
   let powerLabel = `${w} W`;
   if (status === 'Charging') powerLabel = `+${w} W 充电`;
   else if (status === 'Discharging') powerLabel = `-${w} W 消耗`;
   else if (status === 'Not charging') powerLabel = `${w} W 待机`;
   else if (status === 'Full') {
-    powerLabel = battery.at_charge_limit && battery.is_degraded
-      ? '已达实际上限'
-      : '已充满';
+    powerLabel = battery.at_charge_limit && battery.is_degraded ? '已达实际上限' : '已充满';
   }
 
   let timeText = '';
@@ -45,52 +50,63 @@ export function BatteryCard({ battery }: BatteryCardProps) {
   const statusText = batteryStatusLabel(battery.status, battery);
   const capacityHint = batteryCapacityHint(battery);
   const { powerLabel, timeText } = batteryMeta(battery);
-  const statusColor =
+
+  const statusTone =
     battery.status === 'Charging'
       ? 'text-accent'
       : battery.status === 'Full' || battery.at_charge_limit
         ? 'text-success'
         : displayPct < 20
           ? 'text-danger'
-          : 'opacity-60';
+          : 'opacity-55';
 
   return (
-    <Card className="p-3 sm:p-4 flex flex-col gap-2">
-      <span className="text-[9px] sm:text-[10px] font-mono uppercase tracking-widest opacity-50">电池</span>
-
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <span
-          className="font-mono text-xl sm:text-2xl lg:text-3xl font-light leading-none"
-          style={{ color: `var(--${color})` }}
-        >
-          {battery.capacity}
-          <span className="text-[10px] opacity-50">%</span>
-        </span>
-        {battery.is_degraded && displayPct !== battery.capacity && (
-          <span className="font-mono text-[10px] opacity-40">
-            相对 {displayPct}%
-          </span>
-        )}
-        <span className={`text-[9px] sm:text-[10px] font-mono ${statusColor}`}>{statusText}</span>
-      </div>
-
-      <ProgressBar value={displayPct} size="sm" color={color as any}>
-        <ProgressBar.Track>
-          <ProgressBar.Fill />
-        </ProgressBar.Track>
-      </ProgressBar>
-
-      <div className="flex flex-col gap-0.5">
-        <span className="text-[9px] sm:text-[10px] font-mono opacity-50">{powerLabel}</span>
-        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] sm:text-[10px] font-mono opacity-40">
-          <span>{battery.voltage_v.toFixed(2)} V</span>
-          <span>{Math.abs(battery.current_ma).toFixed(0)} mA</span>
-          {battery.temp_celsius > 0 && <span>{battery.temp_celsius.toFixed(1)} °C</span>}
+    <Panel
+      label="电池"
+      index={5}
+      hint={
+        <>
           {capacityHint && <span>{capacityHint}</span>}
-        </div>
+          <span className={statusTone}>{statusText}</span>
+        </>
+      }
+    >
+      <Hero
+        value={battery.capacity}
+        unit="%"
+        color={color}
+        note={
+          battery.is_degraded && displayPct !== battery.capacity ? `相对 ${displayPct}%` : undefined
+        }
+      />
+
+      <div className="flex flex-col gap-1.5">
+        <MeterRow
+          label="电压"
+          ratio={(battery.voltage_v / 4.4) * 100}
+          value={`${battery.voltage_v.toFixed(2)}V`}
+        />
+        <MeterRow
+          label="电流"
+          ratio={(Math.abs(battery.current_ma) / 3600) * 100}
+          value={`${Math.abs(battery.current_ma).toFixed(0)}mA`}
+        />
+        <MeterRow
+          label="温度"
+          ratio={(battery.temp_celsius / 50) * 100}
+          value={`${battery.temp_celsius.toFixed(1)}°`}
+        />
       </div>
 
-      {timeText && <span className="text-[9px] font-mono opacity-25">{timeText}</span>}
-    </Card>
+      <div className="mt-auto flex flex-wrap items-center justify-center gap-x-2 border-t border-default-100 pt-2 font-mono text-[9px] opacity-40 xl:text-[10px]">
+        <span>{powerLabel}</span>
+        {timeText && (
+          <>
+            <span>·</span>
+            <span>{timeText}</span>
+          </>
+        )}
+      </div>
+    </Panel>
   );
 }

@@ -1,4 +1,6 @@
-import { Card, ProgressCircle } from '@heroui/react';
+import type { ReactNode } from 'react';
+import { ProgressCircle } from '@heroui/react';
+import { Panel } from './Panel';
 import { TrendChart } from './TrendChart';
 import { percentColor } from './utils';
 
@@ -8,9 +10,10 @@ interface TrendMetricCardProps {
   variant: 'cpu' | 'mem';
   history: number[];
   timestamps?: number[];
-  headerExtra?: React.ReactNode;
-  footer: React.ReactNode;
-  banner?: React.ReactNode;
+  headerExtra?: ReactNode;
+  footer: ReactNode;
+  banner?: ReactNode;
+  index?: number;
 }
 
 export function TrendMetricCard({
@@ -22,35 +25,36 @@ export function TrendMetricCard({
   headerExtra,
   footer,
   banner,
+  index = 0,
 }: TrendMetricCardProps) {
   const color = percentColor(value);
 
   return (
-    <Card className="p-4 sm:p-5 flex flex-col gap-3 h-full">
-      <div className="flex items-center justify-between gap-2 min-h-7">
-        <span className="text-[10px] font-mono uppercase tracking-widest opacity-50 shrink-0">{title}</span>
-        {headerExtra && <div className="flex items-center gap-1.5 min-w-0">{headerExtra}</div>}
-      </div>
-
+    <Panel label={title} hint={headerExtra} index={index} bodyClassName="gap-3">
       {banner}
 
-      <div className="flex items-stretch gap-4 sm:gap-5 flex-1 min-h-0">
-        <div className="relative inline-flex items-center justify-center shrink-0 self-center">
-          <ProgressCircle value={value} size="lg" color={color as any}>
-            <ProgressCircle.Track className="size-24 sm:size-28">
+      <div className="flex flex-1 min-h-0 items-center gap-5 xl:gap-7">
+        <div className="relative inline-flex shrink-0 items-center justify-center">
+          <ProgressCircle value={value} size="lg" color={color as never}>
+            <ProgressCircle.Track className="size-28 xl:size-32">
               <ProgressCircle.TrackCircle />
               <ProgressCircle.FillCircle />
             </ProgressCircle.Track>
           </ProgressCircle>
-          <span className="absolute text-xl sm:text-2xl font-mono font-light">
-            {value.toFixed(0)}%
+          <span className="dm-hero dm-hero--etch absolute text-2xl font-light xl:text-[2rem]">
+            {value.toFixed(0)}
+            <span className="text-[0.5em] opacity-60">%</span>
           </span>
         </div>
-        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5">
-          <TrendChart data={history} timestamps={timestamps} variant={variant} height={88} />
-          <div className="text-[10px] sm:text-[11px] font-mono opacity-50 leading-relaxed">{footer}</div>
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center">
+          <TrendChart data={history} timestamps={timestamps} variant={variant} height={124} />
         </div>
       </div>
-    </Card>
+
+      <div className="dm-row mt-auto flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 border-t border-b-0 pt-2 text-[10px] font-mono opacity-55 xl:text-[11px]">
+        {footer}
+      </div>
+    </Panel>
   );
 }

@@ -1,9 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { Card, Chip, Button } from '@heroui/react';
+import { Button, Chip } from '@heroui/react';
+import { Panel, StatCell } from './Panel';
 import type { SystemOverview, ProcessInfo } from '../types';
 import { fetchHardware, updateMihomoSubscription } from '../api';
-import { percentColor, tempColor, fmtChargeUa, chargeSourceLabel, batteryStatusLabel } from './utils';
+import {
+  percentColor,
+  tempColor,
+  fmtChargeUa,
+  chargeSourceLabel,
+  batteryStatusLabel,
+  fmtUptimeShort,
+} from './utils';
 
 interface SystemStatusCardProps {
   data: SystemOverview;
@@ -25,21 +33,12 @@ function fmtBytes(bytes: number) {
 }
 
 function shortProxyName(name: string) {
-  return name
-    .replace(/网址[:：]\S+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim() || '未知';
-}
-
-function fmtUa(ua: number) {
-  return fmtChargeUa(ua);
-}
-
-function fmtUptime(sec: number) {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  if (h >= 24) return `${Math.floor(h / 24)}天 ${h % 24}时`;
-  return `${h}时 ${m}分`;
+  return (
+    name
+      .replace(/网址[:：]\S+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim() || '未知'
+  );
 }
 
 export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCardProps) {
@@ -61,11 +60,13 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
 
   const refresh = useCallback(() => {
     fetchHardware()
-      .then(d => setHw({
-        screen_on: d.screen_on,
-        charging: d.charging,
-        wifi_power_save: d.wifi_power_save,
-      }))
+      .then((d) =>
+        setHw({
+          screen_on: d.screen_on,
+          charging: d.charging,
+          wifi_power_save: d.wifi_power_save,
+        }),
+      )
       .catch(() => {});
   }, []);
 
@@ -75,43 +76,30 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
     return () => clearInterval(t);
   }, [refresh]);
 
-  const maxTemp = Math.max(...data.thermal.map(t => t.temp_celsius), 0);
-  const wlan = data.network.find(n => n.name === 'wlan0');
+  const maxTemp = Math.max(...data.thermal.map((t) => t.temp_celsius), 0);
+  const wlan = data.network.find((n) => n.name === 'wlan0');
   const wlanSpeed = netSpeed.wlan0;
   const topMem = [...processes].sort((a, b) => b.memory_mb - a.memory_mb).slice(0, 4);
   const { battery } = data;
 
   const rows: { label: string; value: ReactNode }[] = [
     {
-      label: '运行时间',
-      value: <span className="font-mono text-sm">{fmtUptime(data.uptime)}</span>,
-    },
-    {
-      label: '负载',
-      value: (
-        <span className="font-mono text-sm">
-          {data.load_avg.map(v => v.toFixed(2)).join(' / ')}
-        </span>
-      ),
-    },
-    {
       label: '电池',
       value: (
-        <span className="font-mono text-sm flex items-center gap-2">
-          <span style={{ color: `var(--${percentColor(battery.display_capacity_pct ?? battery.capacity)})` }}>{battery.capacity}%</span>
-          <span className="opacity-40 text-[10px]">{batteryStatusLabel(battery.status, battery)}</span>
-          {battery.is_degraded && (
-            <span className="opacity-40 text-[10px]">上限 {battery.effective_max_pct}%</span>
+        <span className="flex items-center gap-2 font-mono text-xs xl:text-sm">
+          <span
+            style={{
+              color: `var(--${percentColor(battery.display_capacity_pct ?? battery.capacity)})`,
+            }}
+          >
+            {battery.capacity}%
+          </span>
+          <span className="text-[10px] opacity-40">
+            {batteryStatusLabel(battery.status, battery)}
+          </span>
+          {battery.power_w > 0 && (
+            <span className="text-[10px] opacity-40">{battery.power_w.toFixed(1)}W</span>
           )}
-          {battery.power_w > 0 && <span className="opacity-40 text-[10px]">{battery.power_w.toFixed(1)}W</span>}
-        </span>
-      ),
-    },
-    {
-      label: '最高温度',
-      value: (
-        <span className="font-mono text-sm" style={{ color: `var(--${tempColor(maxTemp)})` }}>
-          {maxTemp.toFixed(1)}°C
         </span>
       ),
     },
@@ -121,10 +109,12 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
     rows.push({
       label: 'WiFi',
       value: (
-        <span className="font-mono text-[11px] flex flex-col items-end gap-0.5">
-          <span className={wlan.is_up ? 'text-success' : 'opacity-40'}>{wlan.is_up ? '已连接' : '未连接'}</span>
+        <span className="flex flex-col items-end gap-0.5 font-mono text-[11px]">
+          <span className={wlan.is_up ? 'text-success' : 'opacity-40'}>
+            {wlan.is_up ? '已连接' : '未连接'}
+          </span>
           {wlanSpeed && (
-            <span className="opacity-40 text-[10px]">
+            <span className="text-[10px] opacity-40">
               ↓{fmtSpeed(wlanSpeed.rx)} · ↑{fmtSpeed(wlanSpeed.tx)}
             </span>
           )}
@@ -136,28 +126,32 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
   rows.push({
     label: 'VPN',
     value: data.mihomo?.available ? (
-      <span className="font-mono text-[11px] flex flex-col items-end gap-0.5">
+      <span className="flex flex-col items-end gap-0.5 font-mono text-[11px]">
         <span className="text-success">
           {data.mihomo.tun_enabled ? 'TUN' : '代理'} · {shortProxyName(data.mihomo.active_proxy)}
         </span>
-        <span className="opacity-40 text-[10px]">
-          {data.mihomo.mode || 'rule'} · {data.mihomo.connection_count} 连接 · ↓{fmtBytes(data.mihomo.download_total)} ↑{fmtBytes(data.mihomo.upload_total)}
+        <span className="text-[10px] opacity-40">
+          {data.mihomo.mode || 'rule'} · {data.mihomo.connection_count} 连接 · ↓
+          {fmtBytes(data.mihomo.download_total)} ↑{fmtBytes(data.mihomo.upload_total)}
         </span>
-        <span className="opacity-40 text-[10px] flex items-center gap-1.5">
+        <span className="flex items-center gap-1.5 text-[10px] opacity-40">
           {data.mihomo.subscription_last_update > 0
-            ? `订阅 ${new Date(data.mihomo.subscription_last_update * 1000).toLocaleString()}`
+            ? `订阅 ${new Date(data.mihomo.subscription_last_update * 1000).toLocaleString(
+                'zh-CN',
+                { hour12: false },
+              )}`
             : '订阅未更新'}
           <Button
             size="sm"
             variant="secondary"
-            className="min-h-5 h-5 px-1.5 text-[10px]"
+            className="h-5 min-h-5 px-1.5 text-[10px]"
             isDisabled={subUpdating}
             onPress={async () => {
               setSubUpdating(true);
               try {
                 await updateMihomoSubscription();
               } catch {
-                /* ignore */
+                /* 失败保持原状态，稍后重试 */
               } finally {
                 setSubUpdating(false);
               }
@@ -176,20 +170,30 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
     rows.push(
       {
         label: '屏幕',
-        value: <Chip size="sm" color={hw.screen_on ? 'success' : 'default'} variant="secondary">{hw.screen_on ? '亮屏' : '息屏'}</Chip>,
+        value: (
+          <Chip size="sm" color={hw.screen_on ? 'success' : 'default'} variant="secondary">
+            {hw.screen_on ? '亮屏' : '息屏'}
+          </Chip>
+        ),
       },
       {
         label: '充电',
         value: (
-          <span className="font-mono text-[11px] flex items-center gap-2">
-            <Chip size="sm" color={hw.charging.charger_online ? 'success' : 'default'} variant="secondary">
+          <span className="flex items-center gap-2 font-mono text-[11px]">
+            <Chip
+              size="sm"
+              color={hw.charging.charger_online ? 'success' : 'default'}
+              variant="secondary"
+            >
               {chargeSourceLabel(hw.charging.charge_source)}
             </Chip>
             {hw.charging.charge_mode === 'power_only' && (
-              <Chip size="sm" color="warning" variant="secondary">仅供电</Chip>
+              <Chip size="sm" color="warning" variant="secondary">
+                仅供电
+              </Chip>
             )}
             <span className="opacity-40">
-              {fmtUa(hw.charging.target_current_max_ua || hw.charging.current_max_ua)}
+              {fmtChargeUa(hw.charging.target_current_max_ua || hw.charging.current_max_ua)}
             </span>
             {hw.charging.charger_online && hw.charging.power_w > 0 && (
               <span className="opacity-40">{hw.charging.power_w.toFixed(1)}W</span>
@@ -200,7 +204,11 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
       {
         label: 'WiFi 省电',
         value: (
-          <Chip size="sm" color={hw.wifi_power_save.enabled ? 'warning' : 'success'} variant="secondary">
+          <Chip
+            size="sm"
+            color={hw.wifi_power_save.enabled ? 'warning' : 'success'}
+            variant="secondary"
+          >
             {hw.wifi_power_save.enabled ? '开启' : '关闭'}
           </Chip>
         ),
@@ -209,30 +217,51 @@ export function SystemStatusCard({ data, processes, netSpeed }: SystemStatusCard
   }
 
   return (
-    <Card className="p-4 sm:p-5 flex flex-col gap-3">
-      <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">系统状态</span>
+    <Panel
+      label="系统状态"
+      index={12}
+      className="h-full"
+      hint={<span>{data.process_count} 进程</span>}
+      bodyClassName="gap-3"
+    >
+      <div className="grid shrink-0 grid-cols-2 gap-2.5">
+        <StatCell
+          label="运行时间"
+          value={fmtUptimeShort(data.uptime)}
+          sub={`负载 ${data.load_avg.map((v) => v.toFixed(2)).join(' / ')}`}
+        />
+        <StatCell
+          label="最高温度"
+          value={maxTemp.toFixed(1)}
+          unit="°C"
+          color={tempColor(maxTemp)}
+          sub={`${data.thermal.length} 个传感器`}
+        />
+      </div>
 
-      <div className="flex flex-col gap-2">
-        {rows.map(row => (
-          <div key={row.label} className="flex items-center justify-between gap-3 py-1 border-b border-default-100 last:border-0">
-            <span className="font-mono text-[10px] opacity-40 shrink-0">{row.label}</span>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pr-1">
+        {rows.map((row) => (
+          <div key={row.label} className="dm-row flex items-center justify-between gap-3 py-1.5">
+            <span className="shrink-0 font-mono text-[10px] opacity-40">{row.label}</span>
             {row.value}
           </div>
         ))}
-      </div>
 
-      {topMem.length > 0 && (
-        <div className="flex flex-col gap-1.5 pt-1">
-          <span className="text-[9px] font-mono uppercase tracking-widest opacity-30">内存占用 Top</span>
-          {topMem.map(p => (
-            <div key={p.pid} className="flex items-center gap-2 font-mono text-[10px]">
-              <span className="flex-1 truncate opacity-50">{p.name}</span>
-              <span className="opacity-30">{p.pid}</span>
-              <span>{p.memory_mb >= 1024 ? `${(p.memory_mb / 1024).toFixed(1)}G` : `${p.memory_mb}M`}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
+        {topMem.length > 0 && (
+          <div className="flex flex-col gap-1.5 pt-3">
+            <span className="dm-sub">内存占用 Top</span>
+            {topMem.map((p) => (
+              <div key={p.pid} className="flex items-center gap-2 font-mono text-[10px]">
+                <span className="min-w-0 flex-1 truncate opacity-50">{p.name}</span>
+                <span className="opacity-30">{p.pid}</span>
+                <span className="w-12 text-right tabular-nums">
+                  {p.memory_mb >= 1024 ? `${(p.memory_mb / 1024).toFixed(1)}G` : `${p.memory_mb}M`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }

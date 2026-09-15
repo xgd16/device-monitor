@@ -16,8 +16,12 @@ interface StatusBarProps {
   page: AppPage;
   onThemeChange: (theme: 'dark' | 'light') => void;
   onPageChange: (page: AppPage) => void;
+  /** 界面刷新间隔（秒）：1/3/5/10，驱动采集心跳、WS 推送与 DRM 屏 */
+  refreshSecs: number;
+  onRefreshChange: (secs: number) => void;
 }
 
+/** 分段开关：选中项用 accent 反白 */
 function NavGroup<T extends string>({
   value,
   options,
@@ -33,7 +37,7 @@ function NavGroup<T extends string>({
 }) {
   return (
     <div
-      className="flex items-center rounded-lg p-0.5 gap-0.5 bg-default-100 border border-default-200"
+      className="flex items-center gap-0.5 rounded-lg border border-default-200 bg-default-100 p-0.5"
       role="group"
       aria-label={ariaLabel}
     >
@@ -42,10 +46,11 @@ function NavGroup<T extends string>({
           key={opt}
           type="button"
           onClick={() => onChange(opt)}
-          className={`px-2 sm:px-2.5 py-1 rounded-md text-[10px] sm:text-[11px] font-medium transition-colors whitespace-nowrap ${
+          aria-pressed={value === opt}
+          className={`rounded-md px-2 py-1 font-mono text-[10px] font-medium whitespace-nowrap transition-colors sm:px-2.5 sm:text-[11px] ${
             value === opt
               ? 'bg-accent text-accent-foreground shadow-sm'
-              : 'text-foreground/60 hover:text-foreground/90'
+              : 'text-foreground/55 hover:bg-default-200 hover:text-foreground/90'
           }`}
         >
           {labels[opt]}
@@ -55,14 +60,59 @@ function NavGroup<T extends string>({
   );
 }
 
-export function StatusBar({ connected, uptime, theme, page, onThemeChange, onPageChange }: StatusBarProps) {
+/** 刷新间隔档位（秒），与后端 REFRESH_CHOICES 对齐 */
+const REFRESH_OPTIONS = ['1', '3', '5', '10'] as const;
+type RefreshOption = (typeof REFRESH_OPTIONS)[number];
+const REFRESH_LABELS: Record<RefreshOption, string> = {
+  '1': '1s',
+  '3': '3s',
+  '5': '5s',
+  '10': '10s',
+};
+
+export function StatusBar({
+  connected,
+  uptime,
+  theme,
+  page,
+  onThemeChange,
+  onPageChange,
+  refreshSecs,
+  onRefreshChange,
+}: StatusBarProps) {
   return (
-    <div className="flex items-center justify-between gap-2 px-3 py-2 sm:px-4 sm:py-2.5 border-b border-default-200 shrink-0">
-      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-        <h1 className="text-sm sm:text-base font-semibold tracking-tight shrink-0">设备监控</h1>
-        {page === 'monitor' && (
-          <Chip size="sm" color="accent" variant="secondary" className="hidden xs:flex">实时</Chip>
-        )}
+    <header className="relative z-20 shrink-0 border-b border-default-200/70 bg-background">
+      {/* 中轴对称的收边高光 */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-px"
+        style={{
+          background:
+            'linear-gradient(to right, transparent, color-mix(in oklab, var(--accent) 45%, transparent), transparent)',
+        }}
+      />
+
+      <div className="mx-auto grid w-full max-w-[1760px] grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 py-2 sm:gap-4 sm:px-4 sm:py-2.5 lg:px-5">
+        {/* 左：标识 */}
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <span
+            aria-hidden
+            className="size-2 shrink-0 rounded-[2px]"
+            style={{
+              background: 'var(--accent)',
+              boxShadow: '0 0 8px color-mix(in oklab, var(--accent) 60%, transparent)',
+            }}
+          />
+          <h1 className="shrink-0 text-sm font-semibold tracking-tight sm:text-base">设备监控</h1>
+          <span className="dm-sub hidden lg:inline">Mi Mix 3</span>
+          {page === 'monitor' && (
+            <Chip size="sm" color="accent" variant="secondary" className="hidden xl:flex">
+              实时
+            </Chip>
+          )}
+        </div>
+
+        {/* 中：页面切换（严格居中） */}
         <NavGroup
           value={page}
           options={['monitor', 'terminal', 'files'] as const}
@@ -70,26 +120,32 @@ export function StatusBar({ connected, uptime, theme, page, onThemeChange, onPag
           onChange={onPageChange}
           ariaLabel="页面切换"
         />
-      </div>
-      <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono text-foreground/60 shrink-0">
-        {page === 'monitor' && (
-          <span className="hidden lg:inline">运行 {fmtUptime(uptime)}</span>
-        )}
-        <div className="flex items-center gap-1.5">
-          <span
-            className="inline-block w-[6px] h-[6px] rounded-full"
-            style={{ background: connected ? 'var(--success)' : 'var(--danger)' }}
+
+        {/* 右：状态 */}
+        <div className="flex min-w-0 items-center justify-end gap-2 font-mono text-[10px] text-foreground/60 sm:gap-3 sm:text-xs">
+          {page === 'monitor' && <span className="hidden lg:inline">运行 {fmtUptime(uptime)}</span>}
+          <span className="flex items-center gap-1.5">
+            <span className={`dm-live ${connected ? '' : 'dm-live--down'}`} />
+            <span className="hidden sm:inline">{connected ? '已连接' : '断开'}</span>
+          </span>
+          {(REFRESH_OPTIONS as readonly string[]).includes(String(refreshSecs)) && (
+            <NavGroup
+              value={String(refreshSecs) as RefreshOption}
+              options={REFRESH_OPTIONS}
+              labels={REFRESH_LABELS}
+              onChange={(v) => onRefreshChange(Number(v))}
+              ariaLabel="刷新间隔"
+            />
+          )}
+          <NavGroup
+            value={theme}
+            options={['light', 'dark'] as const}
+            labels={{ light: '浅色', dark: '深色' }}
+            onChange={onThemeChange}
+            ariaLabel="主题切换"
           />
-          <span className="hidden sm:inline">{connected ? '已连接' : '断开'}</span>
         </div>
-        <NavGroup
-          value={theme}
-          options={['light', 'dark'] as const}
-          labels={{ light: '浅色', dark: '深色' }}
-          onChange={onThemeChange}
-          ariaLabel="主题切换"
-        />
       </div>
-    </div>
+    </header>
   );
 }

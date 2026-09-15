@@ -1,4 +1,5 @@
-import { Card, ProgressBar } from '@heroui/react';
+import type { ReactNode } from 'react';
+import { MeterRow, Panel, StatCell } from './Panel';
 import { percentColor, tempColor, thermalSensorLabel } from './utils';
 import type { CpuCore, ThermalZone } from '../types';
 
@@ -39,14 +40,6 @@ function balanceLabel(stddev: number): { text: string; color: string } {
   if (stddev < 10) return { text: '均衡', color: 'text-success' };
   if (stddev < 25) return { text: '轻度倾斜', color: 'text-warning' };
   return { text: '严重倾斜', color: 'text-danger' };
-}
-
-function usageBgColor(usage: number): string {
-  if (usage > 80) return 'var(--danger)';
-  if (usage > 50) return 'var(--warning)';
-  if (usage > 20) return 'var(--accent)';
-  if (usage > 5) return 'var(--default)';
-  return 'transparent';
 }
 
 function coreStateLabel(usage: number): string {
@@ -106,21 +99,23 @@ function cpuThermalZones(thermal: ThermalZone[]) {
     .sort((a, b) => b.temp_celsius - a.temp_celsius);
 }
 
-export function CoreBars({
-  cores,
-  overallUsage,
-  loadAvg,
-  thermal = [],
-  className,
-}: CoreBarsProps) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-1.5">
+      <div className="dm-sub">{title}</div>
+      {children}
+    </section>
+  );
+}
+
+export function CoreBars({ cores, overallUsage, loadAvg, thermal = [], className }: CoreBarsProps) {
   const stats = calcStats(cores);
   const activeCores = cores.filter((c) => c.usage > 5).length;
   const cluster = clusterInfo(cores);
   const clusters = splitClusters(cores);
   const ranked = [...cores].sort((a, b) => b.usage - a.usage);
   const cpuTemps = cpuThermalZones(thermal);
-  const coreCount = cores.length || 1;
-  const load1Pct = Math.min((loadAvg[0] / coreCount) * 100, 100);
+  const maxFreq = Math.max(...cores.map((c) => c.frequency_mhz), 0);
 
   const freqGroups = new Map<number, number[]>();
   for (const c of cores) {
@@ -130,156 +125,132 @@ export function CoreBars({
   }
 
   return (
-    <Card className={`p-4 sm:p-5 flex flex-col gap-3 h-full min-h-0 ${className ?? ''}`}>
-      <div className="flex items-center justify-between shrink-0">
-        <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">处理器核心</span>
-        <div className="flex items-center gap-2 font-mono text-[10px] opacity-30">
+    <Panel
+      label="处理器核心"
+      index={6}
+      className={`h-full ${className ?? ''}`}
+      hint={
+        <>
           {cluster && <span>{cluster}</span>}
-          <span>{activeCores}/{cores.length} 活跃</span>
-        </div>
+          <span>
+            {activeCores}/{cores.length} 活跃
+          </span>
+        </>
+      }
+      bodyClassName="gap-3"
+    >
+      <div className="grid shrink-0 grid-cols-2 gap-2.5">
+        <StatCell
+          label="总体 CPU"
+          value={overallUsage.toFixed(0)}
+          unit="%"
+          color={percentColor(overallUsage)}
+          sub={`${activeCores} 核活跃`}
+        />
+        <StatCell
+          label="峰值频率"
+          value={maxFreq}
+          unit="MHz"
+          sub={`负载 ${loadAvg.map((v) => v.toFixed(2)).join(' / ')}`}
+        />
       </div>
 
-      <div className="grid grid-cols-2 gap-3 shrink-0">
-        <div className="rounded-lg border border-default-200 p-2.5">
-          <div className="text-[9px] font-mono opacity-40 mb-1">总体 CPU</div>
-          <div
-            className="font-mono text-2xl font-light leading-none"
-            style={{ color: `var(--${percentColor(overallUsage)})` }}
-          >
-            {overallUsage.toFixed(0)}%
-          </div>
-        </div>
-        <div className="rounded-lg border border-default-200 p-2.5 flex flex-col gap-1">
-          <div className="text-[9px] font-mono opacity-40">系统负载</div>
-          <div className="font-mono text-[10px] opacity-60">
-            {loadAvg.map((v) => v.toFixed(2)).join(' / ')}
-          </div>
-          <ProgressBar value={load1Pct} size="sm" color={percentColor(load1Pct) as any}>
-            <ProgressBar.Track>
-              <ProgressBar.Fill />
-            </ProgressBar.Track>
-          </ProgressBar>
-          <div className="text-[9px] font-mono opacity-30">{coreCount} 逻辑核</div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-4 gap-1.5 shrink-0">
+      {/* 每核占用：8 核即 4×2，天然对称 */}
+      <div className="grid shrink-0 grid-cols-4 gap-1.5">
         {cores.map((core) => (
           <div
             key={core.id}
-            className="flex flex-col items-center gap-0.5 p-1.5 rounded-md border border-default-100"
-            style={{ background: `${usageBgColor(core.usage)}15` }}
+            className="flex flex-col items-center gap-0.5 rounded-md border border-default-100 px-1 py-1.5"
           >
-            <span className="font-mono text-[9px] opacity-30">C{core.id}</span>
+            <span className="font-mono text-[9px] opacity-35">C{core.id}</span>
             <span
-              className="font-mono text-sm font-medium leading-none"
+              className="dm-hero text-sm leading-none"
               style={{ color: `var(--${percentColor(core.usage)})` }}
             >
-              {core.usage.toFixed(0)}%
+              {core.usage.toFixed(0)}
             </span>
-            <span className="font-mono text-[8px] opacity-25">{core.frequency_mhz}</span>
+            <span className="font-mono text-[8px] opacity-30">{core.frequency_mhz}</span>
           </div>
         ))}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">
-        <section>
-          <div className="text-[9px] font-mono uppercase tracking-widest opacity-40 mb-1.5">集群概览</div>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
+        <Section title="集群概览">
           <div className="flex flex-col gap-2">
             {clusters.map((group) => {
               const groupStats = clusterStats(group.cores);
               return (
-                <div key={group.label} className="rounded-md border border-default-100 p-2">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="text-[10px] font-mono opacity-60">{group.label}</span>
-                    <span className="text-[9px] font-mono opacity-35">
+                <div key={group.label} className="dm-inset flex flex-col gap-1.5 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[10px] opacity-60">{group.label}</span>
+                    <span className="font-mono text-[9px] opacity-35">
                       {groupStats.active}/{group.cores.length} 活跃
                     </span>
                   </div>
-                  <ProgressBar
-                    value={groupStats.avgUsage}
-                    size="sm"
-                    color={percentColor(groupStats.avgUsage) as any}
-                  >
-                    <ProgressBar.Track>
-                      <ProgressBar.Fill />
-                    </ProgressBar.Track>
-                  </ProgressBar>
-                  <div className="mt-1 flex justify-between text-[9px] font-mono opacity-40">
-                    <span>平均 {groupStats.avgUsage.toFixed(1)}%</span>
-                    <span>{Math.round(groupStats.avgFreq)} MHz</span>
-                  </div>
+                  <MeterRow
+                    label="使用率"
+                    ratio={groupStats.avgUsage}
+                    color={percentColor(groupStats.avgUsage)}
+                    value={`${groupStats.avgUsage.toFixed(1)}%`}
+                  />
+                  <MeterRow
+                    label="平均频率"
+                    ratio={maxFreq > 0 ? (groupStats.avgFreq / maxFreq) * 100 : 0}
+                    value={`${Math.round(groupStats.avgFreq)}M`}
+                  />
                 </div>
               );
             })}
           </div>
-        </section>
+        </Section>
 
-        <section>
-          <div className="text-[9px] font-mono uppercase tracking-widest opacity-40 mb-1.5">核心排行</div>
+        <Section title="核心排行">
           <div className="flex flex-col gap-1.5">
             {ranked.map((core, index) => (
-              <div key={core.id} className="flex items-center gap-2 text-xs py-0.5">
-                <span className="w-4 font-mono text-[9px] opacity-25">{index + 1}</span>
-                <span className="w-5 font-mono text-[10px] opacity-50">C{core.id}</span>
-                <div className="flex-1 min-w-0">
-                  <ProgressBar value={core.usage} size="sm" color={percentColor(core.usage) as any}>
-                    <ProgressBar.Track>
-                      <ProgressBar.Fill />
-                    </ProgressBar.Track>
-                  </ProgressBar>
+              <div key={core.id} className="flex items-center gap-2">
+                <span className="w-3 shrink-0 font-mono text-[9px] opacity-25">{index + 1}</span>
+                <span className="w-5 shrink-0 font-mono text-[10px] opacity-50">C{core.id}</span>
+                <div className="min-w-0 flex-1">
+                  <span className="block h-1 overflow-hidden rounded-full bg-default-200">
+                    <span
+                      className="block h-full rounded-full transition-[width] duration-500"
+                      style={{
+                        width: `${core.usage}%`,
+                        background: `var(--${percentColor(core.usage)})`,
+                      }}
+                    />
+                  </span>
                 </div>
-                <span className="w-8 font-mono text-[10px] text-right opacity-60">
-                  {core.usage.toFixed(0)}%
-                </span>
-                <span className="w-10 font-mono text-[9px] text-right opacity-30 hidden sm:inline">
+                <span className="hidden w-10 shrink-0 text-right font-mono text-[9px] opacity-30 sm:inline">
                   {core.frequency_mhz}
                 </span>
-                <span className="w-8 font-mono text-[9px] text-right opacity-35">
+                <span className="w-8 shrink-0 text-right font-mono text-[9px] opacity-35">
                   {coreStateLabel(core.usage)}
                 </span>
               </div>
             ))}
           </div>
-        </section>
+        </Section>
 
         {cpuTemps.length > 0 && (
-          <section>
-            <div className="text-[9px] font-mono uppercase tracking-widest opacity-40 mb-1.5">CPU 温度</div>
+          <Section title="CPU 温度">
             <div className="flex flex-col gap-1.5">
-              {cpuTemps.map((zone) => {
-                const label = thermalSensorLabel(zone.name);
-                return (
-                  <div key={zone.id} className="flex items-center gap-2 text-xs py-0.5">
-                    <span className="flex-1 min-w-0 text-[10px] truncate opacity-50">{label.title}</span>
-                    <div className="w-16 sm:w-20">
-                      <ProgressBar
-                        value={zone.temp_celsius}
-                        maxValue={85}
-                        size="sm"
-                        color={tempColor(zone.temp_celsius) as any}
-                      >
-                        <ProgressBar.Track>
-                          <ProgressBar.Fill />
-                        </ProgressBar.Track>
-                      </ProgressBar>
-                    </div>
-                    <span
-                      className="w-10 font-mono text-[10px] text-right"
-                      style={{ color: `var(--${tempColor(zone.temp_celsius)})` }}
-                    >
-                      {zone.temp_celsius.toFixed(1)}°
-                    </span>
-                  </div>
-                );
-              })}
+              {cpuTemps.map((zone) => (
+                <MeterRow
+                  key={zone.id}
+                  label={thermalSensorLabel(zone.name).title}
+                  title={zone.name}
+                  ratio={(zone.temp_celsius / 85) * 100}
+                  color={tempColor(zone.temp_celsius)}
+                  value={`${zone.temp_celsius.toFixed(1)}°`}
+                />
+              ))}
             </div>
-          </section>
+          </Section>
         )}
 
         {freqGroups.size > 1 && (
-          <section>
-            <div className="text-[9px] font-mono uppercase tracking-widest opacity-40 mb-1.5">频率分布</div>
+          <Section title="频率分布">
             <div className="flex flex-col gap-1 font-mono text-[10px]">
               {[...freqGroups.entries()]
                 .sort((a, b) => b[0] - a[0])
@@ -292,31 +263,34 @@ export function CoreBars({
                   </div>
                 ))}
             </div>
-          </section>
+          </Section>
         )}
 
         {stats && (
-          <section className="pt-2 border-t border-default-200 font-mono text-[10px] sm:text-[11px]">
-            <div className="text-[9px] uppercase tracking-widest opacity-40 mb-1.5">统计摘要</div>
-            <div className="flex flex-col gap-1 opacity-50">
+          <Section title="统计摘要">
+            <div className="flex flex-col gap-1 font-mono text-[10px] opacity-50 xl:text-[11px]">
               <span>
-                平均 {stats.avg.toFixed(1)}% · 最高 C{stats.maxCoreId} {stats.max.toFixed(0)}% · 最低 C
-                {stats.minCoreId} {stats.min.toFixed(0)}%
+                平均 {stats.avg.toFixed(1)}% · 最高 C{stats.maxCoreId} {stats.max.toFixed(0)}% ·
+                最低 C{stats.minCoreId} {stats.min.toFixed(0)}%
               </span>
               <span>
                 总负载 {stats.totalLoad.toFixed(0)}% · 繁忙 {stats.busy} 核 · 空闲 {stats.idle} 核
               </span>
               <span>
-                频率 {stats.freqMin === stats.freqMax ? `${stats.freqMin} MHz` : `${stats.freqMin}–${stats.freqMax} MHz`}
-                {' · '}
-                均衡度{' '}
-                <span className={balanceLabel(stats.stddev).color}>{balanceLabel(stats.stddev).text}</span>
+                频率{' '}
+                {stats.freqMin === stats.freqMax
+                  ? `${stats.freqMin} MHz`
+                  : `${stats.freqMin}–${stats.freqMax} MHz`}
+                {' · '}均衡度{' '}
+                <span className={balanceLabel(stats.stddev).color}>
+                  {balanceLabel(stats.stddev).text}
+                </span>
                 <span className="opacity-40"> (σ={stats.stddev.toFixed(1)})</span>
               </span>
             </div>
-          </section>
+          </Section>
         )}
       </div>
-    </Card>
+    </Panel>
   );
 }

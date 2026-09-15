@@ -9,11 +9,26 @@ export function fmtUptime(s: number): string {
   return `${m}分`;
 }
 
+/** 紧凑版运行时长，用于统计格 */
+export function fmtUptimeShort(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h >= 24) return `${Math.floor(h / 24)}天 ${h % 24}时`;
+  if (h > 0) return `${h}时 ${m}分`;
+  return `${m}分`;
+}
+
 export function fmtBytes(b: number): string {
   if (b < 1024) return `${b} B`;
   if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
   if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`;
   return `${(b / 1073741824).toFixed(2)} GB`;
+}
+
+/** 内存以 MB 为单位输入 */
+export function fmtMem(mb: number): string {
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${Math.round(mb)} MB`;
 }
 
 export function fmtSpeed(bps: number): string {
@@ -50,7 +65,10 @@ export function percentColor(v: number): string {
   return 'success';
 }
 
-export function batteryStatusLabel(status: string, battery?: Pick<BatteryInfo, 'is_degraded' | 'at_charge_limit' | 'effective_max_pct'>) {
+export function batteryStatusLabel(
+  status: string,
+  battery?: Pick<BatteryInfo, 'is_degraded' | 'at_charge_limit' | 'effective_max_pct'>,
+) {
   if (battery?.at_charge_limit && battery.is_degraded) {
     return `实际已满 (${battery.effective_max_pct ?? 100}%)`;
   }

@@ -1,43 +1,511 @@
-@import "@xterm/xterm/css/xterm.css";
-@import "@heroui/styles/css";
+@import '@xterm/xterm/css/xterm.css';
+@import '@heroui/styles/css';
 
-/* Custom scrollbar for the whole app */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: color-mix(in oklch, var(--foreground) 25%, transparent);
-  border-radius: 4px;
+/* ═══════════════════════════════════════════════════════════════════════════
+   设备监控 · 设计系统
+   方向：精密仪表台（Precision Instrument）
+     · 面板 = 雕刻过的仪表盘面，四角带定位刻线
+     · 版心 = 12 栏镜像网格，每个分区沿中轴左右对称
+     · 数据 = 等宽 + 表格数字，微型标签统一为「点 + 大字距」
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 类型与基础尺度 ──────────────────────────────────────────────────────── */
+:root {
+  --dm-font-sans:
+    'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei',
+    system-ui, -apple-system, sans-serif;
+  --dm-font-mono:
+    ui-monospace, 'SF Mono', SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono',
+    monospace;
+
+  --dm-panel-radius: 12px;
+  --dm-tick-len: 8px;
+  --dm-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-/* Full-bleed layout */
-html, body, #root {
+/* ── 亮色：制图纸 ────────────────────────────────────────────────────────── */
+[data-theme='light'],
+:root {
+  --background: oklch(0.968 0.004 240);
+  --foreground: oklch(0.225 0.014 252);
+  --muted: oklch(0.505 0.014 252);
+
+  --surface: oklch(0.995 0.0015 240);
+  --surface-foreground: var(--foreground);
+  --surface-secondary: oklch(0.955 0.004 240);
+  --surface-tertiary: oklch(0.928 0.005 240);
+  --overlay: oklch(0.998 0.001 240);
+  --overlay-foreground: var(--foreground);
+
+  --default: oklch(0.928 0.005 240);
+  --default-foreground: var(--foreground);
+
+  --accent: oklch(0.505 0.115 205);
+  --accent-foreground: oklch(0.99 0 0);
+
+  --success: oklch(0.58 0.14 158);
+  --success-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.66 0.145 62);
+  --warning-foreground: oklch(0.99 0 0);
+  --danger: oklch(0.58 0.19 22);
+  --danger-foreground: oklch(0.99 0 0);
+
+  --border: oklch(0.3 0.02 252 / 0.14);
+  --separator: oklch(0.3 0.02 252 / 0.1);
+  --focus: var(--accent);
+  --link: var(--accent);
+
+  --dm-layer-0: oklch(0.975 0.004 240);
+  --dm-layer-1: oklch(0.945 0.005 240);
+  --dm-layer-2: oklch(0.898 0.006 240);
+  --dm-layer-3: oklch(0.838 0.008 240);
+  --dm-layer-4: oklch(0.74 0.01 240);
+
+  --dm-hair: oklch(0.3 0.02 252 / 0.15);
+  --dm-hair-soft: oklch(0.3 0.02 252 / 0.09);
+  --dm-tick: oklch(0.3 0.03 252 / 0.2);
+  --dm-grid-line: oklch(0.3 0.02 252 / 0.045);
+  --dm-glow: color-mix(in oklab, var(--accent) 7%, transparent);
+  --dm-panel-top: oklch(1 0 0 / 0.75);
+  --dm-panel-shadow:
+    0 1px 2px oklch(0.3 0.02 252 / 0.05), 0 8px 20px -12px oklch(0.3 0.02 252 / 0.14);
+  --dm-scroll-thumb: oklch(0.3 0.02 252 / 0.22);
+}
+
+/* ── 深色：仪表暗房 ──────────────────────────────────────────────────────── */
+[data-theme='dark'] {
+  --background: oklch(0.148 0.008 252);
+  --foreground: oklch(0.955 0.004 250);
+  --muted: oklch(0.68 0.012 250);
+
+  --surface: oklch(0.192 0.009 252);
+  --surface-foreground: var(--foreground);
+  --surface-secondary: oklch(0.222 0.01 252);
+  --surface-tertiary: oklch(0.25 0.011 252);
+  --overlay: oklch(0.225 0.01 252);
+  --overlay-foreground: var(--foreground);
+
+  --default: oklch(0.262 0.011 252);
+  --default-foreground: var(--foreground);
+
+  --accent: oklch(0.805 0.128 190);
+  --accent-foreground: oklch(0.16 0.025 200);
+
+  --success: oklch(0.79 0.16 158);
+  --success-foreground: oklch(0.16 0.03 158);
+  --warning: oklch(0.826 0.143 78);
+  --warning-foreground: oklch(0.18 0.03 78);
+  --danger: oklch(0.685 0.183 22);
+  --danger-foreground: oklch(0.16 0.02 22);
+
+  --border: oklch(1 0 0 / 0.1);
+  --separator: oklch(1 0 0 / 0.07);
+  --focus: var(--accent);
+  --link: var(--accent);
+
+  --dm-layer-0: oklch(0.168 0.008 252);
+  --dm-layer-1: oklch(0.228 0.01 252);
+  --dm-layer-2: oklch(0.285 0.011 252);
+  --dm-layer-3: oklch(0.345 0.012 252);
+  --dm-layer-4: oklch(0.43 0.013 252);
+
+  --dm-hair: oklch(1 0 0 / 0.1);
+  --dm-hair-soft: oklch(1 0 0 / 0.06);
+  --dm-tick: oklch(1 0 0 / 0.16);
+  --dm-grid-line: oklch(1 0 0 / 0.035);
+  --dm-glow: color-mix(in oklab, var(--accent) 9%, transparent);
+  --dm-panel-top: oklch(1 0 0 / 0.055);
+  --dm-panel-shadow: 0 1px 0 oklch(1 0 0 / 0.03) inset, 0 18px 36px -28px oklch(0 0 0 / 0.9);
+  --dm-scroll-thumb: oklch(1 0 0 / 0.16);
+
+  --surface-shadow: none;
+  --overlay-shadow: 0 0 0 1px oklch(1 0 0 / 0.09), 0 24px 48px -24px oklch(0 0 0 / 0.8);
+}
+
+/* ── 补齐 HeroUI v3 缺失的调色板刻度 ──────────────────────────────────────
+   v3 只有 --default / --content 单值，源码里大量 bg-default-100、
+   border-default-200、bg-content2 实际不生成任何 CSS。这里把这些刻度接回
+   主题变量，历史类名随之恢复生效，且随明暗主题切换。 */
+@theme inline {
+  --color-default-50: var(--dm-layer-0);
+  --color-default-100: var(--dm-layer-1);
+  --color-default-200: var(--dm-layer-2);
+  --color-default-300: var(--dm-layer-3);
+  --color-default-400: var(--dm-layer-4);
+  --color-default-500: var(--muted);
+
+  --color-content1: var(--surface);
+  --color-content2: var(--dm-layer-1);
+  --color-content3: var(--dm-layer-2);
+  --color-content4: var(--dm-layer-3);
+
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-foreground);
+
+  --color-danger-50: color-mix(in oklab, var(--danger) 14%, transparent);
+  --color-warning-50: color-mix(in oklab, var(--warning) 14%, transparent);
+  --color-success-50: color-mix(in oklab, var(--success) 14%, transparent);
+  --color-accent-50: color-mix(in oklab, var(--accent) 14%, transparent);
+
+  --font-sans: var(--dm-font-sans);
+  --font-mono: var(--dm-font-mono);
+}
+
+/* ══ 基础 ═══════════════════════════════════════════════════════════════════ */
+
+html,
+body,
+#root {
   margin: 0;
   padding: 0;
   min-height: 100dvh;
   overflow-x: hidden;
 }
 
-/* Monospace utility */
+body {
+  font-family: var(--dm-font-sans);
+  color: var(--foreground);
+  background-color: var(--background);
+  /* 蓝图底纹 + 中轴辉光：左右镜像，与网格对称语言一致 */
+  background-image:
+    radial-gradient(1200px 520px at 50% -8%, var(--dm-glow), transparent 72%),
+    linear-gradient(to right, var(--dm-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--dm-grid-line) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    32px 32px,
+    32px 32px;
+  background-attachment: fixed;
+}
+
+/* 底部渐隐，让长页面收口 */
+body::after {
+  content: '';
+  position: fixed;
+  inset: auto 0 0 0;
+  height: 120px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--background));
+  z-index: 0;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--dm-scroll-thumb);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--accent) 45%, var(--dm-scroll-thumb));
+}
+
 .font-mono {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: var(--dm-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
 
-/* Theme backgrounds */
-[data-theme="dark"] body {
-  background: oklch(0.14 0.005 260);
-}
-[data-theme="light"] body {
-  background: oklch(0.97 0.002 260);
+/* ══ 仪表面板 ═══════════════════════════════════════════════════════════════ */
+
+/* 全局收紧圆角：默认 24px 对仪表盘过软 */
+.card {
+  border-radius: var(--dm-panel-radius);
 }
 
-/* Terminal — 始终经典深色，不随 App 主题变化 */
+/* 按钮默认 rounded-3xl，在 36px 高度上接近胶囊，与面板的直线语言冲突 */
+.button {
+  border-radius: 7px;
+}
+
+.dm-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--dm-hair);
+  border-radius: var(--dm-panel-radius);
+  background-image: linear-gradient(180deg, var(--dm-panel-top), transparent 46%);
+  box-shadow: var(--dm-panel-shadow);
+  animation: dm-rise 0.42s var(--dm-ease) backwards;
+  animation-delay: calc(min(var(--dm-i, 0), 8) * 40ms);
+}
+
+/* 四角定位刻线 —— 面板的签名细节，也把「对称」画在明面上 */
+.dm-panel::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  pointer-events: none;
+  z-index: 1;
+  background-image:
+    linear-gradient(var(--dm-tick), var(--dm-tick)),
+    linear-gradient(var(--dm-tick), var(--dm-tick)),
+    linear-gradient(var(--dm-tick), var(--dm-tick)),
+    linear-gradient(var(--dm-tick), var(--dm-tick)),
+    linear-gradient(var(--dm-tick), var(--dm-tick)),
+    linear-gradient(var(--dm-tick), var(--dm-tick)),
+    linear-gradient(var(--dm-tick), var(--dm-tick)), linear-gradient(var(--dm-tick), var(--dm-tick));
+  background-repeat: no-repeat;
+  background-size:
+    var(--dm-tick-len) 1px,
+    1px var(--dm-tick-len),
+    var(--dm-tick-len) 1px,
+    1px var(--dm-tick-len),
+    var(--dm-tick-len) 1px,
+    1px var(--dm-tick-len),
+    var(--dm-tick-len) 1px,
+    1px var(--dm-tick-len);
+  background-position:
+    left top,
+    left top,
+    right top,
+    right top,
+    left bottom,
+    left bottom,
+    right bottom,
+    right bottom;
+}
+
+.dm-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-shrink: 0;
+  padding: 0.75rem 0.9rem 0.6rem;
+  border-bottom: 1px solid var(--dm-hair-soft);
+}
+
+.dm-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.dm-panel__hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  font-family: var(--dm-font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in oklab, var(--foreground) 42%, transparent);
+}
+
+.dm-panel__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0.85rem 0.9rem 0.95rem;
+}
+
+/* 让表格/工具栏类面板贴边（行高与面板边缘对齐） */
+.dm-panel__body--flush {
+  padding: 0;
+  gap: 0;
+}
+
+/* 微型标签：发光刻点 + 大字距，全站统一 */
+.dm-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--dm-font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--foreground) 62%, transparent);
+}
+
+.dm-label::before {
+  content: '';
+  width: 2px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 7px color-mix(in oklab, var(--accent) 65%, transparent);
+}
+
+.dm-sub {
+  font-family: var(--dm-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--foreground) 34%, transparent);
+}
+
+/* 大数值：等宽 + 紧字距 + 顶部提亮的蚀刻渐变 */
+.dm-hero {
+  font-family: var(--dm-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.dm-hero--etch {
+  background: linear-gradient(
+    180deg,
+    var(--foreground) 26%,
+    color-mix(in oklab, var(--foreground) 58%, transparent)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 数据行 / 分隔线 */
+.dm-row {
+  border-bottom: 1px solid var(--dm-hair-soft);
+}
+.dm-row:last-child {
+  border-bottom: 0;
+}
+
+/* 内嵌凹槽（列表容器、滑轨底、代码块） */
+.dm-inset {
+  border: 1px solid var(--dm-hair-soft);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--foreground) 3.5%, transparent);
+}
+
+/* ══ 分区（左右对称的版心行） ═══════════════════════════════════════════════ */
+
+.dm-band {
+  /* 入场动画由面板自己承担（见 .dm-panel），这里只负责排版 */
+  display: flex;
+  flex-direction: column;
+}
+
+/* 中轴图例：两侧等长细线由中心向外展开 */
+.dm-band__rule {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0.4rem 0 0.7rem;
+}
+
+.dm-band__rule::before,
+.dm-band__rule::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+}
+
+.dm-band__rule::before {
+  background: linear-gradient(to right, transparent, var(--dm-hair));
+}
+
+.dm-band__rule::after {
+  background: linear-gradient(to left, transparent, var(--dm-hair));
+}
+
+.dm-band__index {
+  font-family: var(--dm-font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.dm-band__title {
+  font-family: var(--dm-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: color-mix(in oklab, var(--foreground) 55%, transparent);
+}
+
+.dm-band__meta {
+  font-family: var(--dm-font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.1em;
+  color: color-mix(in oklab, var(--foreground) 30%, transparent);
+}
+
+/* ══ 动效 ═══════════════════════════════════════════════════════════════════ */
+
+@keyframes dm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 实时链路脉冲 */
+.dm-live {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+}
+.dm-live::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--success);
+  animation: dm-ping 2.4s var(--dm-ease) infinite;
+}
+.dm-live--down {
+  background: var(--danger);
+}
+.dm-live--down::after {
+  border-color: var(--danger);
+}
+
+@keyframes dm-ping {
+  0% {
+    opacity: 0.8;
+    transform: scale(0.55);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dm-panel {
+    animation: none;
+  }
+  .dm-live::after {
+    animation: none;
+    opacity: 0.4;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ══ 终端：固定经典深色，不随主题变化 ═══════════════════════════════════════ */
 .terminal-container {
-  background: #1e1e1e;
+  background: #17191d;
   overflow: hidden;
 }
 .terminal-container .xterm {
@@ -47,10 +515,10 @@ html, body, #root {
 }
 .terminal-container .xterm-viewport {
   overflow-y: auto !important;
-  background-color: #1e1e1e !important;
+  background-color: #17191d !important;
 }
 .terminal-container .xterm-screen {
-  background-color: #1e1e1e !important;
+  background-color: #17191d !important;
 }
 .terminal-container .xterm-helper-textarea {
   outline: none !important;
@@ -58,68 +526,90 @@ html, body, #root {
 .terminal-container .xterm-cursor-layer {
   z-index: 2;
 }
-/* 滚动条适配深色终端 */
 .terminal-container .xterm-viewport::-webkit-scrollbar-thumb {
-  background: #424242;
+  background: #3a3f47;
 }
+
+/* ══ 表单与文件管理器 ═══════════════════════════════════════════════════════ */
 .dm-input {
   width: 100%;
   padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
+  border-radius: 8px;
   font-size: 0.875rem;
   outline: none;
-  background: var(--default-100);
-  border: 1px solid var(--default-200);
+  background: var(--dm-layer-1);
+  border: 1px solid var(--dm-hair);
   color: var(--foreground);
 }
 .dm-input:focus {
   border-color: var(--accent);
 }
 
-/* Form controls used in file manager */
 .dm-table-head {
-  background: var(--default-100);
+  background: var(--dm-layer-1);
 }
 .dm-table-row:hover {
-  background: var(--default-100);
+  background: var(--dm-layer-1);
 }
 .dm-table-row-selected {
-  background: color-mix(in oklch, var(--accent) 12%, var(--default-100));
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
 }
 
-/* Markdown preview in file manager */
+/* ══ Markdown 预览 ══════════════════════════════════════════════════════════ */
 .dm-markdown {
   line-height: 1.65;
   font-size: 0.875rem;
   color: var(--foreground);
 }
-.dm-markdown h1, .dm-markdown h2, .dm-markdown h3, .dm-markdown h4 {
+.dm-markdown h1,
+.dm-markdown h2,
+.dm-markdown h3,
+.dm-markdown h4 {
   font-weight: 600;
   margin: 1.25em 0 0.5em;
   line-height: 1.3;
 }
-.dm-markdown h1 { font-size: 1.5rem; border-bottom: 1px solid var(--default-200); padding-bottom: 0.3em; }
-.dm-markdown h2 { font-size: 1.25rem; border-bottom: 1px solid var(--default-200); padding-bottom: 0.25em; }
-.dm-markdown h3 { font-size: 1.1rem; }
-.dm-markdown p, .dm-markdown ul, .dm-markdown ol, .dm-markdown blockquote, .dm-markdown pre {
+.dm-markdown h1 {
+  font-size: 1.5rem;
+  border-bottom: 1px solid var(--dm-hair);
+  padding-bottom: 0.3em;
+}
+.dm-markdown h2 {
+  font-size: 1.25rem;
+  border-bottom: 1px solid var(--dm-hair);
+  padding-bottom: 0.25em;
+}
+.dm-markdown h3 {
+  font-size: 1.1rem;
+}
+.dm-markdown p,
+.dm-markdown ul,
+.dm-markdown ol,
+.dm-markdown blockquote,
+.dm-markdown pre {
   margin: 0.75em 0;
 }
-.dm-markdown ul, .dm-markdown ol { padding-left: 1.5em; }
-.dm-markdown li { margin: 0.25em 0; }
+.dm-markdown ul,
+.dm-markdown ol {
+  padding-left: 1.5em;
+}
+.dm-markdown li {
+  margin: 0.25em 0;
+}
 .dm-markdown blockquote {
-  border-left: 3px solid var(--accent);
+  border-left: 2px solid var(--accent);
   padding-left: 1em;
-  color: color-mix(in oklch, var(--foreground) 70%, transparent);
+  color: color-mix(in oklab, var(--foreground) 70%, transparent);
 }
 .dm-markdown code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--dm-font-mono);
   font-size: 0.85em;
 }
 .dm-markdown .dm-md-inline-code {
-  background: var(--default-100);
+  background: var(--dm-layer-1);
   padding: 0.15em 0.35em;
-  border-radius: 0.25rem;
-  border: 1px solid var(--default-200);
+  border-radius: 4px;
+  border: 1px solid var(--dm-hair-soft);
 }
 .dm-markdown pre,
 .dm-code-preview .dm-md-pre {
@@ -129,10 +619,10 @@ html, body, #root {
 .dm-markdown .dm-md-code-block,
 .dm-code-preview {
   margin: 0.75em 0;
-  border: 1px solid var(--default-200);
-  border-radius: 0.5rem;
+  border: 1px solid var(--dm-hair);
+  border-radius: 8px;
   overflow: hidden;
-  background: color-mix(in oklch, var(--default-100) 85%, transparent);
+  background: var(--dm-layer-0);
 }
 .dm-markdown .dm-md-code-toolbar {
   display: flex;
@@ -140,12 +630,12 @@ html, body, #root {
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.35rem 0.65rem;
-  border-bottom: 1px solid var(--default-200);
-  background: var(--default-100);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border-bottom: 1px solid var(--dm-hair-soft);
+  background: var(--dm-layer-1);
+  font-family: var(--dm-font-mono);
   font-size: 0.6875rem;
   text-transform: lowercase;
-  color: color-mix(in oklch, var(--foreground) 55%, transparent);
+  color: color-mix(in oklab, var(--foreground) 55%, transparent);
 }
 .dm-markdown .dm-md-pre,
 .dm-code-preview .dm-md-pre {
@@ -159,15 +649,14 @@ html, body, #root {
   background: transparent;
   padding: 0;
   border: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--dm-font-mono);
   white-space: pre;
 }
 .dm-markdown .dm-md-table-wrap {
   overflow-x: auto;
   margin: 0.75em 0;
-  border: 1px solid var(--default-200);
-  border-radius: 0.5rem;
-  background: color-mix(in oklch, var(--default-50, var(--default-100)) 40%, transparent);
+  border: 1px solid var(--dm-hair);
+  border-radius: 8px;
 }
 .dm-markdown table,
 .dm-markdown .dm-md-table {
@@ -177,28 +666,39 @@ html, body, #root {
   font-size: 0.8125rem;
   margin: 0;
 }
-.dm-markdown th, .dm-markdown td {
-  border: 1px solid var(--default-200);
+.dm-markdown th,
+.dm-markdown td {
+  border: 1px solid var(--dm-hair-soft);
   padding: 0.45em 0.65em;
   text-align: left;
   vertical-align: top;
 }
 .dm-markdown th {
-  background: var(--default-100);
+  background: var(--dm-layer-1);
   font-weight: 600;
   white-space: nowrap;
 }
 .dm-markdown tbody tr:nth-child(even) td {
-  background: color-mix(in oklch, var(--default-100) 45%, transparent);
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
 }
 .dm-markdown tbody tr:hover td {
-  background: color-mix(in oklch, var(--accent) 6%, var(--default-100));
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
 }
-.dm-markdown a { color: var(--accent); text-decoration: underline; }
-.dm-markdown img { max-width: 100%; border-radius: 0.375rem; }
-.dm-markdown hr { border: none; border-top: 1px solid var(--default-200); margin: 1.5em 0; }
+.dm-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.dm-markdown img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+.dm-markdown hr {
+  border: none;
+  border-top: 1px solid var(--dm-hair);
+  margin: 1.5em 0;
+}
 
-/* highlight.js — light */
+/* ══ highlight.js ══════════════════════════════════════════════════════════ */
 .dm-markdown .hljs,
 .dm-code-preview .hljs {
   color: #24292e;
@@ -206,64 +706,91 @@ html, body, #root {
 .dm-markdown .hljs-comment,
 .dm-markdown .hljs-quote,
 .dm-code-preview .hljs-comment,
-.dm-code-preview .hljs-quote { color: #6a737d; font-style: italic; }
+.dm-code-preview .hljs-quote {
+  color: #6a737d;
+  font-style: italic;
+}
 .dm-markdown .hljs-keyword,
 .dm-markdown .hljs-selector-tag,
-.dm-code-preview .hljs-keyword { color: #d73a49; }
+.dm-code-preview .hljs-keyword {
+  color: #d73a49;
+}
 .dm-markdown .hljs-string,
 .dm-markdown .hljs-addition,
-.dm-code-preview .hljs-string { color: #032f62; }
+.dm-code-preview .hljs-string {
+  color: #032f62;
+}
 .dm-markdown .hljs-number,
 .dm-markdown .hljs-literal,
-.dm-code-preview .hljs-number { color: #005cc5; }
+.dm-code-preview .hljs-number {
+  color: #005cc5;
+}
 .dm-markdown .hljs-title,
 .dm-markdown .hljs-section,
-.dm-code-preview .hljs-title { color: #6f42c1; }
+.dm-code-preview .hljs-title {
+  color: #6f42c1;
+}
 .dm-markdown .hljs-built_in,
 .dm-markdown .hljs-type,
-.dm-code-preview .hljs-built_in { color: #e36209; }
+.dm-code-preview .hljs-built_in {
+  color: #e36209;
+}
 .dm-markdown .hljs-meta,
-.dm-code-preview .hljs-meta { color: #735c0f; }
+.dm-code-preview .hljs-meta {
+  color: #735c0f;
+}
 .dm-markdown .hljs-variable,
 .dm-markdown .hljs-template-variable,
-.dm-code-preview .hljs-variable { color: #24292e; }
+.dm-code-preview .hljs-variable {
+  color: #24292e;
+}
 
-[data-theme="dark"] .dm-markdown .hljs,
-[data-theme="dark"] .dm-code-preview .hljs {
+[data-theme='dark'] .dm-markdown .hljs,
+[data-theme='dark'] .dm-code-preview .hljs {
   color: #c9d1d9;
 }
-[data-theme="dark"] .dm-markdown .hljs-comment,
-[data-theme="dark"] .dm-code-preview .hljs-comment { color: #8b949e; }
-[data-theme="dark"] .dm-markdown .hljs-keyword,
-[data-theme="dark"] .dm-code-preview .hljs-keyword { color: #ff7b72; }
-[data-theme="dark"] .dm-markdown .hljs-string,
-[data-theme="dark"] .dm-code-preview .hljs-string { color: #a5d6ff; }
-[data-theme="dark"] .dm-markdown .hljs-number,
-[data-theme="dark"] .dm-code-preview .hljs-number { color: #79c0ff; }
-[data-theme="dark"] .dm-markdown .hljs-title,
-[data-theme="dark"] .dm-code-preview .hljs-title { color: #d2a8ff; }
-[data-theme="dark"] .dm-markdown .hljs-built_in,
-[data-theme="dark"] .dm-code-preview .hljs-built_in { color: #ffa657; }
-[data-theme="dark"] .dm-markdown .dm-md-code-block,
-[data-theme="dark"] .dm-code-preview {
-  background: #161b22;
-  border-color: #30363d;
+[data-theme='dark'] .dm-markdown .hljs-comment,
+[data-theme='dark'] .dm-code-preview .hljs-comment {
+  color: #8b949e;
 }
-[data-theme="dark"] .dm-markdown .dm-md-code-toolbar {
-  background: #21262d;
-  border-color: #30363d;
+[data-theme='dark'] .dm-markdown .hljs-keyword,
+[data-theme='dark'] .dm-code-preview .hljs-keyword {
+  color: #ff7b72;
 }
-[data-theme="dark"] .dm-markdown .dm-md-table-wrap {
-  background: #0d1117;
-  border-color: #30363d;
+[data-theme='dark'] .dm-markdown .hljs-string,
+[data-theme='dark'] .dm-code-preview .hljs-string {
+  color: #a5d6ff;
 }
-[data-theme="dark"] .dm-markdown th {
-  background: #21262d;
-  border-color: #30363d;
+[data-theme='dark'] .dm-markdown .hljs-number,
+[data-theme='dark'] .dm-code-preview .hljs-number {
+  color: #79c0ff;
 }
-[data-theme="dark"] .dm-markdown td {
-  border-color: #30363d;
+[data-theme='dark'] .dm-markdown .hljs-title,
+[data-theme='dark'] .dm-code-preview .hljs-title {
+  color: #d2a8ff;
 }
-[data-theme="dark"] .dm-markdown tbody tr:nth-child(even) td {
-  background: #161b22;
+[data-theme='dark'] .dm-markdown .hljs-built_in,
+[data-theme='dark'] .dm-code-preview .hljs-built_in {
+  color: #ffa657;
+}
+[data-theme='dark'] .dm-markdown .dm-md-code-block,
+[data-theme='dark'] .dm-code-preview {
+  background: #12151a;
+  border-color: var(--dm-hair);
+}
+[data-theme='dark'] .dm-markdown .dm-md-code-toolbar {
+  background: #191d23;
+  border-color: var(--dm-hair-soft);
+}
+[data-theme='dark'] .dm-markdown .dm-md-table-wrap {
+  border-color: var(--dm-hair);
+}
+[data-theme='dark'] .dm-markdown th {
+  background: #191d23;
+}
+[data-theme='dark'] .dm-markdown td {
+  border-color: var(--dm-hair-soft);
+}
+[data-theme='dark'] .dm-markdown tbody tr:nth-child(even) td {
+  background: oklch(1 0 0 / 0.02);
 }

@@ -124,15 +124,17 @@ export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
     }
   };
 
+  const segBtn = 'px-2 py-0.5 transition-colors disabled:opacity-60 disabled:cursor-default';
+
   const headerExtra = (
     <>
       {loading && <Spinner size="sm" />}
-      <div className="inline-flex rounded-md border border-default-200 overflow-hidden text-[10px] font-mono shrink-0">
+      <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-default-200 font-mono text-[10px]">
         <button
           type="button"
           onClick={handleLowPowerMode}
           disabled={loading || mode === 'low-power'}
-          className={`px-2 py-0.5 transition-colors disabled:opacity-50 ${
+          className={`${segBtn} ${
             mode === 'low-power' ? 'bg-warning text-warning-foreground' : 'hover:bg-content2'
           }`}
         >
@@ -142,7 +144,7 @@ export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
           type="button"
           onClick={handleNormalMode}
           disabled={loading || mode === 'normal'}
-          className={`px-2 py-0.5 border-l border-default-200 transition-colors disabled:opacity-50 ${
+          className={`${segBtn} border-l border-default-200 ${
             mode === 'normal' ? 'bg-success text-success-foreground' : 'hover:bg-content2'
           }`}
         >
@@ -154,7 +156,7 @@ export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
           value={governor.current}
           onChange={(e) => handleGovernorChange(e.target.value)}
           disabled={loading}
-          className="max-w-36 sm:max-w-44 px-1.5 py-0.5 text-[10px] font-mono bg-content2 border border-default-200 rounded-md focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 truncate"
+          className="max-w-32 truncate rounded-md border border-default-200 bg-content2 px-1.5 py-0.5 font-mono text-[10px] transition-colors hover:border-default-300 focus:ring-1 focus:ring-primary focus:outline-none disabled:opacity-50 sm:max-w-40"
         >
           {governor.available.map((gov) => (
             <option key={gov} value={gov}>
@@ -175,17 +177,20 @@ export function CpuCard({ cpu, history, timestamps, loadAvg }: CpuCardProps) {
       history={history}
       timestamps={timestamps}
       headerExtra={headerExtra}
+      index={0}
       banner={
         error ? (
-          <div className="text-[10px] text-danger bg-danger-50 px-2 py-1 rounded -mt-1">{error}</div>
+          <div className="rounded-md border border-danger/30 bg-danger-50 px-2 py-1 text-[10px] text-danger">
+            {error}
+          </div>
         ) : undefined
       }
       footer={
         <>
           <span>负载 {loadAvg.map((v) => v.toFixed(2)).join(' / ')}</span>
-          <span className="mx-2 opacity-30">·</span>
+          <span>·</span>
           <span>{cpu.cores[0]?.frequency_mhz || 0} MHz</span>
-          <span className="mx-2 opacity-30">·</span>
+          <span>·</span>
           <span>{cpu.cores.length} 核</span>
         </>
       }

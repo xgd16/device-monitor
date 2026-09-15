@@ -1,102 +1,120 @@
-import { Card, ProgressBar } from '@heroui/react';
+import type { ReactNode } from 'react';
+import { Hero, MeterRow, Panel } from './Panel';
 import type { SystemOverview, ProcessInfo } from '../types';
-import { tempColor, percentColor, thermalSensorLabel } from './utils';
+import { tempColor, percentColor, thermalSensorLabel, fmtMem } from './utils';
 
 interface MetricsBarProps {
   data: SystemOverview;
   processes: ProcessInfo[];
 }
 
-export function MetricsBar({ data, processes }: MetricsBarProps) {
-  const maxTemp = Math.max(...data.thermal.map(t => t.temp_celsius), 0);
-  const hotZones = data.thermal.filter(t => t.temp_celsius >= 60).length;
-  const top3Thermal = [...data.thermal].sort((a, b) => b.temp_celsius - a.temp_celsius).slice(0, 3);
+/** 面板页脚：一行低对比度说明文字 */
+function Foot({ children }: { children: ReactNode }) {
+  return (
+    <div className="mt-auto flex flex-wrap items-center justify-center gap-x-2 border-t border-default-100 pt-2 font-mono text-[9px] opacity-40 xl:text-[10px]">
+      {children}
+    </div>
+  );
+}
 
-  const load1 = data.load_avg[0];
-  const load5 = data.load_avg[1];
-  const load15 = data.load_avg[2];
+export function MetricsBar({ data, processes }: MetricsBarProps) {
+  const thermal = [...data.thermal].sort((a, b) => b.temp_celsius - a.temp_celsius);
+  const maxTemp = thermal.length > 0 ? thermal[0].temp_celsius : 0;
+  const hotZones = data.thermal.filter((t) => t.temp_celsius >= 60).length;
+
+  const [load1, load5, load15] = data.load_avg;
   const cores = data.cpu.cores.length || 1;
   const loadPct = Math.min((load1 / cores) * 100, 100);
   const loadTrend = load1 > load15 * 1.15 ? '↑' : load1 < load15 * 0.85 ? '↓' : '→';
 
-  const runningProcs = processes.filter(p => p.status.includes('run')).length;
+  const runningProcs = processes.filter((p) => p.status.includes('run')).length;
   const totalMem = processes.reduce((s, p) => s + p.memory_mb, 0);
-  const top5Cpu = [...processes].sort((a, b) => b.cpu_usage - a.cpu_usage).slice(0, 5);
-  const maxCpuProc = top5Cpu[0]?.cpu_usage || 0;
+  const topCpu = [...processes]
+    .sort((a, b) => b.cpu_usage - a.cpu_usage)
+    .filter((p) => p.cpu_usage > 0.5)
+    .slice(0, 3);
 
   return (
     <>
       {/* 温度 */}
-      <Card className="p-3 sm:p-4 flex flex-col gap-2">
-        <span className="text-[9px] sm:text-[10px] font-mono uppercase tracking-widest opacity-50">温度</span>
-        <div className="flex items-baseline gap-2">
-          <span
-            className="font-mono text-xl sm:text-2xl lg:text-3xl font-light leading-none"
-            style={{ color: `var(--${tempColor(maxTemp)})` }}
-          >
-            {maxTemp.toFixed(1)}<span className="text-[10px] opacity-50">°C</span>
-          </span>
-          {hotZones > 0 && (
-            <span className="text-[9px] sm:text-[10px] font-mono text-warning opacity-70">{hotZones} 个高温区</span>
-          )}
-        </div>
-        <div className="flex flex-col gap-0.5">
-          {top3Thermal.map(z => (
-            <div key={z.id} className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-mono">
-              <span className="flex-1 truncate opacity-40">{thermalSensorLabel(z.name).title}</span>
-              <span style={{ color: `var(--${tempColor(z.temp_celsius)})` }}>{z.temp_celsius.toFixed(1)}°</span>
-            </div>
+      <Panel label="温度" index={2} hint={`${data.thermal.length} 传感器`}>
+        <Hero
+          value={maxTemp.toFixed(1)}
+          unit="°C"
+          color={tempColor(maxTemp)}
+          note={hotZones > 0 ? `${hotZones} 个高温区` : '全区域正常'}
+        />
+        <div className="flex flex-col gap-1.5">
+          {thermal.slice(0, 3).map((z) => (
+            <MeterRow
+              key={z.id}
+              label={thermalSensorLabel(z.name).title}
+              title={z.name}
+              ratio={(z.temp_celsius / 85) * 100}
+              color={tempColor(z.temp_celsius)}
+              value={`${z.temp_celsius.toFixed(1)}°`}
+            />
           ))}
         </div>
-        <span className="text-[9px] font-mono opacity-25">{data.thermal.length} 个传感器</span>
-      </Card>
+        <Foot>
+          <span>报警阈值 60°C</span>
+          <span>·</span>
+          <span>峰值 {thermal[0]?.name.replace(/-thermal$/i, '') ?? '—'}</span>
+        </Foot>
+      </Panel>
 
       {/* 负载 */}
-      <Card className="p-3 sm:p-4 flex flex-col gap-2">
-        <span className="text-[9px] sm:text-[10px] font-mono uppercase tracking-widest opacity-50">负载</span>
-        <div className="flex items-baseline gap-2">
-          <span className="font-mono text-xl sm:text-2xl lg:text-3xl font-light leading-none">
-            {load1.toFixed(2)}
-          </span>
-          <span className="text-[10px] font-mono opacity-30">{loadTrend} {cores} 核</span>
+      <Panel label="负载" index={3} hint={`${cores} 逻辑核`}>
+        <Hero value={load1.toFixed(2)} note={`${loadTrend} 1 分钟`} />
+        <div className="flex flex-col gap-1.5">
+          {[
+            { label: '1 分钟', v: load1 },
+            { label: '5 分钟', v: load5 },
+            { label: '15 分钟', v: load15 },
+          ].map((r) => {
+            const pct = Math.min((r.v / cores) * 100, 100);
+            return (
+              <MeterRow
+                key={r.label}
+                label={r.label}
+                ratio={pct}
+                color={percentColor(pct)}
+                value={r.v.toFixed(2)}
+              />
+            );
+          })}
         </div>
-        <ProgressBar value={loadPct} size="sm" color={percentColor(loadPct) as any}>
-          <ProgressBar.Track>
-            <ProgressBar.Fill />
-          </ProgressBar.Track>
-        </ProgressBar>
-        <div className="flex gap-3 text-[9px] sm:text-[10px] font-mono opacity-40">
-          <span>5分 {load5.toFixed(2)}</span>
-          <span>15分 {load15.toFixed(2)}</span>
-        </div>
-      </Card>
+        <Foot>
+          <span>相对 {cores} 核</span>
+          <span>·</span>
+          <span>当前 {loadPct.toFixed(0)}%</span>
+        </Foot>
+      </Panel>
 
       {/* 进程 */}
-      <Card className="p-3 sm:p-4 flex flex-col gap-2">
-        <span className="text-[9px] sm:text-[10px] font-mono uppercase tracking-widest opacity-50">进程</span>
-        <div className="flex items-baseline gap-2">
-          <span className="font-mono text-xl sm:text-2xl lg:text-3xl font-light leading-none">
-            {data.process_count}
-          </span>
-          <span className="text-[9px] sm:text-[10px] font-mono text-success opacity-60">{runningProcs} 运行</span>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          {top5Cpu.filter(p => p.cpu_usage > 0.5).map(p => (
-            <div key={p.pid} className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-mono">
-              <span className="flex-1 truncate opacity-40">{p.name}</span>
-              <span
-                style={{ color: p.cpu_usage > 20 ? 'var(--warning)' : p.cpu_usage > 50 ? 'var(--danger)' : undefined }}
-              >
-                {p.cpu_usage.toFixed(1)}%
-              </span>
-            </div>
-          ))}
-          {maxCpuProc <= 0.5 && (
-            <span className="text-[9px] font-mono opacity-25">CPU 空闲</span>
+      <Panel label="进程" index={4} hint={`${runningProcs} 运行`}>
+        <Hero value={data.process_count} note="总进程数" />
+        <div className="flex flex-col gap-1.5">
+          {topCpu.length === 0 && (
+            <span className="font-mono text-[10px] opacity-30">无显著 CPU 占用</span>
           )}
+          {topCpu.map((p) => (
+            <MeterRow
+              key={p.pid}
+              label={p.name}
+              title={`PID ${p.pid}`}
+              ratio={p.cpu_usage}
+              color={p.cpu_usage > 50 ? 'danger' : p.cpu_usage > 20 ? 'warning' : undefined}
+              value={`${p.cpu_usage.toFixed(1)}%`}
+            />
+          ))}
         </div>
-        <span className="text-[9px] font-mono opacity-25">内存总计 {totalMem >= 1024 ? `${(totalMem / 1024).toFixed(1)}G` : `${totalMem}M`}</span>
-      </Card>
+        <Foot>
+          <span>合计占用 {fmtMem(totalMem)}</span>
+          <span>·</span>
+          <span>列出占用最高的 3 个</span>
+        </Foot>
+      </Panel>
     </>
   );
 }

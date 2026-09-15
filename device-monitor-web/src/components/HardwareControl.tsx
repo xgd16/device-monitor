@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Card, Button, Chip } from '@heroui/react';
+import type { ReactNode } from 'react';
+import { Button, Chip } from '@heroui/react';
+import { Panel } from './Panel';
 import {
   fetchHardware,
   setFlashlight,
@@ -18,11 +20,22 @@ import {
   setSpeakerMute,
   playSpeakerTest,
 } from '../api';
-import { fmtChargeUa, chargeSourceLabel, chargeModeLabel, isChargePresetSelected } from './utils';
+import {
+  fmtChargeUa,
+  chargeSourceLabel,
+  chargeModeLabel,
+  isChargePresetSelected,
+  fmtMem,
+} from './utils';
 
 interface HardwareState {
   flashlight: { white_on: boolean; yellow_on: boolean; max_brightness: number };
-  status_led: { on: boolean; brightness: number; max_brightness: number; percent: number };
+  status_led: {
+    on: boolean;
+    brightness: number;
+    max_brightness: number;
+    percent: number;
+  };
   cpu_status_led_link: {
     enabled: boolean;
     threshold_pct: number;
@@ -80,28 +93,101 @@ const VIBE_PRESETS: { name: string; ms: number; strong: number; weak: number }[]
 ];
 
 const PATTERNS: Record<string, [number, number, number][]> = {
-  '双击': [[100, 80, 0], [80, 0, 0], [100, 80, 0]],
-  '心跳': [[100, 90, 0], [100, 0, 0], [60, 70, 0], [500, 0, 0]],
-  'SOS': [[80, 80, 0], [80, 0, 0], [80, 80, 0], [80, 0, 0], [80, 80, 0], [200, 0, 0], [200, 80, 0], [200, 0, 0], [200, 80, 0], [200, 0, 0], [200, 80, 0], [200, 0, 0], [80, 80, 0], [80, 0, 0], [80, 80, 0], [80, 0, 0], [80, 80, 0], [600, 0, 0]],
+  双击: [
+    [100, 80, 0],
+    [80, 0, 0],
+    [100, 80, 0],
+  ],
+  心跳: [
+    [100, 90, 0],
+    [100, 0, 0],
+    [60, 70, 0],
+    [500, 0, 0],
+  ],
+  SOS: [
+    [80, 80, 0],
+    [80, 0, 0],
+    [80, 80, 0],
+    [80, 0, 0],
+    [80, 80, 0],
+    [200, 0, 0],
+    [200, 80, 0],
+    [200, 0, 0],
+    [200, 80, 0],
+    [200, 0, 0],
+    [200, 80, 0],
+    [200, 0, 0],
+    [80, 80, 0],
+    [80, 0, 0],
+    [80, 80, 0],
+    [80, 0, 0],
+    [80, 80, 0],
+    [600, 0, 0],
+  ],
 };
 
-function formatUa(ua: number) {
-  return fmtChargeUa(ua);
+/** 面板内的次级说明文字 */
+function Note({ children }: { children: ReactNode }) {
+  return <p className="font-mono text-[10px] leading-relaxed opacity-35">{children}</p>;
 }
 
-export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
+/** 滑块：标签 + 轨道 + 读数 */
+function Slider({
+  label,
+  min,
+  max,
+  step = 1,
+  value,
+  disabled,
+  onChange,
+  display,
+}: {
+  label: string;
+  min: number;
+  max: number;
+  step?: number;
+  value: number;
+  disabled?: boolean;
+  onChange: (v: number) => void;
+  display: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-8 shrink-0 font-mono text-[10px] opacity-50">{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-1 flex-1 accent-accent disabled:opacity-40"
+      />
+      <span className="w-14 shrink-0 text-right font-mono text-xs tabular-nums">{display}</span>
+    </div>
+  );
+}
+
+export function HardwareControl({ className }: { className?: string }) {
   const [hw, setHw] = useState<HardwareState | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [activeVibe, setActiveVibe] = useState<string | null>(null);
   const [customMs, setCustomMs] = useState(300);
   const [customStrong, setCustomStrong] = useState(80);
-  const [memResult, setMemResult] = useState<{ freed_mb: number; before: { free_mb: number; available_mb: number }; after: { free_mb: number; available_mb: number } } | null>(null);
+  const [memResult, setMemResult] = useState<{
+    freed_mb: number;
+    before: { free_mb: number; available_mb: number };
+    after: { free_mb: number; available_mb: number };
+  } | null>(null);
 
   const refresh = useCallback(() => {
-    fetchHardware().then(d => {
-      setHw(d);
-      if (!d.vibrating) setActiveVibe(null);
-    }).catch(() => {});
+    fetchHardware()
+      .then((d) => {
+        setHw(d);
+        if (!d.vibrating) setActiveVibe(null);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -112,67 +198,121 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
 
   const handleFlashlight = async (led: 'white' | 'yellow', on: boolean) => {
     setLoading(`flash-${led}`);
-    try { await setFlashlight(led, on); refresh(); } catch {}
+    try {
+      await setFlashlight(led, on);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleStatusLed = async (on: boolean) => {
     setLoading('status-led');
-    try { await setStatusLed(on); refresh(); } catch {}
+    try {
+      await setStatusLed(on);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleCpuStatusLedLink = async (enabled: boolean) => {
     setLoading('cpu-led-link');
-    try { await setCpuStatusLedLink(enabled); refresh(); } catch {}
+    try {
+      await setCpuStatusLedLink(enabled);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleBrightness = async (percent: number) => {
     setLoading('brightness');
-    try { await setBrightness(percent); refresh(); } catch {}
+    try {
+      await setBrightness(percent);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleScreenPower = async (on: boolean) => {
     setLoading('screen');
-    try { await setScreenPower(on); setTimeout(refresh, 500); } catch {}
+    try {
+      await setScreenPower(on);
+      setTimeout(refresh, 500);
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleChargeCurrent = async (ua: number) => {
     setLoading('charge');
-    try { await setChargeCurrent(ua); refresh(); } catch {}
+    try {
+      await setChargeCurrent(ua);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleChargeMode = async (powerOnly: boolean) => {
     setLoading('charge-mode');
-    try { await setChargeMode(powerOnly); refresh(); } catch {}
+    try {
+      await setChargeMode(powerOnly);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleWifiPowerSave = async (enabled: boolean) => {
     setLoading('wifi-ps');
-    try { await setWifiPowerSave(enabled); refresh(); } catch {}
+    try {
+      await setWifiPowerSave(enabled);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleSpeakerVolume = async (percent: number) => {
     setLoading('speaker-vol');
-    try { await setSpeakerVolume(percent); refresh(); } catch {}
+    try {
+      await setSpeakerVolume(percent);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleSpeakerMute = async (muted: boolean) => {
     setLoading('speaker-mute');
-    try { await setSpeakerMute(muted); refresh(); } catch {}
+    try {
+      await setSpeakerMute(muted);
+      refresh();
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleSpeakerTest = async () => {
     setLoading('speaker-test');
-    try { await playSpeakerTest(); } catch {}
+    try {
+      await playSpeakerTest();
+    } catch {
+      /* 测试音失败无需提示，用户可重试 */
+    }
     setLoading(null);
   };
 
@@ -181,8 +321,13 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
     try {
       await vibrate(ms);
       setActiveVibe(label);
-      setTimeout(() => { setActiveVibe(null); setLoading(null); }, ms + 200);
-    } catch { setLoading(null); }
+      setTimeout(() => {
+        setActiveVibe(null);
+        setLoading(null);
+      }, ms + 200);
+    } catch {
+      setLoading(null);
+    }
   };
 
   const handleVibePattern = async (name: string, repeat: boolean) => {
@@ -192,13 +337,20 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
     try {
       await vibratePattern(segs, repeat);
       setActiveVibe(name);
-    } catch {}
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
   const handleStop = async () => {
     setLoading('vib-stop');
-    try { await vibrateStop(); setActiveVibe(null); } catch {}
+    try {
+      await vibrateStop();
+      setActiveVibe(null);
+    } catch {
+      /* 轮询会纠正显示状态 */
+    }
     setLoading(null);
   };
 
@@ -208,103 +360,152 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
     try {
       const res = await clearMemory();
       setMemResult(res.data);
-    } catch {}
+    } catch {
+      /* 失败无需提示，用户可重试 */
+    }
     setLoading(null);
   };
 
+  const gridCls = `grid items-stretch gap-3 xl:gap-4 md:grid-cols-2 ${className ?? ''}`;
+
   if (!hw) {
-    const loading = (
-      <Card className={`p-6 flex items-center justify-center ${embedded ? 'md:col-span-2 xl:col-span-3' : ''}`}>
-        <span className="font-mono text-sm opacity-30">加载硬件状态...</span>
-      </Card>
+    return (
+      <div className={gridCls}>
+        <Panel label="硬件控制" index={14}>
+          <span className="font-mono text-sm opacity-30">加载硬件状态...</span>
+        </Panel>
+      </div>
     );
-    return embedded ? loading : <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">{loading}</div>;
   }
 
-  const span2 = embedded ? 'md:col-span-2 xl:col-span-2' : '';
-  const spanFull = embedded ? 'md:col-span-2 xl:col-span-3' : 'sm:col-span-2 xl:col-span-3';
   const activeChargeUa = hw.charging.target_current_max_ua || hw.charging.current_max_ua;
+  const btn = 'font-mono';
 
-  const cards = (
-    <>
+  return (
+    <div className={gridCls}>
       {/* 闪光灯 */}
-      <Card className="p-4 sm:p-5 flex flex-col gap-4">
-        <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">闪光灯</span>
-        {(['white', 'yellow'] as const).map(led => {
-          const on = led === 'white' ? hw.flashlight.white_on : hw.flashlight.yellow_on;
-          const label = led === 'white' ? '白色' : '黄色';
-          const dotColor = led === 'white' ? '#fff' : '#fbbf24';
-          return (
-            <div key={led} className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-3 h-3 rounded-full border-2 border-default-300" style={{ background: on ? dotColor : 'transparent' }} />
+      <Panel label="闪光灯" index={14} hint={`${hw.flashlight.max_brightness} 级`}>
+        <div className="flex flex-1 flex-col justify-center gap-3">
+          {(['white', 'yellow'] as const).map((led) => {
+            const on = led === 'white' ? hw.flashlight.white_on : hw.flashlight.yellow_on;
+            const label = led === 'white' ? '白色' : '黄色';
+            const dotColor = led === 'white' ? '#ffffff' : '#fbbf24';
+            return (
+              <div key={led} className="flex items-center gap-3">
+                <span
+                  className="inline-block size-3 shrink-0 rounded-full border-2 border-default-300 transition-colors"
+                  style={{
+                    background: on ? dotColor : 'transparent',
+                    boxShadow: on ? `0 0 10px ${dotColor}` : undefined,
+                  }}
+                />
                 <span className="font-mono text-sm">{label}</span>
-                <Chip size="sm" color={on ? (led === 'white' ? 'success' : 'warning') : 'default'} variant="secondary">{on ? 'ON' : 'OFF'}</Chip>
+                <Chip
+                  size="sm"
+                  color={on ? (led === 'white' ? 'success' : 'warning') : 'default'}
+                  variant="secondary"
+                >
+                  {on ? 'ON' : 'OFF'}
+                </Chip>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  isDisabled={loading === `flash-${led}`}
+                  onPress={() => handleFlashlight(led, !on)}
+                  className={`${btn} ml-auto text-xs`}
+                >
+                  {on ? '关闭' : '开启'}
+                </Button>
               </div>
-              <Button size="sm" variant={on ? 'danger' : 'secondary'} isDisabled={loading === `flash-${led}`} onPress={() => handleFlashlight(led, !on)} className="font-mono text-xs">{on ? '关闭' : '开启'}</Button>
-            </div>
-          );
-        })}
-      </Card>
+            );
+          })}
+        </div>
+        <Note>白色与黄色双色温 LED，可独立开关</Note>
+      </Panel>
 
       {/* 状态灯 */}
-      <Card className="p-4 sm:p-5 flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">状态灯</span>
-          <div className="flex items-center gap-2">
-            {hw.cpu_status_led_link.enabled && (
-              <Chip size="sm" color="warning" variant="secondary">CPU联动</Chip>
-            )}
-            <Chip size="sm" color={hw.status_led.on ? 'success' : 'default'} variant="secondary">{hw.status_led.on ? 'ON' : 'OFF'}</Chip>
-          </div>
-        </div>
+      <Panel
+        label="状态灯"
+        index={15}
+        hint={
+          <Chip size="sm" color={hw.status_led.on ? 'success' : 'default'} variant="secondary">
+            {hw.status_led.on ? 'ON' : 'OFF'}
+          </Chip>
+        }
+      >
         <div className="flex items-center gap-3">
-          <span className="inline-block w-3 h-3 rounded-full border-2 border-default-300 bg-white" style={{ opacity: hw.status_led.on ? 1 : 0.2 }} />
+          <span
+            className="inline-block size-3 shrink-0 rounded-full border-2 border-default-300 bg-white transition-opacity"
+            style={{
+              opacity: hw.status_led.on ? 1 : 0.2,
+              boxShadow: hw.status_led.on ? '0 0 10px #ffffff' : undefined,
+            }}
+          />
           <span className="font-mono text-sm">white:status</span>
-          <span className="font-mono text-[10px] opacity-30">{hw.status_led.brightness}/{hw.status_led.max_brightness}</span>
-          {hw.cpu_status_led_link.enabled && (
-            <span className="font-mono text-[10px] opacity-40">
-              联动 {hw.cpu_status_led_link.link_brightness_pct}%
-            </span>
-          )}
+          <span className="ml-auto font-mono text-[10px] opacity-30">
+            {hw.status_led.brightness}/{hw.status_led.max_brightness}
+          </span>
         </div>
-        <span className="font-mono text-[10px] opacity-30">
-          CPU 联动：{hw.cpu_status_led_link.threshold_pct}% 以下不亮，超过后平滑增亮
-        </span>
-        <Button
-          size="sm"
-          variant={hw.cpu_status_led_link.enabled ? 'danger' : 'secondary'}
-          isDisabled={loading === 'cpu-led-link'}
-          onPress={() => handleCpuStatusLedLink(!hw.cpu_status_led_link.enabled)}
-          className="font-mono text-xs"
-        >
-          {hw.cpu_status_led_link.enabled ? '关闭 CPU 联动' : 'CPU 使用率联动'}
-        </Button>
-        <Button size="md" variant={hw.status_led.on ? 'danger' : 'secondary'} isDisabled={loading === 'status-led'} onPress={() => handleStatusLed(!hw.status_led.on)} className="font-mono text-sm">
-          {hw.status_led.on ? '关闭状态灯' : '开启状态灯'}
-        </Button>
-      </Card>
+        {hw.cpu_status_led_link.enabled && (
+          <div className="dm-inset flex items-center justify-between gap-2 px-2.5 py-1.5 font-mono text-[10px]">
+            <span className="opacity-50">CPU 联动亮度</span>
+            <span className="text-warning">
+              {hw.cpu_status_led_link.link_brightness_pct}% · CPU{' '}
+              {hw.cpu_status_led_link.smoothed_cpu_pct.toFixed(0)}%
+            </span>
+          </div>
+        )}
+        <div className="mt-auto flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            isDisabled={loading === 'cpu-led-link'}
+            onPress={() => handleCpuStatusLedLink(!hw.cpu_status_led_link.enabled)}
+            className={`${btn} flex-1 text-xs`}
+          >
+            {hw.cpu_status_led_link.enabled ? '关闭 CPU 联动' : 'CPU 使用率联动'}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            isDisabled={loading === 'status-led'}
+            onPress={() => handleStatusLed(!hw.status_led.on)}
+            className={`${btn} flex-1 text-xs`}
+          >
+            {hw.status_led.on ? '关闭状态灯' : '开启状态灯'}
+          </Button>
+        </div>
+        <Note>联动：{hw.cpu_status_led_link.threshold_pct}% 以下不亮，超过后平滑增亮</Note>
+      </Panel>
 
-      {/* 充电 — 短卡片优先，避免高卡片留洞 */}
-      <Card className="p-4 sm:p-5 flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">充电电流</span>
-          <div className="flex items-center gap-2">
+      {/* 充电电流 */}
+      <Panel
+        label="充电电流"
+        index={16}
+        hint={
+          <>
             {hw.charging.charge_mode === 'power_only' && (
-              <Chip size="sm" color="warning" variant="secondary">仅供电</Chip>
+              <Chip size="sm" color="warning" variant="secondary">
+                仅供电
+              </Chip>
             )}
-            <Chip size="sm" color={hw.charging.charger_online ? 'success' : 'default'} variant="secondary">
+            <Chip
+              size="sm"
+              color={hw.charging.charger_online ? 'success' : 'default'}
+              variant="secondary"
+            >
               {chargeSourceLabel(hw.charging.charge_source)}
             </Chip>
-          </div>
-        </div>
+          </>
+        }
+      >
         <div className="flex gap-2">
           <Button
             size="sm"
             variant={hw.charging.charge_mode === 'normal' ? 'secondary' : 'ghost'}
             isDisabled={loading === 'charge-mode'}
             onPress={() => handleChargeMode(false)}
-            className="flex-1 font-mono text-xs"
+            className={`${btn} flex-1 text-xs`}
           >
             正常充电
           </Button>
@@ -313,33 +514,33 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
             variant={hw.charging.charge_mode === 'power_only' ? 'secondary' : 'ghost'}
             isDisabled={loading === 'charge-mode'}
             onPress={() => handleChargeMode(true)}
-            className="flex-1 font-mono text-xs"
+            className={`${btn} flex-1 text-xs`}
           >
             仅供电
           </Button>
         </div>
-        <div className="font-mono text-sm">
-          目标 <span className="text-lg">{formatUa(activeChargeUa)}</span>
-          <span className="ml-2 text-[10px] opacity-40">{chargeModeLabel(hw.charging.charge_mode)}</span>
-          {hw.charging.target_current_max_ua > 0 && hw.charging.current_max_ua !== hw.charging.target_current_max_ua && (
-            <span className="ml-2 text-[10px] opacity-40">
-              实际 {formatUa(hw.charging.current_max_ua)}
-            </span>
-          )}
-          {hw.charging.charger_online && hw.charging.power_w > 0 && hw.charging.charge_mode === 'normal' && (
-            <span className="ml-2 text-[10px] opacity-40">
-              实时 {hw.charging.power_w.toFixed(1)}W · {Math.round(hw.charging.current_now_ua / 1000)}mA
-            </span>
-          )}
+
+        <div className="flex flex-wrap items-baseline gap-x-2 font-mono">
+          <span className="dm-hero text-xl font-light">{fmtChargeUa(activeChargeUa)}</span>
+          <span className="text-[10px] opacity-40">{chargeModeLabel(hw.charging.charge_mode)}</span>
+          {hw.charging.target_current_max_ua > 0 &&
+            hw.charging.current_max_ua !== hw.charging.target_current_max_ua && (
+              <span className="text-[10px] opacity-40">
+                实际 {fmtChargeUa(hw.charging.current_max_ua)}
+              </span>
+            )}
+          {hw.charging.charger_online &&
+            hw.charging.power_w > 0 &&
+            hw.charging.charge_mode === 'normal' && (
+              <span className="text-[10px] opacity-40">
+                实时 {hw.charging.power_w.toFixed(1)}W ·{' '}
+                {Math.round(hw.charging.current_now_ua / 1000)}mA
+              </span>
+            )}
         </div>
-        <span className="font-mono text-[10px] opacity-30">
-          有线最大 18W · 无线最大 10W · 仅供电时挂起电池充电
-          {hw.charging.charger_online && hw.charging.usb_type && (
-            <> · {hw.charging.usb_type}</>
-          )}
-        </span>
+
         <div className="flex flex-wrap gap-2">
-          {CHARGE_PRESETS.map(p => {
+          {CHARGE_PRESETS.map((p) => {
             const wirelessLimited = hw.charging.charge_source === 'wireless' && p.wiredOnly;
             const powerOnly = hw.charging.charge_mode === 'power_only';
             return (
@@ -349,201 +550,279 @@ export function HardwareControl({ embedded = false }: { embedded?: boolean }) {
                 variant={isChargePresetSelected(activeChargeUa, p.ua) ? 'secondary' : 'ghost'}
                 isDisabled={loading === 'charge' || wirelessLimited || powerOnly}
                 onPress={() => handleChargeCurrent(p.ua)}
-                className="font-mono text-xs"
+                className={`${btn} text-xs`}
               >
                 {p.label}
               </Button>
             );
           })}
         </div>
-      </Card>
+        <Note>
+          有线最大 18W · 无线最大 10W · 仅供电时挂起电池充电
+          {hw.charging.charger_online && hw.charging.usb_type ? ` · ${hw.charging.usb_type}` : ''}
+        </Note>
+      </Panel>
 
       {/* WiFi 省电 */}
-      <Card className="p-4 sm:p-5 flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">WiFi 省电</span>
-          <Chip size="sm" color={hw.wifi_power_save.enabled ? 'warning' : 'success'} variant="secondary">
+      <Panel
+        label="WiFi 省电"
+        index={17}
+        hint={
+          <Chip
+            size="sm"
+            color={hw.wifi_power_save.enabled ? 'warning' : 'success'}
+            variant="secondary"
+          >
             {hw.wifi_power_save.enabled ? '开启' : '关闭'}
           </Chip>
+        }
+      >
+        <div className="dm-inset flex items-center justify-between gap-2 px-2.5 py-2 font-mono text-[11px]">
+          <span className="opacity-50">接口</span>
+          <span>{hw.wifi_power_save.iface}</span>
         </div>
-        <span className="font-mono text-[10px] opacity-30">{hw.wifi_power_save.iface}</span>
         <Button
           size="md"
-          variant={hw.wifi_power_save.enabled ? 'danger' : 'secondary'}
+          variant="secondary"
           isDisabled={loading === 'wifi-ps'}
           onPress={() => handleWifiPowerSave(!hw.wifi_power_save.enabled)}
-          className="font-mono text-sm"
+          className={`${btn} mt-auto text-sm`}
         >
           {hw.wifi_power_save.enabled ? '关闭省电模式' : '开启省电模式'}
         </Button>
-      </Card>
+        <Note>省电模式会降低无线唤醒频率，可能增加延迟</Note>
+      </Panel>
 
-      {/* 扬声器 */}
-      <Card className={`p-4 sm:p-5 flex flex-col gap-4 ${span2}`}>
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">扬声器</span>
-          <div className="flex items-center gap-2">
-            <Chip size="sm" color={hw.speaker.available ? 'success' : 'default'} variant="secondary">
-              {hw.speaker.available ? hw.speaker.backend : '不可用'}
-            </Chip>
-            {hw.speaker.muted && (
-              <Chip size="sm" color="warning" variant="secondary">静音</Chip>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-xl font-light">
-            {hw.speaker.muted ? 0 : hw.speaker.volume_percent}
-            <span className="text-[10px] opacity-50">%</span>
+      {/* 屏幕 */}
+      <Panel
+        label="屏幕"
+        index={18}
+        hint={
+          <Chip size="sm" color={hw.screen_on ? 'success' : 'default'} variant="secondary">
+            {hw.screen_on ? '亮屏' : '息屏'}
+          </Chip>
+        }
+      >
+        <div className="flex items-baseline gap-2">
+          <span className="dm-hero text-xl font-light">{hw.brightness.percent}</span>
+          <span className="font-mono text-[10px] opacity-40">% 亮度</span>
+          <span className="ml-auto font-mono text-[10px] opacity-30">
+            {hw.brightness.current}/{hw.brightness.max}
           </span>
-          <span className="font-mono text-[10px] opacity-30">{hw.speaker.sink_name}</span>
         </div>
+        <Slider
+          label="亮度"
+          min={0}
+          max={100}
+          value={hw.brightness.percent}
+          disabled={loading === 'brightness' || !hw.screen_on}
+          onChange={handleBrightness}
+          display={`${hw.brightness.percent}%`}
+        />
         <div className="flex gap-2">
-          {SPEAKER_PRESETS.map(pct => (
+          {BRIGHTNESS_PRESETS.map((pct) => (
             <Button
               key={pct}
               size="sm"
-              variant={!hw.speaker.muted && hw.speaker.volume_percent === pct ? 'secondary' : 'ghost'}
-              isDisabled={loading?.startsWith('speaker') || !hw.speaker.available}
-              onPress={() => handleSpeakerVolume(pct)}
-              className="flex-1 font-mono text-xs"
+              variant={hw.brightness.percent === pct ? 'secondary' : 'ghost'}
+              isDisabled={loading === 'brightness' || !hw.screen_on}
+              onPress={() => handleBrightness(pct)}
+              className={`${btn} flex-1 text-xs`}
             >
               {pct === 0 ? '关' : `${pct}%`}
             </Button>
           ))}
         </div>
-        <input
-          type="range"
+        <Button
+          size="sm"
+          variant="secondary"
+          isDisabled={loading === 'screen'}
+          onPress={() => handleScreenPower(!hw.screen_on)}
+          className={`${btn} mt-auto text-xs`}
+        >
+          {hw.screen_on ? '息屏' : '亮屏'}
+        </Button>
+      </Panel>
+
+      {/* 扬声器 */}
+      <Panel
+        label="扬声器"
+        index={19}
+        hint={
+          <>
+            {hw.speaker.muted && (
+              <Chip size="sm" color="warning" variant="secondary">
+                静音
+              </Chip>
+            )}
+            <Chip
+              size="sm"
+              color={hw.speaker.available ? 'success' : 'default'}
+              variant="secondary"
+            >
+              {hw.speaker.available ? hw.speaker.backend : '不可用'}
+            </Chip>
+          </>
+        }
+      >
+        <div className="flex items-baseline gap-2">
+          <span className="dm-hero text-xl font-light">
+            {hw.speaker.muted ? 0 : hw.speaker.volume_percent}
+          </span>
+          <span className="font-mono text-[10px] opacity-40">% 音量</span>
+          <span className="ml-auto truncate font-mono text-[10px] opacity-30">
+            {hw.speaker.sink_name}
+          </span>
+        </div>
+        <Slider
+          label="音量"
           min={0}
           max={100}
           value={hw.speaker.muted ? 0 : hw.speaker.volume_percent}
-          onChange={e => handleSpeakerVolume(Number(e.target.value))}
           disabled={loading?.startsWith('speaker') || !hw.speaker.available}
-          className="w-full accent-accent h-1.5"
+          onChange={handleSpeakerVolume}
+          display={`${hw.speaker.muted ? 0 : hw.speaker.volume_percent}%`}
         />
         <div className="flex gap-2">
+          {SPEAKER_PRESETS.map((pct) => (
+            <Button
+              key={pct}
+              size="sm"
+              variant={
+                !hw.speaker.muted && hw.speaker.volume_percent === pct ? 'secondary' : 'ghost'
+              }
+              isDisabled={loading?.startsWith('speaker') || !hw.speaker.available}
+              onPress={() => handleSpeakerVolume(pct)}
+              className={`${btn} flex-1 text-xs`}
+            >
+              {pct === 0 ? '关' : `${pct}%`}
+            </Button>
+          ))}
+        </div>
+        <div className="mt-auto flex gap-2">
           <Button
-            size="md"
+            size="sm"
             variant={hw.speaker.muted ? 'secondary' : 'ghost'}
             isDisabled={loading?.startsWith('speaker') || !hw.speaker.available}
             onPress={() => handleSpeakerMute(!hw.speaker.muted)}
-            className="flex-1 font-mono text-sm"
+            className={`${btn} flex-1 text-xs`}
           >
             {hw.speaker.muted ? '取消静音' : '静音'}
           </Button>
           <Button
-            size="md"
+            size="sm"
             variant="secondary"
             isDisabled={loading === 'speaker-test' || !hw.speaker.available}
             onPress={handleSpeakerTest}
-            className="flex-1 font-mono text-sm"
+            className={`${btn} flex-1 text-xs`}
           >
             {loading === 'speaker-test' ? '播放中...' : '测试音'}
           </Button>
         </div>
-      </Card>
-
-      {/* 屏幕 — 较高，占 2 列与 WiFi 同行 */}
-      <Card className={`p-4 sm:p-5 flex flex-col gap-4 ${span2}`}>
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">屏幕</span>
-          <Chip size="sm" color={hw.screen_on ? 'success' : 'default'} variant="secondary">{hw.screen_on ? '亮屏' : '息屏'}</Chip>
-        </div>
-        <Button size="md" variant={hw.screen_on ? 'danger' : 'secondary'} isDisabled={loading === 'screen'} onPress={() => handleScreenPower(!hw.screen_on)} className="font-mono text-sm">{hw.screen_on ? '息屏' : '亮屏'}</Button>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-xl font-light">{hw.brightness.percent}<span className="text-[10px] opacity-50">%</span></span>
-          <span className="font-mono text-[10px] opacity-30">{hw.brightness.current}/{hw.brightness.max}</span>
-        </div>
-        <div className="flex gap-2">
-          {BRIGHTNESS_PRESETS.map(pct => (
-            <Button key={pct} size="sm" variant={hw.brightness.percent === pct ? 'secondary' : 'ghost'} isDisabled={loading === 'brightness' || !hw.screen_on} onPress={() => handleBrightness(pct)} className="flex-1 font-mono text-xs">{pct === 0 ? '关' : `${pct}%`}</Button>
-          ))}
-        </div>
-        <input type="range" min={0} max={100} value={hw.brightness.percent} onChange={e => handleBrightness(Number(e.target.value))} disabled={loading === 'brightness' || !hw.screen_on} className="w-full accent-accent h-1.5" />
-      </Card>
+      </Panel>
 
       {/* 振动马达 */}
-      <Card className={`p-4 sm:p-5 flex flex-col gap-3 ${spanFull}`}>
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">振动马达</span>
-          {activeVibe && hw.vibrating && (
-            <Button size="sm" variant="danger" isDisabled={loading === 'vib-stop'} onPress={handleStop} className="font-mono text-xs h-6 min-w-0 px-2">■ 停止</Button>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-2 p-3 rounded-lg bg-default-50">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-[10px] opacity-50 w-10">时长</span>
-            <input type="range" min={50} max={3000} step={50} value={customMs} onChange={e => setCustomMs(Number(e.target.value))} className="flex-1 accent-accent h-1.5" />
-            <span className="font-mono text-xs w-14 text-right">{customMs}ms</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-[10px] opacity-50 w-10">强度</span>
-            <input type="range" min={10} max={100} step={5} value={customStrong} onChange={e => setCustomStrong(Number(e.target.value))} className="flex-1 accent-accent h-1.5" />
-            <span className="font-mono text-xs w-14 text-right">{customStrong}%</span>
-          </div>
+      <Panel
+        label="振动马达"
+        index={20}
+        hint={
+          activeVibe && hw.vibrating ? (
+            <Button
+              size="sm"
+              variant="danger"
+              isDisabled={loading === 'vib-stop'}
+              onPress={handleStop}
+              className="h-6 min-w-0 px-2 font-mono text-xs"
+            >
+              ■ 停止
+            </Button>
+          ) : activeVibe ? (
+            <span className="text-accent">{activeVibe} 完成</span>
+          ) : undefined
+        }
+      >
+        <div className="dm-inset flex flex-col gap-2.5 p-3">
+          <Slider
+            label="时长"
+            min={50}
+            max={3000}
+            step={50}
+            value={customMs}
+            onChange={setCustomMs}
+            display={`${customMs}ms`}
+          />
+          <Slider
+            label="强度"
+            min={10}
+            max={100}
+            step={5}
+            value={customStrong}
+            onChange={setCustomStrong}
+            display={`${customStrong}%`}
+          />
           <Button
-            size="md"
+            size="sm"
             variant="secondary"
             isDisabled={loading?.startsWith('vib-')}
             onPress={() => handleVibeOnce(customMs, customStrong, 0, 'custom')}
-            className="font-mono text-sm mt-1"
+            className={`${btn} text-xs`}
           >
             振动 {customMs}ms
           </Button>
         </div>
 
-        <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
-          {VIBE_PRESETS.map(v => {
+        <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+          {VIBE_PRESETS.map((v) => {
             const isPattern = v.ms === 0;
-            const label = v.name;
             return (
               <Button
                 key={v.name}
                 size="sm"
                 variant={activeVibe === v.name ? 'secondary' : 'ghost'}
                 isDisabled={loading === `vib-${v.name}`}
-                onPress={() => isPattern ? handleVibePattern(v.name, v.name !== '双击') : handleVibeOnce(v.ms, v.strong, v.weak, v.name)}
-                className="font-mono text-xs"
+                onPress={() =>
+                  isPattern
+                    ? handleVibePattern(v.name, v.name !== '双击')
+                    : handleVibeOnce(v.ms, v.strong, v.weak, v.name)
+                }
+                className={`${btn} min-w-0 px-1 text-xs`}
               >
-                {label}
+                {v.name}
               </Button>
             );
           })}
         </div>
-
-        {activeVibe && (
-          <div className="flex items-center gap-2 font-mono text-[10px] text-accent">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-            {hw.vibrating ? `正在振动: ${activeVibe}` : `${activeVibe} 完成`}
-          </div>
-        )}
-      </Card>
+      </Panel>
 
       {/* 系统工具 */}
-      <Card className={`p-4 sm:p-5 flex flex-col gap-4 ${spanFull}`}>
-        <span className="text-[10px] font-mono uppercase tracking-widest opacity-50">系统工具</span>
-        <div className="flex items-center gap-3">
+      <Panel label="系统工具" index={21}>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-2">
           <Button
             size="md"
             variant="secondary"
             isDisabled={loading === 'clear-mem'}
             onPress={handleClearMemory}
-            className="font-mono text-sm"
+            className={`${btn} text-sm`}
           >
-            {loading === 'clear-mem' ? '清理中...' : '🧹 一键清理内存'}
+            {loading === 'clear-mem' ? '清理中...' : '一键清理内存'}
           </Button>
-          {memResult && (
-            <div className="flex items-center gap-2 font-mono text-xs">
-              <Chip size="sm" color="success" variant="secondary">释放 {memResult.freed_mb} MB</Chip>
-              <span className="opacity-50">{memResult.before.available_mb}MB → {memResult.after.available_mb}MB</span>
+          {memResult ? (
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="flex items-center gap-2 font-mono text-xs">
+                <Chip size="sm" color="success" variant="secondary">
+                  释放 {fmtMem(memResult.freed_mb)}
+                </Chip>
+                <span className="opacity-50">
+                  {fmtMem(memResult.before.available_mb)} → {fmtMem(memResult.after.available_mb)}
+                </span>
+              </div>
+              <span className="font-mono text-[10px] opacity-35">以上为「可用内存」变化</span>
             </div>
+          ) : (
+            <span className="font-mono text-[10px] opacity-30">释放页缓存与可回收内存</span>
           )}
         </div>
-      </Card>
-    </>
+      </Panel>
+    </div>
   );
-
-  if (embedded) return cards;
-  return <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">{cards}</div>;
 }

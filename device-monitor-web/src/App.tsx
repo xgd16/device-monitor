@@ -2,14 +2,21 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import { Tabs, Spinner } from '@heroui/react';
 import { useDeviceStore } from './stores/useDeviceStore';
 import { useWebSocket } from './hooks/useWebSocket';
-import { fetchProcesses, fetchWifi, fetchBluetooth, fetchAlerts } from './api';
+import {
+  fetchProcesses,
+  fetchWifi,
+  fetchBluetooth,
+  fetchAlerts,
+  fetchRefresh,
+  setRefresh,
+} from './api';
 import type { ProcessInfo, WifiInfo, BluetoothInfo, AlertItem } from './types';
 import { StatusBar, type AppPage } from './components/StatusBar';
+import { Band } from './components/Panel';
 import { CpuCard } from './components/CpuCard';
 import { MemoryCard } from './components/MemoryCard';
 import { MetricsBar } from './components/MetricsBar';
 import { CoreBars } from './components/CoreBars';
-import { MonitorDetailRow } from './components/MonitorDetailRow';
 import { ThermalCard } from './components/ThermalCard';
 import { NetworkCard } from './components/NetworkCard';
 import { WirelessCard } from './components/WirelessCard';
@@ -41,6 +48,29 @@ export default function App() {
     if (saved === 'light' || saved === 'dark') return saved;
     return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   });
+
+  // 界面刷新间隔（秒）：先显示本地缓存的值避免闪烁，再以服务端为准
+  const [refreshSecs, setRefreshSecs] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('dm-refresh'));
+    return [1, 3, 5, 10].includes(saved) ? saved : 5;
+  });
+
+  useEffect(() => {
+    fetchRefresh()
+      .then((c) => setRefreshSecs(c.refresh_secs))
+      .catch(() => {});
+  }, []);
+
+  const changeRefresh = (secs: number) => {
+    setRefreshSecs(secs);
+    localStorage.setItem('dm-refresh', String(secs));
+    setRefresh(secs).catch(() => {
+      // 失败时回滚为服务端实际值
+      fetchRefresh()
+        .then((c) => setRefreshSecs(c.refresh_secs))
+        .catch(() => {});
+    });
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -81,10 +111,18 @@ export default function App() {
 
   useEffect(() => {
     const load = () => {
-      fetchProcesses().then(setProcesses).catch(() => {});
-      fetchWifi().then(setWifi).catch(() => {});
-      fetchBluetooth().then(setBluetooth).catch(() => {});
-      fetchAlerts().then(setAlerts).catch(() => {});
+      fetchProcesses()
+        .then(setProcesses)
+        .catch(() => {});
+      fetchWifi()
+        .then(setWifi)
+        .catch(() => {});
+      fetchBluetooth()
+        .then(setBluetooth)
+        .catch(() => {});
+      fetchAlerts()
+        .then(setAlerts)
+        .catch(() => {});
     };
     load();
     const t = setInterval(load, 10000);
@@ -119,6 +157,8 @@ export default function App() {
         page={page}
         onThemeChange={setTheme}
         onPageChange={setPage}
+        refreshSecs={refreshSecs}
+        onRefreshChange={changeRefresh}
       />
 
       {page === 'terminal' && (
@@ -148,7 +188,12 @@ export default function App() {
               </Tabs.List>
 
               <Tabs.Panel id="overview" className="p-3 flex flex-col gap-3">
-                <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
+                <CpuCard
+                  cpu={cpu}
+                  history={cpuHistory}
+                  timestamps={historyTimestamps}
+                  loadAvg={data.load_avg}
+                />
                 <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
                 <BatteryCard battery={data.battery} />
                 <MetricsBar data={data} processes={processes} />
@@ -156,7 +201,12 @@ export default function App() {
               </Tabs.Panel>
 
               <Tabs.Panel id="cpu" className="p-3 flex flex-col gap-3">
-                <CoreBars cores={cpu.cores} overallUsage={cpu.overall_usage} loadAvg={data.load_avg} thermal={data.thermal} />
+                <CoreBars
+                  cores={cpu.cores}
+                  overallUsage={cpu.overall_usage}
+                  loadAvg={data.load_avg}
+                  thermal={data.thermal}
+                />
                 <ThermalCard thermal={data.thermal} />
               </Tabs.Panel>
 
@@ -171,7 +221,14 @@ export default function App() {
 
               <Tabs.Panel id="more" className="p-3 flex flex-col gap-3">
                 <DiskCard />
-                <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
+                <ProcessManager
+                  processes={processes}
+                  onRefresh={() =>
+                    fetchProcesses()
+                      .then(setProcesses)
+                      .catch(() => {})
+                  }
+                />
               </Tabs.Panel>
 
               <Tabs.Panel id="reports" className="p-3 flex flex-col gap-3">
@@ -180,47 +237,87 @@ export default function App() {
             </Tabs>
           </div>
 
-          {/* Desktop: Full grid layout (>= md) */}
-          <div className="hidden md:flex-1 md:flex md:flex-col md:gap-3 md:p-4 lg:p-5 md:overflow-y-auto md:min-h-0">
-            <div className="grid grid-cols-2 gap-3 items-stretch">
-              <CpuCard cpu={cpu} history={cpuHistory} timestamps={historyTimestamps} loadAvg={data.load_avg} />
-              <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
-            </div>
+          {/* Desktop: 中轴对称的分区版心 (>= md) */}
+          <div className="hidden md:flex md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto">
+            <div className="mx-auto flex w-full max-w-[1760px] flex-col gap-4 p-4 lg:gap-5 lg:p-5">
+              {/* 1 · 核心指标 —— 2 等分 */}
+              <Band index={1} title="核心指标" cols={2}>
+                <CpuCard
+                  cpu={cpu}
+                  history={cpuHistory}
+                  timestamps={historyTimestamps}
+                  loadAvg={data.load_avg}
+                />
+                <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
+              </Band>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-              <MetricsBar data={data} processes={processes} />
-              <BatteryCard battery={data.battery} />
-            </div>
+              {/* 2 · 实时体征 —— 4 等分 */}
+              <Band index={2} title="实时体征" cols={4}>
+                <MetricsBar data={data} processes={processes} />
+                <BatteryCard battery={data.battery} />
+              </Band>
 
-            <MonitorDetailRow
-              cores={cpu.cores}
-              overallUsage={cpu.overall_usage}
-              loadAvg={data.load_avg}
-              thermal={data.thermal}
-              network={network}
-              netSpeed={netSpeed}
-              wifi={wifi}
-              bluetooth={bluetooth}
-            />
+              {/* 3 · 深度诊断 —— 2 等分 */}
+              <Band index={3} title="深度诊断" cols={2}>
+                <CoreBars
+                  cores={cpu.cores}
+                  overallUsage={cpu.overall_usage}
+                  loadAvg={data.load_avg}
+                  thermal={data.thermal}
+                />
+                <ThermalCard thermal={data.thermal} />
+              </Band>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 grid-flow-dense auto-rows-min">
-              <DiskCard />
-              <GpuMonitorCard />
-              <SystemStatusCard data={data} processes={processes} netSpeed={netSpeed} />
-              <HardwareControl embedded />
-              <AlertsCard alerts={alerts} className="md:col-span-2 xl:col-span-3" />
-              <div className="md:col-span-2 xl:col-span-3">
-                <ProcessManager processes={processes} onRefresh={() => fetchProcesses().then(setProcesses).catch(() => {})} />
-              </div>
-              <div className="md:col-span-2 xl:col-span-3">
+              {/* 4 · 连接状态 —— 2 等分 */}
+              <Band index={4} title="连接状态" cols={2}>
+                <NetworkCard network={network} netSpeed={netSpeed} />
+                <WirelessCard wifi={wifi} bluetooth={bluetooth} />
+              </Band>
+
+              {/* 5 · 存储与图形 —— 2 等分 */}
+              <Band index={5} title="存储与图形" cols={2}>
+                <DiskCard />
+                <GpuMonitorCard />
+              </Band>
+
+              {/* 6 · 系统健康 —— 2 等分 */}
+              <Band index={6} title="系统健康" cols={2}>
+                <SystemStatusCard data={data} processes={processes} netSpeed={netSpeed} />
+                <AlertsCard alerts={alerts} />
+              </Band>
+
+              {/* 7 · 硬件控制 —— 内部 2×4 镜像 */}
+              <Band index={7} title="硬件控制" cols={1}>
+                <HardwareControl />
+              </Band>
+
+              {/* 8 · 进程管理 */}
+              <Band index={8} title="进程管理" cols={1}>
+                <ProcessManager
+                  processes={processes}
+                  onRefresh={() =>
+                    fetchProcesses()
+                      .then(setProcesses)
+                      .catch(() => {})
+                  }
+                />
+              </Band>
+
+              {/* 9 · 历史报表 */}
+              <Band index={9} title="历史报表" cols={1}>
                 <ReportsPanel />
-              </div>
-            </div>
+              </Band>
 
-            <footer className="flex justify-between items-center py-2 text-[10px] font-mono text-foreground/30">
-              <span>设备监控 v0.2.0</span>
-              <span>最后更新 {new Date(data.timestamp * 1000).toLocaleTimeString('zh-CN', { hour12: false })}</span>
-            </footer>
+              <footer className="flex items-center justify-between py-2 font-mono text-[10px] text-foreground/30">
+                <span>设备监控 v0.2.0</span>
+                <span>
+                  最后更新{' '}
+                  {new Date(data.timestamp * 1000).toLocaleTimeString('zh-CN', {
+                    hour12: false,
+                  })}
+                </span>
+              </footer>
+            </div>
           </div>
         </>
       )}
