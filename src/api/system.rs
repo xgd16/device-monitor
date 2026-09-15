@@ -3,6 +3,8 @@
 //! - `GET /api/system/overview` — 实时采集并返回完整 SystemOverview
 //! - `GET/POST /api/system/refresh` — 界面刷新间隔（秒），即采集心跳，
 //!   WebSocket 推送与 DRM 物理屏重绘随之变化
+//! - `GET/POST /api/system/rotation` — DRM 屏横向朝向（面板竖装，横放有两个朝向），
+//!   真机上也可以双击音量上加翻转
 
 use axum::Json;
 use axum::extract::State;
@@ -43,4 +45,31 @@ pub async fn set_refresh(State(state): State<AppState>, Json(body): Json<Value>)
     }
     tracing::info!("界面刷新间隔改为 {secs} 秒");
     success(json!({ "refresh_secs": secs }))
+}
+
+/// DRM 屏当前朝向。
+pub async fn get_rotation() -> Json<Value> {
+    success(json!({
+        "rot270": crate::collector::hotkeys::rot270(),
+        "rotation": if crate::collector::hotkeys::rot270() { "rot270" } else { "rot90" },
+        "choices": store::settings::ROTATION_CHOICES,
+    }))
+}
+
+/// 设置 DRM 屏朝向。渲染线程 1Hz 轮询到变化后重建画布（字形按朝向预栅格化）。
+/// 与双击音量上走同一条状态与落盘路径，所以两条入口不会打架。
+pub async fn set_rotation(Json(body): Json<Value>) -> Json<Value> {
+    let Some(rot) = body.get("rotation").and_then(|v| v.as_str()) else {
+        return error("缺少 rotation（rot90 / rot270）");
+    };
+    if !store::settings::ROTATION_CHOICES.contains(&rot) {
+        return error(&format!("朝向仅支持 {:?}", store::settings::ROTATION_CHOICES));
+    }
+    let rot270 = rot == "rot270";
+    crate::collector::hotkeys::set_rot270(rot270);
+    if let Err(e) = store::settings::save_rotation(rot) {
+        tracing::warn!("保存屏幕朝向失败: {e}");
+    }
+    tracing::info!("屏幕朝向改为 {rot}（来源：API）");
+    success(json!({ "rotation": rot }))
 }

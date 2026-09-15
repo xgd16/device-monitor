@@ -967,7 +967,7 @@ fn footer_card(c: &mut Canvas, p: &Pane, o: &crate::collector::SystemOverview) {
     let x = p.x + 26;
     let baseline = p.y + p.h / 2 + 8;
     // 方向写进页脚：只写「▲ ▼ 翻页」的话，用户试错一次就得来问是不是反的
-    let hint = "音量键 ▲ 下一页 · ▼ 上一页";
+    let hint = "音量键 ▲ 下一页 · ▼ 上一页 · 双击 ▲ 旋转屏幕";
     c.text(x, baseline, hint, Type::LABEL, Weight::Bold, Palette::FG_DEFAULT);
     let tw = c.fonts.text_width(hint, Type::LABEL, Weight::Bold);
     c.text(

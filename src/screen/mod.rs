@@ -111,6 +111,9 @@ pub fn run(
     let mut frames: u64 = 0;
     let mut force_full = true;
     let mut panel_was_on = true;
+    // 朝向状态以 hotkeys 为准（双击音量上翻转），启动时 main 已把它初始化成
+    // 与屏上实际朝向一致，所以这里不会一进来就误判成「需要切换」
+    let mut cur_rot270 = crate::collector::hotkeys::rot270();
 
     loop {
         std::thread::sleep(Duration::from_millis(1000));
@@ -128,6 +131,25 @@ pub fn run(
                 }
             }
             tracing::info!("screen: 切到页面 {}/{}", page + 1, crate::collector::hotkeys::PAGE_COUNT);
+        }
+
+        // ── 屏幕朝向切换（双击音量上）──
+        //
+        // 朝向变了必须**重建画布**：字形是按旋转方向预先栅格化缓存的
+        // （`FontSet::load(rot)`），只改 `rot` 字段会让整屏字都歪着。
+        let want270 = crate::collector::hotkeys::rot270();
+        if want270 != cur_rot270 {
+            cur_rot270 = want270;
+            let rot = if want270 { Rotation::Rot270 } else { Rotation::Rot90 };
+            match Canvas::new(screen.canvas.lw, screen.canvas.lh, rot) {
+                Ok(c) => {
+                    screen.canvas = c;
+                    screen.rot = rot;
+                    force_full = true;
+                    tracing::info!("screen: 朝向切换为 {rot:?}，画布已重建");
+                }
+                Err(e) => tracing::error!("screen: 切换朝向失败，保持原朝向: {e}"),
+            }
         }
 
         // ── 熄屏（电源键 bl_power=4）时暂停渲染 ──

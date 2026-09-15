@@ -9,7 +9,7 @@ use std::io::Read;
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const EV_KEY: u16 = 1;
 const KEY_VOLUMEDOWN: u16 = 114;
@@ -31,6 +31,78 @@ pub const PAGE_COUNT: u8 = 3;
 
 static PAGE: AtomicU8 = AtomicU8::new(0);
 static STARTED: AtomicBool = AtomicBool::new(false);
+
+/// 屏幕横向朝向：`false` = `Rot90`，`true` = `Rot270`（两者互为 180°）。
+///
+/// 面板物理上是竖屏（1080×2340），仪表内容横着放，所以有且只有两个横向朝向。
+/// 手机往哪边摆就该用哪个 —— 这是**摆位事实**，不是每次开机都要重选的东西，
+/// 因此双击切换后会落盘（`rotation.txt`）。放在这里而不是 `screen` 模块：
+/// 它和 `PAGE` 一样是「按键驱动的显示状态」，集中在一处才不会两边不同步。
+static ROT270: AtomicBool = AtomicBool::new(false);
+
+/// 双击音量上的判定窗口。窗口内出现第二下 = 双击（翻转朝向），
+/// 否则窗口过期后按单击处理（下一页）。
+///
+/// 代价是单击会有这个窗口长度的延迟：不能按下就立刻翻页，
+/// 否则双击会顺带多翻一页。300ms 是惯用值，体感上察觉不到。
+const DOUBLE_CLICK_MS: u64 = 300;
+
+/// 当前是否为翻转后的横向朝向。
+pub fn rot270() -> bool {
+    ROT270.load(Ordering::Relaxed)
+}
+
+/// 设置朝向（启动时按持久化值初始化，使屏上状态与这里一致）。
+pub fn set_rot270(v: bool) {
+    ROT270.store(v, Ordering::Relaxed);
+}
+
+/// 「音量上」轻触判定：单击翻页，双击翻转朝向，共用一个键。
+///
+/// 关键约束：**单击必须等双击窗口过期才能兑现**，否则双击的第一下会立刻翻页，
+/// 用户看到的是一次双击「又翻页又旋转」。
+///
+/// 抽成独立状态机而不是写在监听循环里，是因为这类手势逻辑最容易悄悄坏掉
+/// （少等一次窗口、窗口过期分支被 `continue` 跳过都会让单击永远不生效），
+/// 而它在循环里没法单测。时间由调用方传入，测试可以随便造。
+#[derive(Default)]
+struct TapTracker {
+    pending: Option<Instant>,
+}
+
+impl TapTracker {
+    /// 记一次按下。返回 `true` 表示这是双击的第二下（调用方应翻转朝向）。
+    fn tap(&mut self, now: Instant) -> bool {
+        if self.pending.take().is_some() {
+            true
+        } else {
+            self.pending = Some(now);
+            false
+        }
+    }
+
+    /// 双击窗口是否已过期；过期即清空并返回 `true`（调用方据此兑现单击翻页）。
+    fn expired(&mut self, now: Instant) -> bool {
+        match self.pending {
+            Some(t) if now.saturating_duration_since(t) >= Duration::from_millis(DOUBLE_CLICK_MS) => {
+                self.pending = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// 翻转横向朝向并落盘。
+fn toggle_rotation() {
+    let next = !ROT270.load(Ordering::Relaxed);
+    ROT270.store(next, Ordering::Relaxed);
+    let name = if next { "rot270" } else { "rot90" };
+    match crate::store::settings::save_rotation(name) {
+        Ok(()) => tracing::info!("hotkeys: KEY_VOLUMEUP 双击 → 屏幕朝向翻转为 {name}"),
+        Err(e) => tracing::warn!("hotkeys: 屏幕朝向已翻转但保存失败: {e}"),
+    }
+}
 
 /// 当前页面索引（0 起）。
 pub fn page() -> u8 {
@@ -170,16 +242,17 @@ pub fn start_listener() {
                 return;
             }
 
+            let mut taps = TapTracker::default();
             loop {
                 let mut pfds: Vec<libc::pollfd> = fds
                     .iter()
                     .map(|(_, fd, _, _)| libc::pollfd { fd: *fd, events: libc::POLLIN, revents: 0 })
                     .collect();
-                let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, 500) };
-                if n <= 0 {
-                    continue;
-                }
-                for (i, p) in pfds.iter().enumerate() {
+                // 超时 50ms：既要在双击窗口（300ms）内及时收第二下，也要在窗口
+                // 过期后尽快把待定的单击兑现。注意超时返回 0 时不能 `continue`，
+                // 否则待定单击永远等不到兑现。
+                let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, 50) };
+                for (i, p) in (0..if n > 0 { pfds.len() } else { 0 }).map(|i| (i, &pfds[i])) {
                     if p.revents & libc::POLLIN == 0 {
                         continue;
                     }
@@ -195,8 +268,9 @@ pub fn start_listener() {
                                     // 左右顺序一致：页签是 系统监控 → Token用量 → 时钟
                                     // 从左往右排的，按键却让「上」往左走，用起来就是反的。
                                     if ev.ev_code == KEY_VOLUMEUP && up {
-                                        tracing::info!("hotkeys: KEY_VOLUMEUP → 下一页");
-                                        step(1);
+                                        if taps.tap(Instant::now()) {
+                                            toggle_rotation();
+                                        }
                                     } else if ev.ev_code == KEY_VOLUMEDOWN && down {
                                         tracing::info!("hotkeys: KEY_VOLUMEDOWN → 上一页");
                                         step(-1);
@@ -211,7 +285,75 @@ pub fn start_listener() {
                         }
                     }
                 }
+
+                // 双击窗口过期 → 那一下就是单击：翻到下一页
+                if taps.expired(Instant::now()) {
+                    tracing::info!("hotkeys: KEY_VOLUMEUP → 下一页");
+                    step(1);
+                }
             }
         })
         .expect("无法启动 hotkeys 线程");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(base: Instant, ms: u64) -> Instant {
+        base + Duration::from_millis(ms)
+    }
+
+    /// 单击：窗口内没有第二下 → 窗口过期后兑现，且只兑现一次。
+    #[test]
+    fn 单击在窗口过期后兑现一次() {
+        let t = Instant::now();
+        let mut tr = TapTracker::default();
+        assert!(!tr.tap(t), "第一下是单击的候选，不是双击");
+        assert!(!tr.expired(at(t, 100)), "窗口内不该兑现");
+        assert!(tr.expired(at(t, DOUBLE_CLICK_MS)), "窗口到点应兑现");
+        assert!(!tr.expired(at(t, 5000)), "兑现后不该重复兑现");
+    }
+
+    /// 双击：窗口内的第二下判为双击，且**不再兑现单击**（否则双击会顺带翻一页）。
+    #[test]
+    fn 双击不触发翻页() {
+        let t = Instant::now();
+        let mut tr = TapTracker::default();
+        assert!(!tr.tap(t));
+        assert!(tr.tap(at(t, 150)), "窗口内的第二下应为双击");
+        assert!(!tr.expired(at(t, 1000)), "双击后不该再兑现单击");
+    }
+
+    /// 窗口外连按两下 = 两次单击（翻两页），不能误判成双击。
+    #[test]
+    fn 窗口外连按判为两次单击() {
+        let t = Instant::now();
+        let mut tr = TapTracker::default();
+        assert!(!tr.tap(t));
+        assert!(tr.expired(at(t, DOUBLE_CLICK_MS)), "第一下先兑现");
+        assert!(!tr.tap(at(t, 400)), "第二下是新的单击候选");
+        assert!(tr.expired(at(t, 400 + DOUBLE_CLICK_MS)));
+    }
+
+    /// 双击之后紧接着的单击仍是独立一次（不该被双击状态吃掉）。
+    #[test]
+    fn 双击后的单击仍然有效() {
+        let t = Instant::now();
+        let mut tr = TapTracker::default();
+        tr.tap(t);
+        assert!(tr.tap(at(t, 120)));
+        assert!(!tr.tap(at(t, 300)), "双击后的第一下是新候选");
+        assert!(tr.expired(at(t, 300 + DOUBLE_CLICK_MS)));
+    }
+
+    /// 朝向翻转状态：set/rot270 往返一致。
+    #[test]
+    fn 朝向状态往返一致() {
+        set_rot270(false);
+        assert!(!rot270());
+        set_rot270(true);
+        assert!(rot270());
+        set_rot270(false);
+    }
 }

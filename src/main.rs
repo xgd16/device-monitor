@@ -52,7 +52,12 @@ async fn main() {
             .get(i + 1)
             .cloned()
             .unwrap_or_else(|| "/tmp/device-monitor-screen.ppm".to_string());
+        // 未显式指定 90/270 时跟随落盘朝向，导出的图才和屏上一致
         let rot = if args.iter().any(|a| a == "270") {
+            screen::Rotation::Rot270
+        } else if args.iter().any(|a| a == "90") {
+            screen::Rotation::Rot90
+        } else if store::settings::load_rotation().as_deref() == Some("rot270") {
             screen::Rotation::Rot270
         } else {
             screen::Rotation::Rot90
@@ -203,10 +208,18 @@ async fn main() {
             .position(|a| a == "--rotate")
             .and_then(|i| args.get(i + 1))
             .map(|s| s.as_str());
+        // 朝向优先级：命令行显式指定 > 落盘值（双击音量上切换会写）> 默认 Rot90
         let rot = match rotate_arg {
             Some("270") => screen::Rotation::Rot270,
-            _ => screen::Rotation::Rot90,
+            Some("90") => screen::Rotation::Rot90,
+            _ => match store::settings::load_rotation().as_deref() {
+                Some("rot270") => screen::Rotation::Rot270,
+                _ => screen::Rotation::Rot90,
+            },
         };
+        // 必须让 hotkeys 的朝向状态与屏上实际朝向对齐：否则若落盘是 rot270，
+        // 第一次双击会「翻转成 rot270」——屏上什么都不变，看着像按键失灵。
+        crate::collector::hotkeys::set_rot270(matches!(rot, screen::Rotation::Rot270));
         match screen::open(rot) {
             Ok(scr) => {
             let rx_screen = state.latest.clone();
@@ -243,6 +256,7 @@ async fn main() {
     let api_routes = Router::new()
         .route("/system/overview", get(api::system::overview))
         .route("/system/refresh", get(api::system::get_refresh).post(api::system::set_refresh))
+        .route("/system/rotation", get(crate::api::system::get_rotation).post(crate::api::system::set_rotation))
         .route("/cpu", get(api::cpu::cpu_info))
         .route("/cpu/governor", get(api::cpu::get_governor).post(api::cpu::set_governor))
         .route("/cpu/frequency", get(api::cpu::get_frequency))

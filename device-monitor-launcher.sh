@@ -111,12 +111,21 @@ try_screen() {
   if [ -w /sys/class/vtconsole/vtcon1/bind ]; then
     echo 0 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null && log "fbcon 已解绑（避免控制台抢屏）"
   fi
-  rotate="${SCREEN_ROTATE:-90}"
-  log "Attempting DRM landscape screen (--screen --rotate $rotate)"
+  # 朝向只在 SCREEN_ROTATE 显式设置时才传给程序（当作一次性覆盖）。
+  # 不能无条件给个默认值：程序里「命令行 > rotation.txt > Rot90」，
+  # 启动器硬塞 --rotate 90 会让双击音量加存下的朝向每次开机都被覆盖掉，
+  # 表现为「自定义朝向重启就丢」。
+  rotate_args=""
+  rotate="持久化值"
+  if [ -n "${SCREEN_ROTATE:-}" ]; then
+    rotate="$SCREEN_ROTATE"
+    rotate_args="--rotate $SCREEN_ROTATE"
+  fi
+  log "Attempting DRM landscape screen (--screen ${rotate_args:-无 --rotate，用 rotation.txt})"
   : > "$SCREEN_LOG"
   env LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 TUI_UTF8=1 RUST_LOG="${RUST_LOG:-info}" \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    "$BIN" --screen --rotate "$rotate" >>"$SCREEN_LOG" 2>&1 &
+    "$BIN" --screen $rotate_args >>"$SCREEN_LOG" 2>&1 &
   screen_pid=$!
 
   i=0

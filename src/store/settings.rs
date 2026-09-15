@@ -33,3 +33,32 @@ pub fn save_refresh_secs(secs: u64) -> std::io::Result<()> {
     }
     fs::write(REFRESH_FILE, format!("{secs}\n"))
 }
+
+// ── 屏幕朝向 ──
+
+/// 面板物理上是竖屏（如 1080×2340），仪表内容横着放，所以有两个横向朝向：
+/// `Rot90` 和 `Rot270`（互为 180°）。手机怎么摆就选哪个 —— 这是**物理摆位**决定的，
+/// 不是每次开机都该重选的东西，所以落盘持久化。
+const ROTATION_FILE: &str = "rotation.txt";
+
+/// 朝向标识。存文件用字符串，避免以后加反射/新朝向时数字含义漂移。
+pub const ROTATION_CHOICES: &[&str] = &["rot90", "rot270"];
+
+/// 读取屏幕朝向；缺失或非法返回 `None`（由调用方用命令行默认值兜底）。
+pub fn load_rotation() -> Option<String> {
+    fs::read_to_string(ROTATION_FILE)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| ROTATION_CHOICES.contains(&s.as_str()))
+}
+
+/// 保存屏幕朝向。
+pub fn save_rotation(rot: &str) -> std::io::Result<()> {
+    if !ROTATION_CHOICES.contains(&rot) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("朝向仅支持 {ROTATION_CHOICES:?}"),
+        ));
+    }
+    fs::write(ROTATION_FILE, format!("{rot}\n"))
+}
