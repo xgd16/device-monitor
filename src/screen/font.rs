@@ -211,3 +211,4 @@ fn rotate_cov(src: &[u8], lw: u32, lh: u32, rot: Rotation) -> (u32, u32, Vec<u8>
     }
     (tw, th, out)
 }
+

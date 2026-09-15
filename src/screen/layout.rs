@@ -271,7 +271,7 @@ pub fn render_clock(c: &mut Canvas, o: &SystemOverview) {
 
 /// 页面标签（可发现性）：高亮当前页，返回最后一个标签的右边界。
 pub(crate) fn page_tabs(c: &mut Canvas, x: i32, y: i32, active: u8) -> i32 {
-    const TABS: [&str; 2] = ["系统监控", "Token 用量"];
+    const TABS: [&str; 3] = ["系统监控", "Token 用量", "时钟"];
     let mut sx = x;
     for (i, label) in TABS.iter().enumerate() {
         let on = i as u8 == active;

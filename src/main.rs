@@ -57,10 +57,23 @@ async fn main() {
         } else {
             screen::Rotation::Rot90
         };
+        // 页码与屏上「当前第 N / 3 页」一致（1-based）
         let page = match args.iter().position(|a| a == "--page").and_then(|i| args.get(i + 1)).map(|s| s.as_str()) {
-            Some("tokens") | Some("2") | Some("1") => 1u8,
+            Some("clock") | Some("3") => 2u8,
+            Some("tokens") | Some("2") => 1u8,
             _ => 0u8,
         };
+        // --at <秒>：相对当前时间偏移若干秒再渲染，用于预览其他时段的版式
+        // （幽灵像素由 clock.rs 的同进程单测保证，不靠跨进程比对——两个进程的
+        //  电池读数、RTC 秒数等实时数据必然漂移，差异无法归因）
+        if let Some(n) = args
+            .iter()
+            .position(|a| a == "--at")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|v| v.parse::<i64>().ok())
+        {
+            screen::clock::set_time_offset(n);
+        }
         let overview = collector::collect_system_overview();
         match screen::dump(&overview, rot, &path, page) {
             Ok(()) => {

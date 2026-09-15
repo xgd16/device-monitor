@@ -27,7 +27,7 @@ struct InputEvent {
 }
 
 /// 页面总数（新增页面时只改这里）
-pub const PAGE_COUNT: u8 = 2;
+pub const PAGE_COUNT: u8 = 3;
 
 static PAGE: AtomicU8 = AtomicU8::new(0);
 static STARTED: AtomicBool = AtomicBool::new(false);

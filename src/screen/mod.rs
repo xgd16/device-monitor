@@ -11,11 +11,13 @@
 //! - `Rot270`：反向（若画面上下颠倒，用 `--rotate 270`）
 
 pub mod canvas;
+pub mod clock;
 pub mod display;
 pub mod font;
 pub mod layout;
 pub mod theme;
 pub mod token;
+pub mod weather;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -102,6 +104,8 @@ pub fn run(
     let mut hist = layout::History::new();
     let mut aux = layout::Aux::new();
     let tokens = token::start_feed();
+    // 天气每 15 分钟刷新一次，放独立线程，别阻塞 1Hz 渲染循环
+    weather::start_feed();
     let mut last_ts: i64 = -1;
     let mut last_page: u8 = 255;
     let mut frames: u64 = 0;
@@ -177,6 +181,7 @@ pub fn run(
                         token::render(&mut screen.canvas, &o, &f);
                     }
                 }
+                2 => clock::render(&mut screen.canvas, &o),
                 _ => layout::render(&mut screen.canvas, &o, &aux, &hist),
             }
             if frames % 60 == 0 {
@@ -185,6 +190,7 @@ pub fn run(
         } else {
             match page {
                 1 => token::render_clock(&mut screen.canvas, &o),
+                2 => clock::render_clock(&mut screen.canvas, &o),
                 _ => layout::render_clock(&mut screen.canvas, &o),
             }
         }
@@ -213,6 +219,9 @@ pub fn run(
 /// 两份互为 90° 旋转，可用来核对旋转映射是否正确。
 pub fn dump(o: &SystemOverview, rot: Rotation, path: &str, page: u8) -> Result<(), String> {
     let mut canvas = Canvas::new(2340, 1080, rot)?;
+    // 预览要对齐真机所见：页脚会读 hotkeys::page() 显示「当前第 N 页」，
+    // 新进程里它是 0，不同步就会导出「第 1/3 页」而真机在第 3 页。
+    crate::collector::hotkeys::set_page(page);
     if page == 1 {
         let feed = token::start_feed();
         // 等首轮 REST 快照 + WS 首帧吞吐（最多 8s），让预览接近真机所见
@@ -227,6 +236,16 @@ pub fn dump(o: &SystemOverview, rot: Rotation, path: &str, page: u8) -> Result<(
         let f = feed.lock().map_err(|e| e.to_string())?;
         token::render(&mut canvas, o, &f);
         drop(f);
+    } else if page == 2 {
+        // 预览要贴近真机所见：等首轮天气快照（最多 8s），否则导出的只有「正在获取天气…」
+        let wf = weather::start_feed();
+        for _ in 0..80 {
+            std::thread::sleep(Duration::from_millis(100));
+            if wf.lock().map(|w| w.updated.is_some()).unwrap_or(false) {
+                break;
+            }
+        }
+        clock::render(&mut canvas, o);
     } else {
         let mut aux = layout::Aux::new();
         aux.refresh(o, None);
