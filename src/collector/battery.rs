@@ -276,8 +276,13 @@ const CAPACITY_MAH_FILE: &str = "battery_capacity_mah.txt";
 const DISCHARGE_FILE: &str = "battery_discharge.txt";
 /// 间隔超过这么久视为新的放电会话（中途系统睡着/充过电，积分就不连续了）
 const DISCHARGE_GAP_SECS: i64 = 600;
-/// 至少掉了这么多百分点才能拿来推容量（跨度太小，噪声占主导）
-const MIN_SPAN_PCT: u32 = 25;
+/// 至少要掉这么多百分点（跨度太小，噪声占主导）
+const MIN_SPAN_PCT: u32 = 50;
+/// 还必须**放到这么低**才算量到低端。电量计的 SOC 与实际电荷非线性：
+/// **0-9% 这一档握着约 20% 的电荷**（三次完整放电实测：该档 126 mAh/1%，
+/// 其余档只有 45~61 mAh/1%），所以只测上半段会把容量系统性算小
+/// —— 实测 99%→47% 只推得 1616 mAh，而真值约 2080。
+const LOW_END_PCT: u8 = 15;
 /// 容量估值的合理区间（mAh），明显越界的一律丢弃
 const CAPACITY_SANITY: (f64, f64) = (800.0, 6000.0);
 /// 已有估值时新观测的融合权重（单次积分噪声不小，整段替换会让显示跳变）
@@ -292,6 +297,11 @@ fn load_f64(filename: &str) -> f64 {
 
 fn save_f64(filename: &str, value: f64) {
     let _ = fs::write(filename, format!("{value:.1}\n"));
+}
+
+/// 这段放电能不能拿来定容量：跨度够大，**且必须量到低端**（见 LOW_END_PCT 的说明）。
+fn discharge_is_measurable(span_pct: u32, end_soc: u8) -> bool {
+    span_pct >= MIN_SPAN_PCT && end_soc <= LOW_END_PCT
 }
 
 /// 由「放出的电荷 / 电量下降幅度」推算容量，越界返回 None（纯函数，便于单测）。
@@ -350,7 +360,7 @@ fn learn_capacity(capacity: u8, current_ua: f64, status: &str) {
     let accum = accum + current_ua.abs() * dt / 3600.0 / 1000.0; // μA·s → mAh
     let span = soc0.saturating_sub(capacity) as u32;
 
-    if !measured && span >= MIN_SPAN_PCT {
+    if !measured && discharge_is_measurable(span, capacity) {
         if let Some(est) = capacity_from_discharge(accum, span) {
             save_f64(CAPACITY_MAH_FILE, blend_capacity(load_f64(CAPACITY_MAH_FILE), est));
             tracing::info!(
@@ -560,16 +570,32 @@ mod tests {
     }
 
     /// 容量推算：电荷 ÷ 电量跨度 × 100，并挡掉明显越界的估值。
+    /// 数据取自数据库里三次真实完整放电（梯形积分）。
     #[test]
     fn 容量由放电积分推算() {
-        // 本机实测的三次真实数据，都应落在合理区间且彼此接近
-        for (accum, span) in [(2110.0, 98), (2494.0, 98), (2117.0, 98)] {
+        for (accum, span) in [(1898.0, 98), (2118.0, 98), (2110.0, 98), (1310.0, 61)] {
             let c = capacity_from_discharge(accum, span).expect("应能推算");
-            assert!((2000.0..2700.0).contains(&c), "推算 {c:.0} 偏离实测区间");
+            assert!((1800.0..2300.0).contains(&c), "推算 {c:.0} 偏离实测区间");
         }
-        assert!(capacity_from_discharge(50.0, 20).is_none(), "跨度大但电荷小 → 越界丢弃");
+        assert!(capacity_from_discharge(50.0, 20).is_none(), "电荷太小 → 越界丢弃");
         assert!(capacity_from_discharge(9999.0, 10).is_none(), "明显离谱应丢弃");
         assert!(capacity_from_discharge(500.0, 0).is_none(), "零跨度不能用");
+    }
+
+    /// **必须量到低端**才算有效：电量计的 0-9% 档握着约 20% 的电荷，
+    /// 只测上半段会系统性算小（实测 99%→47% 只得 1616 mAh，真值约 2080）。
+    /// 这是本机数据库里各段的真实起点/终点。
+    #[test]
+    fn 只测上半段不算有效容量() {
+        // 不完整区间：跨度看着够（≥50%）但没量到低端 → 拒绝
+        assert!(!discharge_is_measurable(52, 47), "99→47 会把容量算小");
+        assert!(!discharge_is_measurable(73, 26), "99→26 同样没量到低端");
+        assert!(!discharge_is_measurable(63, 36), "99→36 也不行");
+        // 有效：覆盖低端且跨度够
+        assert!(discharge_is_measurable(98, 1), "99→1 是完整循环");
+        assert!(discharge_is_measurable(61, 1), "62→1 也覆盖了低端，有效");
+        // 量到低端但跨度太小 → 噪声占主导，仍拒绝
+        assert!(!discharge_is_measurable(20, 1));
     }
 
     /// 融合：首次采纳，之后小幅修正（别让一次负载波动把显示值带跑）。
