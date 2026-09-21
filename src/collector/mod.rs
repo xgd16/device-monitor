@@ -135,6 +135,12 @@ pub struct BatteryInfo {
     /// 已到达实际上限（接入电源且充电停滞）
     #[serde(default)]
     pub at_charge_limit: bool,
+    /// 学到的实际满容量（mAh）；0 = 还没量出来（放电积分推算）
+    #[serde(default)]
+    pub capacity_mah: f64,
+    /// 相对设计容量的健康度（%）；0 = 未知
+    #[serde(default)]
+    pub health_percent: f64,
 }
 
 fn default_battery_hundred() -> u8 {

@@ -94,8 +94,13 @@ export function batteryDisplayCapacity(battery: BatteryInfo) {
 }
 
 export function batteryCapacityHint(battery: BatteryInfo) {
-  if (!battery.is_degraded) return null;
-  return `上限 ${battery.effective_max_pct ?? 100}%`;
+  const parts: string[] = [];
+  // 真实健康度（由放电积分量出的实际容量算）比「能充到多高」有意义得多：
+  // 本机上限 99%，但实际容量只剩约七成 —— 只看上限会以为电池很新。
+  const health = battery.health_percent ?? 0;
+  if (health > 0) parts.push(`健康 ${Math.round(health)}%`);
+  if (battery.is_degraded) parts.push(`上限 ${battery.effective_max_pct ?? 100}%`);
+  return parts.length ? parts.join(' · ') : null;
 }
 
 export function fmtChargeUa(ua: number) {

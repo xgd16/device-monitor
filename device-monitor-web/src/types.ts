@@ -48,6 +48,10 @@ export interface BatteryInfo {
   display_capacity_pct?: number;
   is_degraded?: boolean;
   at_charge_limit?: boolean;
+  /** 学到的实际满容量（mAh），0/undefined = 还没量出来 */
+  capacity_mah?: number;
+  /** 相对设计容量的健康度（%），0/undefined = 未知 */
+  health_percent?: number;
 }
 
 export interface NetworkInterface {

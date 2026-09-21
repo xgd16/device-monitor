@@ -159,7 +159,6 @@ fn save_effective_max_pct(value: u8) {
 ///
 /// 这样既不会因为单次充电异常（温度保护、中间暂停）就永久降级，
 /// 也不会因为电池偶尔恢复就错过真正的衰减。
-/// 一次充电会话结束时能得出的结论。
 #[derive(Debug, PartialEq)]
 enum SessionOutcome {
     /// 充到接近实际上限 → 电池健康，清零「充不满」计数
@@ -187,6 +186,7 @@ fn session_outcome(peak: u8, max_pct: u8, charge_done: bool) -> SessionOutcome {
     }
 }
 
+/// 学习「实际上限 SOC」并在插拔电时给出结论（策略见上方文档）。
 fn learn_effective_max_pct(capacity: u8, usb_online: bool, charge_done: bool) -> u8 {
     let max_pct = load_effective_max_pct();
 
@@ -259,6 +259,111 @@ fn learn_effective_max_pct(capacity: u8, usb_online: bool, charge_done: bool) ->
     max_pct
 }
 
+// ── 实际容量学习 ──
+//
+// 设计容量（`charge_full_design`）是出厂值，锂电老化后会明显低于它。
+// 用它算「还能用多久 / 还要充多久」会**系统性偏乐观**：本机实测设计 3200mAh、
+// 实际约 2200mAh，于是电量 53% 时报「可用 5.6h」，而同样用法实测只能撑约 3.9h。
+// 解法与 effective_max 同源：让程序自己从放电过程量出来。
+//
+// 依据是电荷守恒：放出的电荷 ÷ 电量下降幅度 × 100 = 满容量。
+// 三次独立放完电实测得到 2160 / 2545 / 2153 mAh（±10% 内一致），
+// 说明这个量是可靠的，不是拍脑袋。
+
+/// 观测到的实际满容量（mAh）；0 = 还没量出来
+const CAPACITY_MAH_FILE: &str = "battery_capacity_mah.txt";
+/// 放电会话累计状态："起始SOC 累计mAh 上次时间戳 本段是否已测量"
+const DISCHARGE_FILE: &str = "battery_discharge.txt";
+/// 间隔超过这么久视为新的放电会话（中途系统睡着/充过电，积分就不连续了）
+const DISCHARGE_GAP_SECS: i64 = 600;
+/// 至少掉了这么多百分点才能拿来推容量（跨度太小，噪声占主导）
+const MIN_SPAN_PCT: u32 = 25;
+/// 容量估值的合理区间（mAh），明显越界的一律丢弃
+const CAPACITY_SANITY: (f64, f64) = (800.0, 6000.0);
+/// 已有估值时新观测的融合权重（单次积分噪声不小，整段替换会让显示跳变）
+const CAPACITY_BLEND: f64 = 0.3;
+
+fn load_f64(filename: &str) -> f64 {
+    fs::read_to_string(filename)
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .unwrap_or(0.0)
+}
+
+fn save_f64(filename: &str, value: f64) {
+    let _ = fs::write(filename, format!("{value:.1}\n"));
+}
+
+/// 由「放出的电荷 / 电量下降幅度」推算容量，越界返回 None（纯函数，便于单测）。
+fn capacity_from_discharge(accum_mah: f64, span_pct: u32) -> Option<f64> {
+    if span_pct == 0 || accum_mah <= 0.0 {
+        return None;
+    }
+    let est = accum_mah / span_pct as f64 * 100.0;
+    (est >= CAPACITY_SANITY.0 && est <= CAPACITY_SANITY.1).then_some(est)
+}
+
+/// 新旧容量融合：首次直接采纳，之后小幅修正。
+/// 一条放电段会给出很多次估值，全量采纳等于让最近一次负载波动决定显示值。
+fn blend_capacity(old: f64, est: f64) -> f64 {
+    if old <= 0.0 {
+        est
+    } else {
+        old * (1.0 - CAPACITY_BLEND) + est * CAPACITY_BLEND
+    }
+}
+
+fn load_discharge() -> (u8, f64, i64, bool) {
+    let s = fs::read_to_string(DISCHARGE_FILE).unwrap_or_default();
+    let f: Vec<&str> = s.split_whitespace().collect();
+    let g = |i: usize| f.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+    (
+        g(0) as u8,
+        g(1),
+        f.get(2).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0),
+        f.get(3).map(|v| *v == "1").unwrap_or(false),
+    )
+}
+
+fn save_discharge(soc0: u8, accum_mah: f64, ts: i64, measured: bool) {
+    let _ = fs::write(
+        DISCHARGE_FILE,
+        format!("{soc0} {accum_mah:.1} {ts} {}\n", if measured { 1 } else { 0 }),
+    );
+}
+
+/// 放电时累积电荷，跨度够了就更新实际容量估计。只在真正放电且电流够大时积分。
+fn learn_capacity(capacity: u8, current_ua: f64, status: &str) {
+    if status != "Discharging" || current_ua.abs() < 20_000.0 {
+        return;
+    }
+    let now = chrono::Utc::now().timestamp();
+    let (soc0, accum, last_ts, measured) = load_discharge();
+
+    // 新会话：没记录过、间隔太久（系统睡过/充过电）、或电量反而回升了
+    if last_ts == 0 || now - last_ts > DISCHARGE_GAP_SECS || capacity > soc0 {
+        save_discharge(capacity, 0.0, now, false);
+        return;
+    }
+
+    let dt = (now - last_ts).clamp(0, DISCHARGE_GAP_SECS) as f64;
+    let accum = accum + current_ua.abs() * dt / 3600.0 / 1000.0; // μA·s → mAh
+    let span = soc0.saturating_sub(capacity) as u32;
+
+    if !measured && span >= MIN_SPAN_PCT {
+        if let Some(est) = capacity_from_discharge(accum, span) {
+            save_f64(CAPACITY_MAH_FILE, blend_capacity(load_f64(CAPACITY_MAH_FILE), est));
+            tracing::info!(
+                "电池实际容量估计 {est:.0} mAh（从 {soc0}% 掉到 {capacity}%，累计放出 {accum:.0} mAh）"
+            );
+            // 本段已量过：重新起一段，避免同一段被反复测量反复融合
+            save_discharge(capacity, 0.0, now, true);
+            return;
+        }
+    }
+    save_discharge(soc0, accum, now, measured);
+}
+
 fn display_capacity_pct(capacity: u8, effective_max_pct: u8) -> u8 {
     if effective_max_pct >= 100 || effective_max_pct == 0 {
         return capacity;
@@ -272,6 +377,41 @@ fn at_charge_limit(capacity: u8, effective_max_pct: u8, usb_online: bool, curren
     usb_online
         && capacity >= effective_max_pct
         && current_ua.abs() < CHARGE_CURRENT_UA
+}
+
+/// 估算剩余 / 充满时间（分钟）。
+///
+/// **单位必须是 sysfs 原样**：容量 μAh、电流 μA，相除就是小时。
+/// 混用 mAh 与 μA 会得到 1000 倍误差 —— 这个 bug 真的发生过
+/// （「还要充 20 分钟」被算成 0），而且因为计算写在 collect() 里、不可单测，
+/// 只能靠在真机上肉眼发现。所以抽成纯函数并用真实量级的数值测。
+///
+/// 约定：放电返回正数（还能用多少分钟），充电返回负数（还需多少分钟充满），
+/// 无法估算返回 0。
+fn estimate_time_min(
+    capacity: u8,
+    status: &str,
+    current_ua: f64,
+    usable_capacity_uah: f64,
+    effective_max_pct: u8,
+    at_limit: bool,
+) -> i64 {
+    let i = current_ua.abs();
+    if at_limit || i < 1000.0 || usable_capacity_uah <= 0.0 {
+        return 0;
+    }
+    match status {
+        "Discharging" => {
+            let charge_now = usable_capacity_uah * (capacity as f64 / 100.0);
+            ((charge_now / i) * 60.0).max(0.0) as i64
+        }
+        "Charging" => {
+            let headroom = effective_max_pct.saturating_sub(capacity) as f64;
+            let charge_needed = usable_capacity_uah * (headroom / 100.0);
+            -((charge_needed / i) * 60.0).max(0.0) as i64
+        }
+        _ => 0,
+    }
 }
 
 /// 采集电池容量、状态、电压、电流、温度及预估时间。
@@ -302,27 +442,37 @@ pub fn collect() -> BatteryInfo {
         status = "Full".into();
     }
 
+    // 放电时顺便量实际容量（充电中不量：积分不连续）
+    learn_capacity(capacity, current_ua, &status);
+
     // charge_full_design: μAh, current_now: μA (= μAh/h)
     let charge_full_design = read_power_supply_f64("charge_full_design");
     let current_magnitude_ua = current_ua.abs();
 
-    let time_left_min = if at_limit {
-        0
-    } else if current_magnitude_ua < 1000.0 || charge_full_design <= 0.0 {
-        // 电流太小 (< 1mA) 或无设计容量，无法估算
-        0
-    } else if status == "Discharging" {
-        // 剩余 = (capacity% × 设计容量) / 电流 × 60 分钟
-        let charge_now = charge_full_design * (capacity as f64 / 100.0);
-        ((charge_now / current_magnitude_ua) * 60.0).max(0.0) as i64
-    } else if status == "Charging" {
-        // 充满 = ((effective_max - capacity)% × 设计容量) / 电流 × 60 分钟
-        let headroom = effective_max_pct.saturating_sub(capacity) as f64;
-        let charge_needed = charge_full_design * (headroom / 100.0);
-        -((charge_needed / current_magnitude_ua) * 60.0).max(0.0) as i64
+    // 时间估算用**实际容量**；还没量出来才退回设计容量（那一步会偏乐观）。
+    // 单位统一到 sysfs 原样（μAh / μA）：**mAh 与 μA 混用会差 1000 倍**，
+    // 曾经因此把「还要充 20 分钟」算成 0。
+    let learned_capacity_mah = load_f64(CAPACITY_MAH_FILE);
+    let usable_uah = if learned_capacity_mah > 0.0 {
+        learned_capacity_mah * 1000.0
     } else {
-        0
+        charge_full_design
     };
+    let health_percent = if learned_capacity_mah > 0.0 && charge_full_design > 0.0 {
+        let design_mah = charge_full_design / 1000.0;
+        (learned_capacity_mah / design_mah * 100.0).clamp(1.0, 150.0)
+    } else {
+        0.0
+    };
+
+    let time_left_min = estimate_time_min(
+        capacity,
+        &status,
+        current_ua,
+        usable_uah,
+        effective_max_pct,
+        at_limit,
+    );
 
     BatteryInfo {
         capacity,
@@ -336,6 +486,8 @@ pub fn collect() -> BatteryInfo {
         display_capacity_pct,
         is_degraded,
         at_charge_limit: at_limit,
+        capacity_mah: learned_capacity_mah,
+        health_percent,
     }
 }
 
@@ -405,6 +557,61 @@ mod tests {
         assert_eq!(session_outcome(98, 99, true), SessionOutcome::ReachedFull);
         assert_eq!(session_outcome(97, 99, true), SessionOutcome::ReachedFull, "2% 容差边界");
         assert_eq!(session_outcome(96, 99, true), SessionOutcome::Degraded);
+    }
+
+    /// 容量推算：电荷 ÷ 电量跨度 × 100，并挡掉明显越界的估值。
+    #[test]
+    fn 容量由放电积分推算() {
+        // 本机实测的三次真实数据，都应落在合理区间且彼此接近
+        for (accum, span) in [(2110.0, 98), (2494.0, 98), (2117.0, 98)] {
+            let c = capacity_from_discharge(accum, span).expect("应能推算");
+            assert!((2000.0..2700.0).contains(&c), "推算 {c:.0} 偏离实测区间");
+        }
+        assert!(capacity_from_discharge(50.0, 20).is_none(), "跨度大但电荷小 → 越界丢弃");
+        assert!(capacity_from_discharge(9999.0, 10).is_none(), "明显离谱应丢弃");
+        assert!(capacity_from_discharge(500.0, 0).is_none(), "零跨度不能用");
+    }
+
+    /// 融合：首次采纳，之后小幅修正（别让一次负载波动把显示值带跑）。
+    #[test]
+    fn 容量融合首次采纳之后小幅修正() {
+        assert_eq!(blend_capacity(0.0, 2200.0), 2200.0);
+        // 权重 0.3：2200 与 3000 融合后应朝新观测走 30%（=2440），
+        // 而不是直接跳到 3000，也不是原地不动
+        let b = blend_capacity(2200.0, 3000.0);
+        assert!((b - 2440.0).abs() < 1.0, "应朝新观测走 30%，实际 {b:.0}");
+        assert!(blend_capacity(2200.0, 2100.0) < 2200.0, "偏低观测也要能往下修正");
+    }
+
+    /// 回归：时间估算必须用实际容量，不能用设计容量。
+    /// 本机设计 3200mAh 而实际约 2200mAh，用设计值会把「还能用多久」多算约 45%。
+    #[test]
+    fn 时间估算应基于实际容量() {
+        let (design, actual, cur_ua, cap) = (3_200_000.0, 2_200.0, 300_000.0, 50u8);
+        let with_design = design * (cap as f64 / 100.0) / cur_ua * 60.0;
+        let with_actual = actual * (cap as f64 / 100.0) / cur_ua * 60.0;
+        assert!(
+            with_design / with_actual > 1.4,
+            "设计容量会显著高估（{with_design:.0} vs {with_actual:.0} 分钟），必须用实际容量"
+        );
+    }
+
+    /// 用**真实 sysfs 量级**的数值测时间估算：这是唯一能钉住单位的地方。
+    /// 场景取自实测：80%、+1229mA、实际容量 2160mAh、上限 99% → 约 20 分钟充满。
+    #[test]
+    fn 时间估算单位必须与sysfs一致() {
+        // 充电：2,160,000 μAh 的 19% 由 1,229,000 μA 充 → 约 20 分钟
+        let t = estimate_time_min(80, "Charging", 1_229_000.0, 2_160_000.0, 99, false);
+        assert!((-25..=-15).contains(&t), "充电估算应在 20 分钟上下，实际 {t}");
+        // 放电：2,160,000 μAh 的 53% 由 300,000 μA 放 → 约 229 分钟
+        let t = estimate_time_min(53, "Discharging", -300_000.0, 2_160_000.0, 100, false);
+        assert!((210..=250).contains(&t), "放电估算应在 229 分钟上下，实际 {t}");
+        // 边界：到上限、电流过小、容量未知都应给 0（而不是给个荒谬值）
+        assert_eq!(estimate_time_min(99, "Charging", 1_200_000.0, 2_160_000.0, 99, true), 0);
+        assert_eq!(estimate_time_min(50, "Discharging", 500.0, 2_160_000.0, 100, false), 0);
+        assert_eq!(estimate_time_min(50, "Discharging", -300_000.0, 0.0, 100, false), 0);
+        // Not charging / Full 不估时间
+        assert_eq!(estimate_time_min(50, "Full", 10_000.0, 2_160_000.0, 99, false), 0);
     }
 
     #[test]

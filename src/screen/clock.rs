@@ -1386,8 +1386,16 @@ fn battery_card(c: &mut Canvas, p: &Pane, o: &crate::collector::SystemOverview) 
         x,
         p.y + 214,
         &format!(
-            "温度 {:.1}°C · 容量上限 {}%{}",
+            // 「容量上限」是电量能充到多高，**不是电池健康度**（本机上限 99%
+            // 而真实容量只剩约七成，两个数并列极易被读成「电池很新」）。
+            // 健康度用放电积分量出来的实际容量算，量不出来就不显示这一项。
+            "温度 {:.1}°C · {}上限 {}%{}",
             b.temp_celsius,
+            if b.health_percent > 0.0 {
+                format!("健康 {:.0}%（实际 {:.1}Ah） · ", b.health_percent, b.capacity_mah / 1000.0)
+            } else {
+                String::new()
+            },
             b.effective_max_pct,
             if b.is_degraded {
                 " · 容量已下降"
