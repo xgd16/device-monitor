@@ -12,8 +12,10 @@ const BATTERY_SUPPLY: &str = "qcom-battery";
 const CHARGE_CURRENT_UA: f64 = 100_000.0;
 /// 判定为放电的最小电流（μA，负值）
 const DISCHARGE_CURRENT_UA: f64 = -30_000.0;
-/// 判定电池健康衰减：实际上限低于此值
-const DEGRADED_MAX_THRESHOLD: u8 = 98;
+/// 判定电池健康衰减：实际上限低于此值。
+/// 学习逻辑与 `is_degraded` 共用这一个阈值，避免两处判断不一致
+/// （曾出现「UI 说老化、学习器说健康」的矛盾）。
+const DEGRADED_MAX_THRESHOLD: u8 = 97;
 /// 连续多少次充电都充不满才算真衰减
 const MIN_DEGRADE_STREAK: u8 = 3;
 const EFFECTIVE_MAX_FILE: &str = "battery_effective_max.txt";
@@ -21,6 +23,9 @@ const EFFECTIVE_MAX_FILE: &str = "battery_effective_max.txt";
 const SESSION_PEAK_FILE: &str = "battery_session_peak.txt";
 /// 连续充不满的次数（只有拔掉充电器才算一次）
 const LOW_STREAK_FILE: &str = "battery_low_streak.txt";
+/// 本次充电会话里，充电器是否把充电走完了（内核报 Full，或电流收尾到阈值以下）。
+/// 这是区分「电池真的充不满」和「用户中途拔了」的唯一依据。
+const SESSION_DONE_FILE: &str = "battery_session_done.txt";
 
 /// 读取指定 power_supply 节点的字符串值。
 fn read_supply(supply: &str, field: &str) -> String {
@@ -111,13 +116,28 @@ fn save_u8(filename: &str, value: u8) {
     let _ = fs::write(filename, format!("{}\n", value));
 }
 
+/// 文件值 → 实际上限的纯转换，单独抽出来是为了能直接单测。
+///
+/// **缺失/损坏（0）必须回落 100（不缩放）**。旧写法是
+/// `load_u8(f).clamp(50,100).max(50)`，文件缺失时得到 50 ——
+/// 于是 `display_capacity_pct` 把电量**翻倍**显示（48% 显示成 96%），
+/// 还会被 `is_degraded` 误判成老化电池。缩放只在「确实学到过更低的上限」时
+/// 才允许发生，默认状态必须是透明的。
+fn effective_max_from_file(raw: u8) -> u8 {
+    if raw == 0 {
+        100
+    } else {
+        raw.clamp(50, 100)
+    }
+}
+
 fn load_effective_max_pct() -> u8 {
     if let Ok(env) = std::env::var("BATTERY_EFFECTIVE_MAX_PCT") {
         if let Ok(v) = env.parse::<u8>() {
             return v.clamp(50, 100);
         }
     }
-    load_u8(EFFECTIVE_MAX_FILE).clamp(50, 100).max(50)
+    effective_max_from_file(load_u8(EFFECTIVE_MAX_FILE))
 }
 
 fn save_effective_max_pct(value: u8) {
@@ -139,12 +159,35 @@ fn save_effective_max_pct(value: u8) {
 ///
 /// 这样既不会因为单次充电异常（温度保护、中间暂停）就永久降级，
 /// 也不会因为电池偶尔恢复就错过真正的衰减。
-fn learn_effective_max_pct(
-    capacity: u8,
-    usb_online: bool,
-    _current_ua: f64,
-    status: &str,
-) -> u8 {
+/// 一次充电会话结束时能得出的结论。
+#[derive(Debug, PartialEq)]
+enum SessionOutcome {
+    /// 充到接近实际上限 → 电池健康，清零「充不满」计数
+    ReachedFull,
+    /// 充电器走完了充电，容量却明显低于上限 → 衰减证据
+    Degraded,
+    /// 中途拔掉充电器 → 什么都说明不了（低峰值可能只是用户拔早了）
+    Inconclusive,
+}
+
+/// 判断本次会话的结论。
+///
+/// **只凭「充电峰值低」判衰减是错的**：用户没充满就拔掉同样是低峰值。
+/// 本机实测到的典型序列就是「没电→插上充到 4x%→拔掉用」，
+/// 连来三次就会把 effective_max 下调到 4x%，之后电量按比例放大显示
+/// （真实 45% 显示成 100%），而且再也回不去。区分依据只有一个：
+/// **充电器有没有把充电走完**（内核报 Full，或电流收尾到阈值以下）。
+fn session_outcome(peak: u8, max_pct: u8, charge_done: bool) -> SessionOutcome {
+    if peak.saturating_add(2) >= max_pct {
+        SessionOutcome::ReachedFull
+    } else if charge_done {
+        SessionOutcome::Degraded
+    } else {
+        SessionOutcome::Inconclusive
+    }
+}
+
+fn learn_effective_max_pct(capacity: u8, usb_online: bool, charge_done: bool) -> u8 {
     let max_pct = load_effective_max_pct();
 
     // ── [规则 1] raw capacity 超过当前上限 → 立即上调 ──
@@ -164,46 +207,53 @@ fn learn_effective_max_pct(
             return max_pct;
         }
 
-        // 充电会话结束，检查峰值
-        // 拔充电器时 peak=0 已被上面的 guard 拦截，不会进来
-        if peak < max_pct.saturating_sub(2) {
-            // 本次充电没到上限 → 累加低峰值计数
-            let streak = load_u8(LOW_STREAK_FILE) + 1;
-            save_u8(LOW_STREAK_FILE, streak);
-
-            if streak >= MIN_DEGRADE_STREAK {
-                // 连续 N 次都充不满 → 真衰减
-                println!(
-                    "[battery] degradation confirmed: {}% peak seen {} times, lowering max {}% → {}%",
-                    peak, streak, max_pct, peak,
-                );
-                save_effective_max_pct(peak);
-            } else {
-                println!(
-                    "[battery] low peak {}% (streak {}/{})",
-                    peak, streak, MIN_DEGRADE_STREAK,
-                );
+        // 充电会话结束（拔充电器时 peak=0 已被上面的 guard 拦截，不会进来）
+        let done = load_u8(SESSION_DONE_FILE) == 1;
+        match session_outcome(peak, max_pct, done) {
+            SessionOutcome::ReachedFull => {
+                let streak = load_u8(LOW_STREAK_FILE);
+                if streak > 0 {
+                    println!("[battery] good charge cycle (peak={}%), cleared low streak", peak);
+                }
+                save_u8(LOW_STREAK_FILE, 0);
             }
-        } else {
-            // 这次充满（或接近）了 → 清零低峰值计数
-            let streak = load_u8(LOW_STREAK_FILE);
-            if streak > 0 {
-                println!("[battery] good charge cycle (peak={}%), cleared low streak", peak);
+            SessionOutcome::Degraded => {
+                let streak = load_u8(LOW_STREAK_FILE) + 1;
+                save_u8(LOW_STREAK_FILE, streak);
+                if streak >= MIN_DEGRADE_STREAK {
+                    // 连续 N 次「充电器走完却只到这么点」→ 真衰减
+                    println!(
+                        "[battery] degradation confirmed: charger finished at {}% {} times, lowering max {}% → {}%",
+                        peak, streak, max_pct, peak,
+                    );
+                    save_effective_max_pct(peak);
+                } else {
+                    println!(
+                        "[battery] low peak {}% with charger finished (streak {}/{})",
+                        peak, streak, MIN_DEGRADE_STREAK,
+                    );
+                }
             }
-            save_u8(LOW_STREAK_FILE, 0);
+            SessionOutcome::Inconclusive => {
+                // 用户中途拔掉的，不计入也不清零：它既不能证明衰减，
+                // 也不该顶掉之前累积的衰减证据
+                println!("[battery] session ended early at {}%, not counted", peak);
+            }
         }
 
-        // 重置会话峰值
+        // 重置会话状态
         save_u8(SESSION_PEAK_FILE, 0);
+        save_u8(SESSION_DONE_FILE, 0);
         return max_pct;
     }
 
-    // ── [规则 3] 正在充电：追踪会话峰值 ──
-    if status == "Charging" || status == "Not charging" || status == "Full" {
-        let peak = load_u8(SESSION_PEAK_FILE);
-        if capacity > peak {
-            save_u8(SESSION_PEAK_FILE, capacity);
-        }
+    // ── [规则 3] 插着电：追踪会话峰值，并记录充电器是否把充电走完 ──
+    let peak = load_u8(SESSION_PEAK_FILE);
+    if capacity > peak {
+        save_u8(SESSION_PEAK_FILE, capacity);
+    }
+    if charge_done {
+        save_u8(SESSION_DONE_FILE, 1);
     }
 
     max_pct
@@ -236,7 +286,14 @@ pub fn collect() -> BatteryInfo {
     let usb_online = is_external_power_online();
     let mut status = normalize_status(&raw_status, current_ua, usb_online);
 
-    let effective_max_pct = learn_effective_max_pct(capacity, usb_online, current_ua, &status);
+    // 「充电器已把充电走完」：内核报 Full，或电流已收尾且容量贴近当前上限。
+    // 注意用**学习前**的上限来判断，否则与 learn 内部读到的上限不一致
+    let max_before = load_effective_max_pct();
+    let charge_done = usb_online
+        && (raw_status == "Full"
+            || (current_ua.abs() < CHARGE_CURRENT_UA && capacity.saturating_add(2) >= max_before));
+
+    let effective_max_pct = learn_effective_max_pct(capacity, usb_online, charge_done);
     let is_degraded = effective_max_pct < DEGRADED_MAX_THRESHOLD;
     let at_limit = at_charge_limit(capacity, effective_max_pct, usb_online, current_ua);
     let display_capacity_pct = display_capacity_pct(capacity, effective_max_pct);
@@ -319,6 +376,35 @@ mod tests {
     fn display_capacity_scales_to_effective_max() {
         assert_eq!(display_capacity_pct(97, 97), 100);
         assert_eq!(display_capacity_pct(85, 97), 88);
+    }
+
+    /// 回归：文件缺失/损坏时**必须不缩放**。
+    /// 旧默认值 50 会把电量翻倍显示（48% → 96%）并误报老化。
+    #[test]
+    fn 上限文件缺失时回落为不缩放() {
+        assert_eq!(effective_max_from_file(0), 100, "缺失/损坏必须回落不缩放");
+        assert_eq!(effective_max_from_file(99), 99);
+        assert_eq!(effective_max_from_file(50), 50);
+        assert_eq!(effective_max_from_file(200), 100, "越界要夹回合法区间");
+        // 语义对照：不缩放时显示值 == 真实值；若上限是 50 就会翻倍
+        assert_eq!(display_capacity_pct(48, effective_max_from_file(0)), 48);
+        assert_eq!(display_capacity_pct(48, 50), 96, "这就是旧默认值造成的翻倍");
+    }
+
+    /// 回归：中途拔掉充电器**不能**算作衰减证据。
+    /// 只凭「峰值低」判断的话，用户没充满就拔掉三次就会把上限下调到低峰值，
+    /// 之后电量被按比例放大（真实 45% 显示 100%）且再也回不去。
+    #[test]
+    fn 中途拔掉不算衰减证据() {
+        assert_eq!(session_outcome(50, 99, false), SessionOutcome::Inconclusive,
+                   "充电器没走完 → 只是用户拔早了");
+        assert_eq!(session_outcome(50, 99, true), SessionOutcome::Degraded,
+                   "充电器走完却只到 50% → 真衰减");
+        assert_eq!(session_outcome(99, 99, false), SessionOutcome::ReachedFull,
+                   "充到接近上限 → 健康（无论是否拔掉）");
+        assert_eq!(session_outcome(98, 99, true), SessionOutcome::ReachedFull);
+        assert_eq!(session_outcome(97, 99, true), SessionOutcome::ReachedFull, "2% 容差边界");
+        assert_eq!(session_outcome(96, 99, true), SessionOutcome::Degraded);
     }
 
     #[test]
