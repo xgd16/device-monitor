@@ -73,36 +73,30 @@ fn is_external_power_online() -> bool {
 }
 
 /// 结合 sysfs status、电流方向与外部电源，修正充电状态。
+///
+/// **电流方向优先于内核 status**。内核 pmi8998-fg 给出的 status 会与电流方向
+/// 矛盾：实测 2026-09-22 12:41~17:17 共 228 条样本（当日 1.34%）里，手机插着
+/// 充电器、电流 +250~+362mA、电量从 59% 涨到 83%，raw status 却是 "Discharging"。
+/// 原样透传的后果有三个，都不轻：
+///   1. 屏幕/网页显示「放电」而实际在充电；
+///   2. 低电量告警判定条件是 `status != "Charging"` → 充电中误报低电；
+///   3. 容量学习把充电电流当放电积分 → 学出来的容量偏大。
+/// 判「充电」时额外要求外部电源在线：没有电源却读到正电流只可能是传感器毛刺。
 fn normalize_status(raw_status: &str, current_ua: f64, usb_online: bool) -> String {
+    if usb_online && current_ua > CHARGE_CURRENT_UA {
+        return "Charging".into();
+    }
+    if current_ua < DISCHARGE_CURRENT_UA {
+        // 插着电源也可能是放电：充电器带不动负载，或刚插上还没起充
+        return "Discharging".into();
+    }
+    if raw_status == "Full" {
+        return "Full".into();
+    }
     if !usb_online {
-        return if raw_status == "Full" {
-            "Full".into()
-        } else {
-            "Discharging".into()
-        };
+        return "Discharging".into();
     }
-
-    match raw_status {
-        "Full" => "Full".into(),
-        "Not charging" => "Not charging".into(),
-        "Charging" => {
-            if current_ua < CHARGE_CURRENT_UA {
-                "Not charging".into()
-            } else {
-                "Charging".into()
-            }
-        }
-        "Discharging" => "Discharging".into(),
-        _ => {
-            if current_ua > CHARGE_CURRENT_UA {
-                "Charging".into()
-            } else if current_ua < DISCHARGE_CURRENT_UA {
-                "Discharging".into()
-            } else {
-                "Not charging".into()
-            }
-        }
-    }
+    "Not charging".into()
 }
 
 fn load_u8(filename: &str) -> u8 {
@@ -344,7 +338,9 @@ fn save_discharge(soc0: u8, accum_mah: f64, ts: i64, measured: bool) {
 
 /// 放电时累积电荷，跨度够了就更新实际容量估计。只在真正放电且电流够大时积分。
 fn learn_capacity(capacity: u8, current_ua: f64, status: &str) {
-    if status != "Discharging" || current_ua.abs() < 20_000.0 {
+    // 要求**电流为负**而不只是 status == "Discharging"：状态字段曾经漏过
+    // 充电电流进来，那会把容量学大。
+    if status != "Discharging" || current_ua >= -20_000.0 {
         return;
     }
     let now = chrono::Utc::now().timestamp();
@@ -519,6 +515,23 @@ mod tests {
             normalize_status("Charging", 50_000.0, true),
             "Not charging"
         );
+    }
+
+    /// 回归：内核 status 与实际电流方向矛盾时，**以电流为准**。
+    /// 数值取自 09-22 15:32~17:00 的真实样本（当时手机正在充电）。
+    #[test]
+    fn 内核status与电流矛盾时以电流为准() {
+        // 插着充电器、电流 +362/+250mA、电量在涨，raw 却报 "Discharging"
+        assert_eq!(normalize_status("Discharging", 362_000.0, true), "Charging");
+        assert_eq!(normalize_status("Discharging", 250_000.0, true), "Charging");
+        assert_eq!(normalize_status("Discharging", 331_000.0, true), "Charging");
+        // 反过来：raw 说充电但电流在流出 → 放电（充电器带不动）
+        assert_eq!(normalize_status("Charging", -300_000.0, true), "Discharging");
+        // 没有外部电源时读到正电流 = 传感器毛刺，不能判成充电
+        assert_eq!(normalize_status("Discharging", 200_000.0, false), "Discharging");
+        // 真正的满电与收尾不受影响
+        assert_eq!(normalize_status("Full", 10_000.0, true), "Full");
+        assert_eq!(normalize_status("Charging", 50_000.0, true), "Not charging");
     }
 
     #[test]
