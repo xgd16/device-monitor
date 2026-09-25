@@ -8,6 +8,7 @@ use std::fs::File;
 use std::io::Read;
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -122,10 +123,54 @@ pub fn up_down_labels() -> (&'static str, &'static str) {
 fn toggle_rotation() {
     let next = !ROT270.load(Ordering::Relaxed);
     ROT270.store(next, Ordering::Relaxed);
+    notify();
     let name = if next { "rot270" } else { "rot90" };
     match crate::store::settings::save_rotation(name) {
         Ok(()) => tracing::info!("hotkeys: KEY_VOLUMEUP 双击 → 屏幕朝向翻转为 {name}"),
         Err(e) => tracing::warn!("hotkeys: 屏幕朝向已翻转但保存失败: {e}"),
+    }
+}
+
+// ── 唤醒通道 ──
+//
+// 渲染循环原来「死睡 1000ms 再采样页面状态」，按键后平均白等 500ms、最多
+// 1000ms 才重绘 —— 用户实测翻页延迟超过 1 秒，其中一半是这里。
+//
+// 用 eventfd 而不是 Condvar：SIGUSR1/2 处理器也会走 `step_atomic()`，
+// 而信号处理器里碰 Mutex 可能与自己（持锁的那个线程）死锁；
+// `write(2)` 是 async-signal-safe 的，eventfd 因此两种调用路径都安全。
+static WAKE_FD: OnceLock<libc::c_int> = OnceLock::new();
+
+fn wake_fd() -> libc::c_int {
+    *WAKE_FD.get_or_init(|| unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) })
+}
+
+/// 通知渲染循环「页面/朝向变了，立刻重绘」。
+fn notify() {
+    let fd = wake_fd();
+    if fd < 0 {
+        return;
+    }
+    let one: u64 = 1;
+    unsafe { libc::write(fd, &one as *const u64 as *const libc::c_void, 8) };
+}
+
+/// 等「页面/朝向变化」或超时（毫秒）。返回 `true` 表示是被唤醒的。
+/// 没被唤醒就是超时，调用方照常做每秒的活（秒针、数据刷新）。
+pub fn wait_change(timeout_ms: i32) -> bool {
+    let fd = wake_fd();
+    if fd < 0 {
+        thread::sleep(Duration::from_millis(timeout_ms.max(0) as u64));
+        return false;
+    }
+    let mut p = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    let n = unsafe { libc::poll(&mut p, 1, timeout_ms) };
+    if n > 0 {
+        let mut buf = [0u8; 8];
+        unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, 8) };
+        true
+    } else {
+        false
     }
 }
 
@@ -137,6 +182,7 @@ pub fn page() -> u8 {
 /// 直接设置页面（API/调试用）。
 pub fn set_page(p: u8) {
     PAGE.store(p % PAGE_COUNT, Ordering::Relaxed);
+    notify();
 }
 
 /// 翻页：`delta` 为 +1（下一页）/ -1（上一页），循环。
@@ -144,12 +190,14 @@ fn step(delta: i32) {
     let cur = PAGE.load(Ordering::Relaxed) as i32;
     let next = (cur + delta).rem_euclid(PAGE_COUNT as i32) as u8;
     PAGE.store(next, Ordering::Relaxed);
+    notify();
 }
 
 /// 仅原子改页（async-signal-safe，供信号处理器调用）。
 fn step_atomic(delta: i32) {
     let cur = PAGE.load(Ordering::Relaxed) as i32;
     PAGE.store((cur + delta).rem_euclid(PAGE_COUNT as i32) as u8, Ordering::Relaxed);
+    notify();
 }
 
 extern "C" fn on_usr1(_: libc::c_int) {
@@ -329,6 +377,19 @@ mod tests {
 
     fn at(base: Instant, ms: u64) -> Instant {
         base + Duration::from_millis(ms)
+    }
+
+    /// 唤醒通道：无事件时按超时返回，`notify()` 之后立刻返回（不再等满超时）。
+    #[test]
+    fn 唤醒通道可立即打断等待() {
+        while wait_change(0) {}
+        let t = Instant::now();
+        assert!(!wait_change(30), "没有事件应超时返回 false");
+        assert!(t.elapsed().as_millis() >= 25, "超时时间要真的等够");
+        notify();
+        let t = Instant::now();
+        assert!(wait_change(1000), "有事件应立即返回 true");
+        assert!(t.elapsed().as_millis() < 200, "不该等满 1000ms");
     }
 
     /// 单击：窗口内没有第二下 → 窗口过期后兑现，且只兑现一次。

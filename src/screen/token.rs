@@ -12,6 +12,7 @@
 //! （Widget Dashboard + 语义色板 + 层次：标题 muted、主数值 emphasis 大字、元数据降级）。
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -362,6 +363,22 @@ fn http_get<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T, String> {
     serde_json::from_value(data).map_err(|e| format!("解析 {url} 的 data 失败: {e}"))
 }
 
+/// 切到 Token 页时请求尽快刷一次 REST。
+///
+/// **只能置标志，不能就地刷**：`refresh_http()` 走 ureq，单请求超时 6s、
+/// 一次还连发好几个；以前渲染线程在切页分支里同步调用它，网络一慢就把
+/// 「按键 → 翻页」整条路径堵住。现在由后台 feed 线程消费这个标志。
+static REFRESH_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// 请求后台线程尽快刷新一次（非阻塞，可在渲染线程调用）。
+pub fn request_refresh() {
+    REFRESH_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+fn take_refresh_request() -> bool {
+    REFRESH_REQUESTED.swap(false, Ordering::Relaxed)
+}
+
 /// 启动后台采集线程（HTTP 轮询 + WS 长连接），返回共享快照。
 pub fn start_feed() -> Arc<Mutex<TokenFeed>> {
     let feed = Arc::new(Mutex::new(TokenFeed::new()));
@@ -385,7 +402,10 @@ pub fn start_feed() -> Arc<Mutex<TokenFeed>> {
                 // 断线退避 3s，期间保持 REST 新鲜
                 for _ in 0..6 {
                     std::thread::sleep(Duration::from_millis(500));
-                    let due = last_http.elapsed().as_secs() >= HTTP_REFRESH_SECS;
+                    // 被「切到 Token 页」请求刷新时立刻刷；但至少隔 5s，
+                    // 避免用户连按翻页把接口刷爆
+                    let due = last_http.elapsed().as_secs() >= HTTP_REFRESH_SECS
+                        || (take_refresh_request() && last_http.elapsed().as_secs() >= 5);
                     if due {
                         if let Ok(mut f) = handle.lock() {
                             f.refresh_http();
@@ -437,7 +457,10 @@ fn ws_session(feed: &Arc<Mutex<TokenFeed>>, last_http: &mut Instant) -> Result<(
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
                 // 读超时：顺带看看 REST 是否需要刷新
-                let due = last_http.elapsed().as_secs() >= HTTP_REFRESH_SECS;
+                // （切到 Token 页的 request_refresh 标志也在这里消费，
+                //   否则 WS 正常连接时标志永远没人处理）
+                let due = last_http.elapsed().as_secs() >= HTTP_REFRESH_SECS
+                    || (take_refresh_request() && last_http.elapsed().as_secs() >= 5);
                 if due {
                     if let Ok(mut f) = feed.lock() {
                         f.refresh_http();

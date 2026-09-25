@@ -116,7 +116,11 @@ pub fn run(
     let mut cur_rot270 = crate::collector::hotkeys::rot270();
 
     loop {
-        std::thread::sleep(Duration::from_millis(1000));
+        // 等 1 秒，或被「按键翻了页/转了朝向」立刻唤醒。
+        //
+        // 以前是 `sleep(1000)` 然后才采样页面状态：按键落到两次采样之间就白等，
+        // 平均 500ms、最多 1000ms 才重绘。实测翻页延迟 673~1584ms，这里是主因之一。
+        crate::collector::hotkeys::wait_change(1000);
         let o = rx.borrow_and_update().clone();
 
         // ── 页面切换（音量键）──
@@ -124,11 +128,11 @@ pub fn run(
         if page != last_page {
             last_page = page;
             force_full = true;
-            // 切到 Token 页时若快照偏旧就立刻刷一次 REST
-            if let Ok(mut f) = tokens.lock() {
-                if f.http_at.map(|t| t.elapsed().as_secs() >= 5).unwrap_or(true) {
-                    f.refresh_http();
-                }
+            // Token 页数据偏旧时**只置个标志**让后台 feed 线程去刷 REST：
+            // refresh_http() 是 ureq 同步调用、单请求超时 6s、一次连发好几个，
+            // 就地刷会把「按键 → 翻页」这条路一起堵住。
+            if page == 1 {
+                token::request_refresh();
             }
             tracing::info!("screen: 切到页面 {}/{}", page + 1, crate::collector::hotkeys::PAGE_COUNT);
         }
@@ -188,11 +192,22 @@ pub fn run(
             }
         }
 
-        if o.timestamp != last_ts || force_full {
+        // 「数据该刷新了」和「画布该整屏重绘了」是两件事，必须分开：
+        //
+        // 以前只要 `force_full`（切页/转朝向/熄屏恢复/自愈）就顺带跑一次
+        // `aux.refresh()`，而它里面有 list_processes()（枚举 239 个进程）、
+        // 4 次 `systemctl is-active`、一次 DB 查询、磁盘与网络差分 ——
+        // 实测这一下约 580ms，全都压在按键响应上。切页并不需要重新采集这些，
+        // 复用上一份即可（数据本来每 refresh_secs 就更一次）。
+        let data_dirty = o.timestamp != last_ts;
+        if data_dirty {
             last_ts = o.timestamp;
-            let t0 = std::time::Instant::now();
             aux.refresh(&o, db.as_deref());
             hist.push(&o, &aux, layout::hist_cap(refresh_secs.load(Ordering::Relaxed)));
+        }
+
+        if data_dirty || force_full {
+            let t0 = std::time::Instant::now();
             if force_full {
                 screen.canvas.invalidate_all();
                 force_full = false;

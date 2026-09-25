@@ -453,7 +453,6 @@ pub fn collect() -> BatteryInfo {
 
     // charge_full_design: μAh, current_now: μA (= μAh/h)
     let charge_full_design = read_power_supply_f64("charge_full_design");
-    let current_magnitude_ua = current_ua.abs();
 
     // 时间估算用**实际容量**；还没量出来才退回设计容量（那一步会偏乐观）。
     // 单位统一到 sysfs 原样（μAh / μA）：**mAh 与 μA 混用会差 1000 倍**，

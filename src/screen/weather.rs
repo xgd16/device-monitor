@@ -178,14 +178,26 @@ wind_speed_10m,wind_direction_10m,precipitation\
 }
 
 fn fetch() -> Result<Weather, String> {
-    let out = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "20", "-H", "Accept: application/json", &url()])
-        .output()
-        .map_err(|e| format!("无法执行 curl: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("curl 退出码 {}", out.status.code().unwrap_or(-1)));
+    // 直连与走代理各试一次：链路抖动时（曾长期出现 curl exit 35 TLS
+    // unexpected eof）单次请求就放弃会让天气卡整刻钟显示「离线」。
+    let url = url();
+    let attempts: [Vec<&str>; 2] = [
+        vec!["-s", "--max-time", "20", "-H", "Accept: application/json", &url],
+        vec!["-s", "--max-time", "20", "--noproxy", "*", "-H", "Accept: application/json", &url],
+    ];
+    let mut last_err = String::new();
+    for args in attempts {
+        match std::process::Command::new("curl").args(&args).output() {
+            Ok(out) if out.status.success() => {
+                return parse_body(&String::from_utf8_lossy(&out.stdout));
+            }
+            Ok(out) => {
+                last_err = format!("curl 退出码 {}", out.status.code().unwrap_or(-1));
+            }
+            Err(e) => last_err = format!("无法执行 curl: {e}"),
+        }
     }
-    parse_body(&String::from_utf8_lossy(&out.stdout))
+    Err(last_err)
 }
 
 /// 解析 Open-Meteo 响应。抽成独立函数是为了能在测试里直接喂样本 JSON——

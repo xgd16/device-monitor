@@ -23,6 +23,7 @@ import yaml
 
 # 固定订阅地址（按顺序尝试，首个失败则回退）
 SUBSCRIPTION_URLS = [
+    "https://dy.0dy10.com/link/KKeSbQQ1cjFkNHPS?clash=2",
     "http://47.242.55.240/link/U6jzieNUGnBJbkGP?clash=2",
     "http://43.135.28.238/link/U6jzieNUGnBJbkGP?clash=2",
 ]
