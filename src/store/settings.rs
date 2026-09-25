@@ -62,3 +62,31 @@ pub fn save_rotation(rot: &str) -> std::io::Result<()> {
     }
     fs::write(ROTATION_FILE, format!("{rot}\n"))
 }
+
+// ── 物理屏主题 ──
+
+/// 物理屏配色主题：`dark`（默认，OLED 近黑底省电）/ `light`。
+/// 与朝向同属「按键驱动的显示状态」：双击音量下切换后落盘，重启保持。
+const THEME_FILE: &str = "theme.txt";
+
+/// 主题标识。存文件用字符串，避免以后新增主题时数字含义漂移。
+pub const THEME_CHOICES: &[&str] = &["dark", "light"];
+
+/// 读取主题；缺失或非法返回 `None`（由调用方按默认深色兜底）。
+pub fn load_theme() -> Option<String> {
+    fs::read_to_string(THEME_FILE)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| THEME_CHOICES.contains(&s.as_str()))
+}
+
+/// 保存主题。
+pub fn save_theme(theme: &str) -> std::io::Result<()> {
+    if !THEME_CHOICES.contains(&theme) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("主题仅支持 {THEME_CHOICES:?}"),
+        ));
+    }
+    fs::write(THEME_FILE, format!("{theme}\n"))
+}

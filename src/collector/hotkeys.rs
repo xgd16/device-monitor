@@ -1,4 +1,4 @@
-//! 音量键热键监听（用于切换物理屏页面）。
+//! 音量键热键监听（物理屏：单击切页 / 双击音量上翻转朝向 / 双击音量下切换深浅主题）。
 //!
 //! 不硬编码 event 编号：通过 `/sys/class/input/eventN/device/capabilities/key`
 //! 的 KEY 位图自动发现支持 KEY_VOLUMEUP(115) / KEY_VOLUMEDOWN(114) 的设备。
@@ -56,6 +56,45 @@ pub fn rot270() -> bool {
 /// 设置朝向（启动时按持久化值初始化，使屏上状态与这里一致）。
 pub fn set_rot270(v: bool) {
     ROT270.store(v, Ordering::Relaxed);
+}
+
+/// 物理屏主题：`false` = 深色（默认，OLED 近黑底省电），`true` = 浅色。
+/// 与 `ROT270` 同属「按键驱动的显示状态」，双击音量下切换后落盘（`theme.txt`）。
+static LIGHT: AtomicBool = AtomicBool::new(false);
+
+/// 当前是否为浅色主题（画布底层 `theme::resolve` 每次取色时读这里）。
+pub fn light() -> bool {
+    LIGHT.load(Ordering::Relaxed)
+}
+
+/// 设置主题状态（启动时按持久化值初始化，使屏上配色与这里一致）。
+pub fn set_light(v: bool) {
+    LIGHT.store(v, Ordering::Relaxed);
+}
+
+/// 页脚提示：双击音量下要切换的目标主题名（当前深色 → 提示「浅色」，反之亦然）。
+/// 与 `up_down_labels` 同理，屏上提示集中在一处取，别在三个页脚各写一套判断。
+pub fn theme_hint() -> &'static str {
+    if light() {
+        "深色"
+    } else {
+        "浅色"
+    }
+}
+
+/// 切换深/浅主题并落盘。
+fn toggle_theme() {
+    let next = !LIGHT.load(Ordering::Relaxed);
+    LIGHT.store(next, Ordering::Relaxed);
+    notify();
+    let name = if next { "light" } else { "dark" };
+    match crate::store::settings::save_theme(name) {
+        Ok(()) => tracing::info!(
+            "hotkeys: KEY_VOLUMEDOWN 双击 → 主题切换为{}（{name}）",
+            if next { "浅色" } else { "深色" }
+        ),
+        Err(e) => tracing::warn!("hotkeys: 主题已切换为 {name} 但保存失败: {e}"),
+    }
 }
 
 /// 「音量上」轻触判定：单击翻页，双击翻转朝向，共用一个键。
@@ -315,7 +354,8 @@ pub fn start_listener() {
                 return;
             }
 
-            let mut taps = TapTracker::default();
+            let mut taps_up = TapTracker::default();
+            let mut taps_down = TapTracker::default();
             loop {
                 let mut pfds: Vec<libc::pollfd> = fds
                     .iter()
@@ -325,46 +365,80 @@ pub fn start_listener() {
                 // 过期后尽快把待定的单击兑现。注意超时返回 0 时不能 `continue`，
                 // 否则待定单击永远等不到兑现。
                 let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, 50) };
-                for (i, p) in (0..if n > 0 { pfds.len() } else { 0 }).map(|i| (i, &pfds[i])) {
-                    if p.revents & libc::POLLIN == 0 {
-                        continue;
-                    }
-                    let (file, _, up, down) = &mut fds[i];
-                    let (up, down) = (*up, *down);
-                    loop {
-                        let mut buf = [0u8; std::mem::size_of::<InputEvent>()];
-                        match file.read_exact(&mut buf) {
-                            Ok(()) => {
-                                let ev: InputEvent = unsafe { std::mem::transmute(buf) };
-                                if ev.ev_type == EV_KEY && ev.ev_value == 1 {
-                                    // 音量上 = 往右（下一页）。方向必须和顶栏页签的
-                                    // 左右顺序一致：页签是 系统监控 → Token用量 → 时钟
-                                    // 从左往右排的，按键却让「上」往左走，用起来就是反的。
-                                    if ev.ev_code == KEY_VOLUMEUP && up {
-                                        if taps.tap(Instant::now()) {
-                                            toggle_rotation();
+                let mut dead: Vec<usize> = Vec::new();
+                if n > 0 {
+                    for i in 0..pfds.len() {
+                        let revents = pfds[i].revents;
+                        // 设备消失（uinput 虚拟设备被销毁、USB 拔出等）时 poll 会
+                        // 立即返回且带 POLLERR/POLLHUP —— 不移除就变成永久忙轮询
+                        if revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+                            dead.push(i);
+                            continue;
+                        }
+                        if revents & libc::POLLIN == 0 {
+                            continue;
+                        }
+                        let (file, _, up, down) = &mut fds[i];
+                        let (up, down) = (*up, *down);
+                        let mut fatal = false;
+                        loop {
+                            let mut buf = [0u8; std::mem::size_of::<InputEvent>()];
+                            match file.read_exact(&mut buf) {
+                                Ok(()) => {
+                                    let ev: InputEvent = unsafe { std::mem::transmute(buf) };
+                                    if ev.ev_type == EV_KEY && ev.ev_value == 1 {
+                                        // 音量上 = 往右（下一页）。方向必须和顶栏页签的
+                                        // 左右顺序一致：页签是 系统监控 → Token用量 → 时钟
+                                        // 从左往右排的，按键却让「上」往左走，用起来就是反的。
+                                        // 双击音量上 = 翻转朝向、双击音量下 = 深浅主题，
+                                        // 两个键各用各的双击窗口，互不干扰。
+                                        if ev.ev_code == KEY_VOLUMEUP && up {
+                                            if taps_up.tap(Instant::now()) {
+                                                toggle_rotation();
+                                            }
+                                        } else if ev.ev_code == KEY_VOLUMEDOWN && down {
+                                            if taps_down.tap(Instant::now()) {
+                                                toggle_theme();
+                                            }
                                         }
-                                    } else if ev.ev_code == KEY_VOLUMEDOWN && down {
-                                        let (_, label) = up_down_labels();
-                                        tracing::info!("hotkeys: KEY_VOLUMEDOWN → {label}");
-                                        step(page_delta(-1));
                                     }
                                 }
+                                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                                Err(e) => {
+                                    tracing::warn!("hotkeys: 读取失败: {e}");
+                                    fatal = true;
+                                    break;
+                                }
                             }
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                            Err(e) => {
-                                tracing::warn!("hotkeys: 读取失败: {e}");
-                                break;
-                            }
+                        }
+                        if fatal {
+                            dead.push(i);
                         }
                     }
                 }
+                // 失效设备移出监听（倒序 remove 防下标漂移）；一个都不剩就收工
+                let had_dead = !dead.is_empty();
+                for i in dead.into_iter().rev() {
+                    let fd = fds[i].1;
+                    tracing::warn!("hotkeys: 按键设备 fd={fd} 失效，移出监听");
+                    fds.remove(i);
+                }
+                if had_dead && fds.is_empty() {
+                    tracing::warn!("hotkeys: 所有按键设备已失效，监听线程退出");
+                    return;
+                }
 
-                // 双击窗口过期 → 那一下就是单击：翻到下一页
-                if taps.expired(Instant::now()) {
+                // 双击窗口过期 → 那一下就是单击：兑现翻页（上下键各自独立）
+                let now = Instant::now();
+                if taps_up.expired(now) {
                     let (label, _) = up_down_labels();
                     tracing::info!("hotkeys: KEY_VOLUMEUP → {label}");
                     step(page_delta(1));
+                }
+                if taps_down.expired(now) {
+                    let (_, label) = up_down_labels();
+                    tracing::info!("hotkeys: KEY_VOLUMEDOWN → {label}");
+                    step(page_delta(-1));
                 }
             }
         })

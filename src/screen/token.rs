@@ -630,13 +630,21 @@ fn footer_card(c: &mut Canvas, p: &Pane, f: &TokenFeed) {
     let x = p.x + 26;
     c.text(x, baseline, "音量 上/下", Type::LABEL, Weight::Bold, Palette::ACCENT);
     c.text(x + 130, baseline, "切换页面", Type::LABEL, Weight::Regular, Palette::FG_MUTED);
+    c.text(
+        x + 290,
+        baseline,
+        &format!("双击 ▼ {}", crate::collector::hotkeys::theme_hint()),
+        Type::LABEL,
+        Weight::Bold,
+        Palette::ACCENT,
+    );
 
     let http = f
         .http_at
         .map(|t| format!("{}s 前·{}ms", t.elapsed().as_secs(), f.http_ms))
         .unwrap_or_else(|| "未加载".into());
     c.text(
-        x + 290,
+        x + 480,
         baseline,
         &format!("REST 刷新 {http}"),
         Type::LABEL,
@@ -645,7 +653,7 @@ fn footer_card(c: &mut Canvas, p: &Pane, f: &TokenFeed) {
     );
     let ws = if f.live.ws_connected { "WS 已连" } else { "WS 未连接" };
     c.text(
-        x + 620,
+        x + 800,
         baseline,
         ws,
         Type::LABEL,

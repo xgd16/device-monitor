@@ -969,7 +969,10 @@ fn footer_card(c: &mut Canvas, p: &Pane, o: &crate::collector::SystemOverview) {
     // 方向写进页脚，且**必须按当前朝向取**：翻转后同一个键对应的方向是对调的，
     // 写死就变成「指示和实际相反」，比不写更糟
     let (up_label, down_label) = crate::collector::hotkeys::up_down_labels();
-    let hint = format!("音量键 ▲ {up_label} · ▼ {down_label} · 双击 ▲ 旋转屏幕");
+    let hint = format!(
+        "音量键 ▲ {up_label} · ▼ {down_label} · 双击 ▲ 旋转屏幕 · 双击 ▼ {}",
+        crate::collector::hotkeys::theme_hint()
+    );
     c.text(x, baseline, &hint, Type::LABEL, Weight::Bold, Palette::FG_DEFAULT);
     let tw = c.fonts.text_width(&hint, Type::LABEL, Weight::Bold);
     c.text(

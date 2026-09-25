@@ -62,6 +62,15 @@ async fn main() {
         } else {
             screen::Rotation::Rot90
         };
+        // 主题：--light / --dark 显式指定，否则跟随落盘值（与屏上所见一致）
+        let light = if args.iter().any(|a| a == "--light") {
+            true
+        } else if args.iter().any(|a| a == "--dark") {
+            false
+        } else {
+            store::settings::load_theme().as_deref() == Some("light")
+        };
+        crate::collector::hotkeys::set_light(light);
         // 页码与屏上「当前第 N / 3 页」一致（1-based）
         let page = match args.iter().position(|a| a == "--page").and_then(|i| args.get(i + 1)).map(|s| s.as_str()) {
             Some("clock") | Some("3") => 2u8,
@@ -220,6 +229,10 @@ async fn main() {
         // 必须让 hotkeys 的朝向状态与屏上实际朝向对齐：否则若落盘是 rot270，
         // 第一次双击会「翻转成 rot270」——屏上什么都不变，看着像按键失灵。
         crate::collector::hotkeys::set_rot270(matches!(rot, screen::Rotation::Rot270));
+        // 主题同理：按落盘值初始化，否则屏上会以错误的配色启动
+        crate::collector::hotkeys::set_light(
+            store::settings::load_theme().as_deref() == Some("light"),
+        );
         match screen::open(rot) {
             Ok(scr) => {
             let rx_screen = state.latest.clone();

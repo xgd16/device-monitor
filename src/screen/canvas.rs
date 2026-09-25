@@ -5,7 +5,7 @@ use bytemuck::cast_slice;
 
 use super::Rotation;
 use super::font::{FontSet, GlyphTile, Weight};
-use super::theme::{Argb, Palette, Type};
+use super::theme::{self, Argb, Palette, Type};
 
 /// 物理坐标矩形（脏矩形单位）。
 #[derive(Clone, Copy, Debug)]
@@ -56,7 +56,7 @@ impl Canvas {
 
     /// 全屏填充。
     pub fn clear(&mut self, color: Argb) {
-        self.buf.fill(color);
+        self.buf.fill(theme::resolve(color));
         self.dirty.push(Rect { x: 0, y: 0, w: self.pw, h: self.ph });
     }
 
@@ -65,6 +65,7 @@ impl Canvas {
         if w <= 0 || h <= 0 {
             return;
         }
+        let color = theme::resolve(color);
         let r = self.phys(x, y, w, h);
         let x0 = r.x.max(0);
         let y0 = r.y.max(0);
@@ -86,6 +87,7 @@ impl Canvas {
         if y < 0 || y >= self.lh {
             return;
         }
+        let color = theme::resolve(color);
         let a = x0.max(0);
         let b = x1.min(self.lw);
         if b <= a {
@@ -379,6 +381,7 @@ fn blit_tile(
     color: Argb,
     dirty: &mut Vec<Rect>,
 ) {
+    let color = theme::resolve(color);
     let cr = (color >> 16) & 0xFF;
     let cg = (color >> 8) & 0xFF;
     let cb = color & 0xFF;

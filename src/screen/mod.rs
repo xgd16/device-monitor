@@ -114,6 +114,8 @@ pub fn run(
     // 朝向状态以 hotkeys 为准（双击音量上翻转），启动时 main 已把它初始化成
     // 与屏上实际朝向一致，所以这里不会一进来就误判成「需要切换」
     let mut cur_rot270 = crate::collector::hotkeys::rot270();
+    // 主题同理（双击音量下切换），初始与落盘值一致
+    let mut cur_light = crate::collector::hotkeys::light();
 
     loop {
         // 等 1 秒，或被「按键翻了页/转了朝向」立刻唤醒。
@@ -154,6 +156,17 @@ pub fn run(
                 }
                 Err(e) => tracing::error!("screen: 切换朝向失败，保持原朝向: {e}"),
             }
+        }
+
+        // ── 深浅主题切换（双击音量下）──
+        //
+        // 颜色是画布底层按当前主题实时解析的（`theme::resolve`），不像朝向那样
+        // 需要重建画布；把 force_full 置上让整屏按新配色重画一次即可。
+        let want_light = crate::collector::hotkeys::light();
+        if want_light != cur_light {
+            cur_light = want_light;
+            force_full = true;
+            tracing::info!("screen: 主题切换为{}", if want_light { "浅色" } else { "深色" });
         }
 
         // ── 熄屏（电源键 bl_power=4）时暂停渲染 ──

@@ -173,3 +173,16 @@ systemctl daemon-reload && systemctl restart device-monitor
 - 从字符网格升级为像素排版：圆角卡片、胶囊标签、真折线趋势图、阈值配色
 - 同一屏承载 10 张卡片（CPU/GPU/温度/内存/磁盘/进程/电池/网络/服务告警）+ 顶栏时钟 + 底栏
 - 去掉 kmscon 后服务常驻内存 **1023MB → 70MB**
+
+## 深浅主题（双击音量下切换）
+
+- 双击音量下 = 切换深色/浅色主题；单击仍是上一页。双击判定窗口 300ms，
+  与音量上双击旋转同一套状态机（`TapTracker`），两个键各用各的窗口、互不干扰。
+- 落盘 `theme.txt`（`dark`/`light`），重启保持；默认深色（OLED 近黑底省电）。
+- 实现：绘制代码只写语义槽 `Palette::X`（规范值 = 深色值，300+ 处引用零改动）；
+  画布底层四个写像素原语（`canvas.rs` 的 clear/rect/row/字形混合）统一经
+  `theme::resolve()` 映射到当前主题 —— **新增绘制代码不用管主题，自动跟随**。
+- 浅色色值在 `theme.rs::LightPalette`（白底卡片 + 浅灰画布，语义色按对比度加深）；
+  `cargo test` 里有 WCAG 对比度单测把关。
+- 预览：`device-monitor-server --screen-dump /tmp/s.ppm --light`（或 `--dark`），
+  不带参数时跟随落盘主题；导出图可直接核对两套配色。
