@@ -182,6 +182,28 @@ ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="stmfts", ENV{LIBINPUT_CALI
     udevadm settle --timeout=5 >/dev/null 2>&1 || true
     log "触摸校准矩阵已随朝向同步（rotate=$1 → $_m）"
   fi
+
+  # 属性存在性兜底：模块重载/新节点时 udev 对 add 的处理可能滞后数秒甚至更久，
+  # 面板一旦先打开设备就会读不到矩阵。这里在启动面板前确认当前实例已带上
+  # 属性，缺了就重试注入（trigger 用 sysfs 路径，/dev 路径在此处无效）。
+  _ev_sys=""
+  for _p in /sys/class/input/event*; do
+    [ "$(cat "$_p/device/name" 2>/dev/null)" = "stmfts" ] && _ev_sys="$_p" && break
+  done
+  if [ -n "$_ev_sys" ]; then
+    _tries=0
+    while [ "$_tries" -lt 10 ] && ! udevadm info "$_ev_sys" 2>/dev/null | grep -q "LIBINPUT_CALIBRATION_MATRIX=$_m"; do
+      _tries=$((_tries + 1))
+      udevadm trigger --action=change "$_ev_sys" >/dev/null 2>&1 || true
+      udevadm settle --timeout=3 >/dev/null 2>&1 || true
+      sleep 1
+    done
+    if [ "$_tries" -ge 10 ]; then
+      log "警告: 触摸矩阵属性注入失败（已重试 10 次），触摸映射可能不对"
+    elif [ "$_tries" -gt 0 ]; then
+      log "触摸矩阵属性晚到，已注入（重试 $_tries 次）"
+    fi
+  fi
   return 0
 }
 
