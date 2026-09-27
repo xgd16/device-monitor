@@ -1,0 +1,37 @@
+[package]
+name = "device-monitor-panel"
+version = "0.1.0"
+edition = "2024"
+description = "GPU 加速物理屏仪表（Slint + femtovg），消费本机 device-monitor API"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 仅访问 127.0.0.1 的 HTTP API，无需 TLS
+ureq = { version = "2", default-features = false }
+tungstenite = "0.30.0"
+chrono = "0.4"
+
+# 平台分流：macOS 用 winit 窗口预览；Linux(设备) 用 linuxkms + libinput 直驱 DRM。
+# 特性组合为已实测可用的组合（勿用已废弃的 backend-linuxkms-noseat，勿开 libseat）。
+[target.'cfg(target_os = "macos")'.dependencies]
+slint = { version = "1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-18",
+    "accessibility",
+    "backend-winit",
+    "renderer-femtovg",
+] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+slint = { version = "1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-18",
+    "accessibility",
+    "backend-linuxkms",
+    "backend-linuxkms-libinput",
+    "renderer-femtovg",
+] }
+
+[build-dependencies]
+slint-build = "1.18.1"

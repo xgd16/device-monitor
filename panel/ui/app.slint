@@ -1,0 +1,341 @@
+// 面板壳层：1170x540 逻辑分辨率（SLINT_SCALE_FACTOR=2 → 物理 2340x1080）。
+// 结构：顶栏（状态/主机/页签/时钟）+ 翻页容器（滑动切换）+ 底栏（IP/速率/VPN/主题/页码）。
+import { Theme } from "theme.slint";
+import { Sys, Clk, Ui } from "data.slint";
+import { TabPill, LiveDot, Mono } from "widgets.slint";
+import { PageSystem } from "page-system.slint";
+import { PageToken } from "page-token.slint";
+import { PageClock } from "page-clock.slint";
+
+// Rust 侧要访问的全局与结构体必须从主文件 re-export
+export { Theme } from "theme.slint";
+export { Sys, Clk, Ui, Tok } from "data.slint";
+export { CoreRow, ThermalRow, ProcRow, SvcRow, RankRow, ChanRow, KeyRow, CityRow, ProgRow } from "data.slint";
+
+export component App inherits Window {
+    width: 1170px;
+    height: 540px;
+    background: Theme.bg;
+    default-font-family: Theme.font-body;
+
+    // 静态氛围光斑（OLED 上制造纵深，代价为 0：femtovg 缓存静态层）
+    Rectangle {
+        x: -140px;
+        y: -160px;
+        width: 520px;
+        height: 420px;
+        background: @radial-gradient(circle, Theme.glow-a-soft 0%, transparent 60%);
+    }
+    Rectangle {
+        x: 820px;
+        y: 300px;
+        width: 500px;
+        height: 400px;
+        background: @radial-gradient(circle, Theme.glow-b-soft 0%, transparent 60%);
+    }
+
+    FocusScope {
+        width: 100%;
+        height: 100%;
+        init => {
+            self.focus();
+        }
+        key-pressed(e) => {
+            if (e.text == Key.RightArrow) {
+                Ui.next();
+                return accept;
+            }
+            if (e.text == Key.LeftArrow) {
+                Ui.prev();
+                return accept;
+            }
+            if (e.text == "t" || e.text == "T") {
+                Ui.toggle-theme();
+                return accept;
+            }
+            reject
+        }
+
+        // ── 顶栏 ──
+        Rectangle {
+            x: 14px;
+            y: 14px;
+            width: 1142px;
+            height: 58px;
+            border-radius: 14px;
+            background: Theme.card;
+            border-width: 1px;
+            border-color: Theme.border;
+            Rectangle {
+                x: 16px;
+                y: 0px;
+                height: 1px;
+                width: parent.width - 32px;
+                background: @linear-gradient(90deg, transparent 0%, Theme.card-hi 50%, transparent 100%);
+            }
+            LiveDot {
+                x: 18px;
+                y: 24px;
+                tint: Sys.online ? Theme.success : Theme.error;
+                on: Sys.online;
+            }
+            Text {
+                x: 36px;
+                y: 10px;
+                text: Sys.hostname;
+                font-size: 15px;
+                font-weight: 700;
+                color: Theme.emphasis;
+            }
+            Text {
+                x: 36px;
+                y: 33px;
+                text: "Mi Mix 3 · GPU 面板 · 运行 " + Sys.uptime + " · 采集 \{Sys.refresh-secs}s";
+                font-size: 8.5px;
+                color: Theme.muted;
+            }
+            HorizontalLayout {
+                x: 800px;
+                y: 17px;
+                width: 200px;
+                height: 24px;
+                spacing: 6px;
+                TabPill {
+                    label: "系统监控";
+                    active: Ui.page == 0;
+                    idx: 0;
+                    horizontal-stretch: 0;
+                }
+                TabPill {
+                    label: "Token 用量";
+                    active: Ui.page == 1;
+                    idx: 1;
+                    horizontal-stretch: 0;
+                }
+                TabPill {
+                    label: "时钟";
+                    active: Ui.page == 2;
+                    idx: 2;
+                    horizontal-stretch: 0;
+                }
+            }
+            Mono {
+                x: 1000px;
+                y: 8px;
+                width: 128px;
+                text: Clk.hh + ":" + Clk.mm + ":" + Clk.ss;
+                font-size: 20px;
+                font-weight: 700;
+                color: Theme.emphasis;
+                horizontal-alignment: TextHorizontalAlignment.right;
+            }
+            Text {
+                x: 1000px;
+                y: 36px;
+                width: 128px;
+                text: Clk.date-line;
+                font-size: 8px;
+                color: Theme.muted;
+                horizontal-alignment: TextHorizontalAlignment.right;
+            }
+        }
+
+        // ── 页面容器（横向滑动切换）──
+        Rectangle {
+            x: 14px;
+            y: 82px;
+            width: 1142px;
+            height: 404px;
+            clip: true;
+            PageSystem {
+                idx: 0;
+                y: 0px;
+            }
+            PageToken {
+                idx: 1;
+                y: 0px;
+            }
+            PageClock {
+                idx: 2;
+                y: 0px;
+            }
+            TouchArea {
+                property <length> press-x: 0px;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        press-x = self.mouse-x;
+                    }
+                    if (e.kind == PointerEventKind.up) {
+                        if (self.mouse-x - press-x > 90px) {
+                            Ui.prev();
+                        }
+                        if (self.mouse-x - press-x < -90px) {
+                            Ui.next();
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 底栏 ──
+        Rectangle {
+            x: 14px;
+            y: 496px;
+            width: 1142px;
+            height: 30px;
+            border-radius: 10px;
+            background: Theme.card;
+            border-width: 1px;
+            border-color: Theme.border;
+            Text {
+                x: 16px;
+                y: 0px;
+                height: 100%;
+                text: "IPv4";
+                font-size: 8px;
+                color: Theme.muted;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 44px;
+                y: 0px;
+                height: 100%;
+                text: Sys.ip;
+                font-size: 9.5px;
+                font-weight: 700;
+                color: Theme.accent;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 210px;
+                y: 0px;
+                height: 100%;
+                text: "↓ " + Sys.rx;
+                font-size: 9.5px;
+                color: Theme.info;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 320px;
+                y: 0px;
+                height: 100%;
+                text: "↑ " + Sys.tx;
+                font-size: 9.5px;
+                color: Theme.accent2;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Text {
+                x: 440px;
+                y: 0px;
+                height: 100%;
+                text: Sys.vpn-kind;
+                font-size: 8px;
+                color: Theme.muted;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Text {
+                x: 472px;
+                y: 0px;
+                width: 300px;
+                height: 100%;
+                text: Sys.vpn-node;
+                font-size: 10px;
+                font-weight: 700;
+                color: Sys.vpn-ok ? Theme.success : Theme.muted;
+                overflow: elide;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            // 页码指示点（可点）
+            Rectangle {
+                x: 956px;
+                y: 13px;
+                width: Ui.page == 0 ? 16px : 6px;
+                height: 4px;
+                border-radius: 2px;
+                background: Ui.page == 0 ? Theme.accent : Theme.track;
+                animate width {
+                    duration: 260ms;
+                    easing: ease-out;
+                }
+                TouchArea {
+                    clicked => {
+                        Ui.go(0);
+                    }
+                }
+            }
+            Rectangle {
+                x: 978px;
+                y: 13px;
+                width: Ui.page == 1 ? 16px : 6px;
+                height: 4px;
+                border-radius: 2px;
+                background: Ui.page == 1 ? Theme.accent : Theme.track;
+                animate width {
+                    duration: 260ms;
+                    easing: ease-out;
+                }
+                TouchArea {
+                    clicked => {
+                        Ui.go(1);
+                    }
+                }
+            }
+            Rectangle {
+                x: 1000px;
+                y: 13px;
+                width: Ui.page == 2 ? 16px : 6px;
+                height: 4px;
+                border-radius: 2px;
+                background: Ui.page == 2 ? Theme.accent : Theme.track;
+                animate width {
+                    duration: 260ms;
+                    easing: ease-out;
+                }
+                TouchArea {
+                    clicked => {
+                        Ui.go(2);
+                    }
+                }
+            }
+            Mono {
+                x: 1020px;
+                y: 0px;
+                width: 70px;
+                height: 100%;
+                text: "第 \{(Ui.page + 1)} / 3 页";
+                font-size: 8px;
+                color: Theme.muted;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            // 主题切换
+            Rectangle {
+                x: 1096px;
+                y: 4px;
+                width: 34px;
+                height: 22px;
+                border-radius: 11px;
+                background: Theme.card-alt;
+                border-width: 1px;
+                border-color: Theme.border;
+                Text {
+                    x: 0px;
+                    width: 100%;
+                    height: 100%;
+                    y: Theme.text-nudge;
+                    text: Theme.dark ? "浅色" : "深色";
+                    font-size: 8.5px;
+                    font-weight: 700;
+                    color: Theme.accent;
+                    horizontal-alignment: TextHorizontalAlignment.center;
+                    vertical-alignment: TextVerticalAlignment.center;
+                }
+                TouchArea {
+                    clicked => {
+                        Ui.toggle-theme();
+                    }
+                }
+            }
+        }
+    }
+}

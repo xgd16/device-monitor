@@ -1,0 +1,66 @@
+// 语义色板 + 字体 + 阈值函数。
+//
+// 沿用本仓库「语义槽」约定：绘制代码只引用 Theme::*，不写硬编码色值；
+// 规范色值 = 深色主题（OLED 近黑省电），dark=false 时逐槽位映射到浅色主题。
+// Rust 侧启动时按平台覆盖 font-body / font-mono（macOS 用苹方/Menlo 预览）。
+export global Theme {
+    in-out property <bool> dark: true;
+
+    // ── 背景层次：base < card < card-alt，靠亮度差造层级 ──
+    out property <color> bg: dark ? #05070B : #F1F3F7;
+    out property <color> card: dark ? #0B111B : #FFFFFF;
+    out property <color> card-alt: dark ? #141C2A : #E8ECF2;
+    out property <color> track: dark ? #1B2534 : #DDE3EC;
+    out property <color> border: dark ? #1E2A3E : #D3D9E3;
+    // 卡片顶部高光发丝线 / 氛围光斑
+    out property <color> card-hi: dark ? #33405A : #FFFFFF;
+    out property <color> glow-a: dark ? #1A3555 : #D8E6FA;
+    out property <color> glow-b: dark ? #14283F : #EDE4F8;
+    // 渐变色标里不能调用函数，柔光色在这里预算好
+    out property <color> glow-a-soft: glow-a.with-alpha(0.38);
+    out property <color> glow-b-soft: glow-b.with-alpha(0.30);
+    out property <color> glow-hero-a: glow-a.with-alpha(0.55);
+    out property <color> glow-hero-b: glow-b.with-alpha(0.40);
+
+    // ── 前景 ──
+    out property <color> fg: dark ? #C9D4E4 : #333D4D;
+    out property <color> muted: dark ? #75849C : #5F6E83;
+    out property <color> emphasis: dark ? #F2F6FC : #0E141E;
+
+    // ── 强调 / 状态 ──
+    out property <color> accent: dark ? #4EA3FF : #2563EB;
+    out property <color> accent2: dark ? #BB9AF7 : #7C3AED;
+    out property <color> success: dark ? #3FD07C : #15803D;
+    out property <color> warning: dark ? #FFB428 : #B45309;
+    out property <color> error: dark ? #FF5D68 : #C62828;
+    out property <color> info: dark ? #45D3D3 : #0E7490;
+
+    // 文字光学垂直居中补偿：Slint 按行盒（ascent+descent）中轴居中，与字形墨迹
+    // 中轴不重合，按实测像素偏差补偿（全工程只调这一处）。
+    // 默认值按设备字体 Noto Sans CJK SC 校准；macOS 预览字体不同，Rust 侧覆盖。
+    in-out property <length> text-nudge: 0.25px;
+
+    // 字体（Rust 按平台覆盖）
+    in-out property <string> font-body: "Noto Sans CJK SC";
+    in-out property <string> font-mono: "Noto Sans Mono CJK SC";
+
+    // 使用率 → 语义色（颜色只是辅助，数值始终同时呈现）
+    public pure function lvl(p: float) -> color {
+        p >= 85.0 ? error : (p >= 65.0 ? warning : success)
+    }
+
+    // 温度 → 语义色
+    public pure function tlvl(t: float) -> color {
+        t >= 75.0 ? error : (t >= 60.0 ? warning : success)
+    }
+
+    // 排行榜逐行配色（6 色循环）
+    public pure function rank-color(i: int) -> color {
+        Math.mod(i, 6) == 0 ? accent : (Math.mod(i, 6) == 1 ? success : (Math.mod(i, 6) == 2 ? info : (Math.mod(i, 6) == 3 ? accent2 : (Math.mod(i, 6) == 4 ? warning : error))))
+    }
+
+    // WiFi 信号 dBm → 语义色
+    public pure function sig(dbm: int) -> color {
+        dbm >= -60 ? success : (dbm >= -75 ? warning : error)
+    }
+}

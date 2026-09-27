@@ -53,3 +53,7 @@ static/
 battery_effective_max.txt
 battery_low_streak.txt
 battery_session_peak.txt
+
+# Panel
+panel/target/
+panel-theme.txt

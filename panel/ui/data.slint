@@ -1,0 +1,259 @@
+// 数据全局：Rust 轮询线程把 REST/WS 结果整理成字符串与模型，经事件循环写入这里。
+// 全部声明为 in-out：Rust 既写也读（如主题状态），Slint 侧只绑定读取。
+// 注意：所有要显示的数值都由 Rust 格式化成字符串（Slint 浮点插值不控精度）；
+// float 字段仅供 Slint 侧配色阈值使用。
+import { Theme } from "theme.slint";
+
+// ── 模型行结构 ──
+export struct CoreRow {
+    id: int,
+    usage: float,
+    freq: string,
+}
+
+export struct ThermalRow {
+    name: string,
+    temp: float,
+    temp-str: string,
+}
+
+export struct ProcRow {
+    pid-str: string,
+    name: string,
+    cpu: float,
+    cpu-str: string,
+    mem: string,
+}
+
+export struct SvcRow {
+    name: string,
+    state: string,
+}
+
+export struct RankRow {
+    name: string,
+    reqs: string,
+    tokens: string,
+    cost: string,
+    share: float,
+    share-str: string,
+}
+
+export struct ChanRow {
+    name: string,
+    reqs: string,
+    avg: string,
+    cost: string,
+    balance: string,
+    share: float,
+    health: float,
+}
+
+export struct KeyRow {
+    name: string,
+    reqs: string,
+    share: string,
+    cost: string,
+}
+
+export struct CityRow {
+    name: string,
+    mark: string,
+    offset: string,
+    time: string,
+}
+
+export struct ProgRow {
+    label: string,
+    pct: float,
+    pct-str: string,
+    left: string,
+}
+
+// ── 系统监控页数据（GET /api/system/overview + /api/disk + /api/hardware …）──
+export global Sys {
+    in-out property <bool> online: false;
+    in-out property <string> hostname: "device";
+    in-out property <string> ip: "--";
+    in-out property <string> uptime: "--";
+    in-out property <string> load: "-- / -- / --";
+    in-out property <string> procs-count: "--";
+    in-out property <int> refresh-secs: 5;
+
+    in-out property <float> cpu-usage: 0.0;
+    in-out property <string> cpu-str: "0.0";
+    in-out property <[float]> cpu-history;
+    in-out property <[CoreRow]> cores;
+    in-out property <string> governor: "--";
+
+    in-out property <bool> gpu-suspended: false;
+    in-out property <string> gpu-freq: "--";
+    in-out property <string> gpu-name: "Adreno 630";
+    in-out property <string> gpu-range: "--";
+    in-out property <float> gpu-pct: 0.0;
+
+    in-out property <[ThermalRow]> thermal;
+
+    in-out property <float> mem-pct: 0.0;
+    in-out property <string> mem-str: "0.0";
+    in-out property <[float]> mem-history;
+    in-out property <string> mem-used: "--";
+    in-out property <string> mem-total: "--";
+    in-out property <string> mem-avail: "--";
+    in-out property <string> mem-swap: "--";
+
+    in-out property <float> disk-pct: 0.0;
+    in-out property <string> disk-str: "0";
+    in-out property <string> disk-used: "--";
+    in-out property <string> disk-total: "--";
+    in-out property <string> disk-fs: "--";
+    in-out property <string> disk-inode: "--";
+
+    in-out property <[ProcRow]> procs;
+
+    // 电池
+    in-out property <float> bat-pct: 0.0;
+    in-out property <string> bat-str: "--";
+    in-out property <string> bat-pill: "--";
+    in-out property <bool> bat-charging: false;
+    in-out property <string> bat-protocol: "";
+    in-out property <string> bat-voltage: "--";
+    in-out property <string> bat-current: "--";
+    in-out property <string> bat-power: "--";
+    in-out property <float> bat-temp: 0.0;
+    in-out property <string> bat-temp-str: "--";
+    in-out property <string> bat-remain: "--";
+    in-out property <string> bat-chg-v: "--";
+    in-out property <string> bat-chg-i: "--";
+    in-out property <string> bat-limit: "--";
+    // 时钟页环形仪表的值弧（Rust 生成，120x120 盒）
+    in-out property <string> bat-ring: "";
+
+    // 网络与无线
+    in-out property <bool> wifi-ok: false;
+    in-out property <string> wifi-ssid: "WiFi 未连接";
+    in-out property <int> wifi-signal: -100;
+    in-out property <string> wifi-signal-str: "-- dBm";
+    in-out property <string> wifi-detail: "";
+    in-out property <string> bt: "蓝牙 关";
+    in-out property <string> rx: "0 B/s";
+    in-out property <string> tx: "0 B/s";
+    in-out property <bool> vpn-ok: false;
+    in-out property <string> vpn-kind: "代理";
+    in-out property <string> vpn-node: "未连接";
+    in-out property <string> vpn-conn: "--";
+    in-out property <string> vpn-mode: "--";
+
+    in-out property <[SvcRow]> services;
+
+    // 最新一条告警（Rust 侧只取 1 条；空标题表示暂无告警）
+    in-out property <string> alert-title: "";
+    in-out property <string> alert-msg: "";
+    in-out property <string> alert-time: "";
+    in-out property <string> alert-level: "info";
+    out property <color> alert-color: alert-level == "error" || alert-level == "critical" ? Theme.error : (alert-level == "warning" ? Theme.warning : Theme.info);
+}
+
+// ── Token 用量页数据（XTokenHub 自有 REST + WS）──
+export global Tok {
+    in-out property <bool> rest-ok: false;
+    in-out property <bool> ws-ok: false;
+
+    in-out property <string> today-reqs: "0";
+    in-out property <float> success-rate: 100.0;
+    in-out property <string> success-str: "100.0";
+    in-out property <string> t-tokens: "0";
+    in-out property <string> t-cached: "0";
+    in-out property <string> t-cost: "¥0.00";
+    in-out property <string> t-hit: "0%";
+    in-out property <string> forecast: "预测今日 --";
+    in-out property <string> daily-avg: "日均 --";
+
+    in-out property <float> tps: 0.0;
+    in-out property <string> tps-str: "0";
+    in-out property <int> streams: 0;
+    in-out property <string> tps-line: "";
+    in-out property <string> tps-area: "";
+    in-out property <string> tps-info: "滑窗均值 0 · 峰值 0 tokens/s";
+    in-out property <string> last-req: "等待事件 …";
+
+    in-out property <[RankRow]> models;
+    in-out property <[ChanRow]> chans;
+    in-out property <[KeyRow]> keys;
+
+    in-out property <float> err-pct: 0.0;
+    in-out property <string> err-str: "0.0";
+    in-out property <string> avg-lat: "--";
+    in-out property <float> avg-lat-num: 0.0;
+    in-out property <string> cache7: "0%";
+    in-out property <float> cache7-num: 0.0;
+    in-out property <string> trend-line: "";
+    in-out property <string> trend-area: "";
+    in-out property <string> trend-info: "--";
+
+    in-out property <string> gw-state: "REST 异常";
+    in-out property <string> lt-tokens: "0";
+    in-out property <string> lt-peak: "--";
+    in-out property <string> lt-streak: "--";
+    in-out property <string> budget: "未设月预算";
+    in-out property <string> last-error: "";
+    in-out property <string> rest-info: "未加载";
+}
+
+// ── 时钟页数据（本地时间 + 世界时钟 + 天气 + 日出日落）──
+export global Clk {
+    in-out property <string> hh: "--";
+    in-out property <string> mm: "--";
+    in-out property <string> ss: "--";
+    in-out property <string> date-line: "--";
+    in-out property <string> meta1: "--";
+    in-out property <string> meta2: "--";
+    in-out property <float> sec-pct: 0.0;
+    in-out property <string> sec-str: "第 0 秒 / 60";
+
+    in-out property <[ProgRow]> prog;
+    in-out property <[CityRow]> world;
+
+    in-out property <string> sun-rise: "--:--";
+    in-out property <string> sun-set: "--:--";
+    in-out property <string> day-len: "--";
+    in-out property <string> noon: "--:--";
+    // 日出弧线（Rust 按固定盒子 420x76 计算，太阳位置为盒内坐标）
+    in-out property <string> sun-arc: "";
+    in-out property <float> sun-x: 0.0;
+    in-out property <float> sun-y: 66.0;
+    in-out property <string> phase-line: "--";
+    in-out property <float> phase-pct: 0.0;
+    in-out property <bool> is-day: true;
+    in-out property <string> tomorrow: "--";
+    in-out property <string> sun-src: "来源 本地推算";
+
+    in-out property <bool> w-ok: false;
+    in-out property <float> w-temp-c: 0.0;
+    in-out property <string> w-temp: "--";
+    in-out property <bool> w-wet: false;
+    in-out property <string> w-desc: "--";
+    in-out property <string> w-feels: "--";
+    in-out property <string> w-wind: "--";
+    in-out property <string> w-range: "--";
+    in-out property <string> w-extra: "--";
+    in-out property <string> w-note: "";
+}
+
+// ── 面板壳状态：页面切换 / 熄屏感知 ──
+export global Ui {
+    in-out property <int> page: 0;
+    in-out property <int> page-count: 3;
+    in-out property <bool> screen-on: true;
+
+    public function go(i: int) {
+        page = Math.max(0, Math.min(i, page-count - 1));
+    }
+    public function next() {
+        page = page + 1 >= page-count ? 0 : page + 1;
+    }
+    public function prev() {
+        page = page <= 0 ? page-count - 1 : page - 1;
+    }
+    callback toggle-theme();
+}

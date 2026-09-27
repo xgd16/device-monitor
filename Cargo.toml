@@ -32,3 +32,7 @@ tungstenite = "0.30.0"
 [[bin]]
 name = "device-monitor-server"
 path = "src/main.rs"
+
+# GPU 物理屏面板（Slint + femtovg）：独立 crate，macOS 上用 winit 预览
+[workspace]
+members = ["panel"]

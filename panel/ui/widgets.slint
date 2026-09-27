@@ -1,0 +1,248 @@
+// 可复用组件库：卡片 / 胶囊 / 脉冲指示灯 / 动画条 / 等化器 / 面积图 / 环形仪表。
+// 所有字号按 1170x540 逻辑分辨率设计，@2x 渲染到 2340x1080 物理。
+import { Theme } from "theme.slint";
+import { Ui } from "data.slint";
+
+// ── 基础 ──
+
+export component Mono inherits Text {
+    font-family: Theme.font-mono;
+}
+
+export component Dot inherits Rectangle {
+    in property <color> tint;
+    width: 7px;
+    height: 7px;
+    border-radius: self.width / 2;
+    background: root.tint;
+}
+
+// 带外圈呼吸光晕的实时指示灯；熄屏时停止发光省电。
+export component LiveDot inherits Rectangle {
+    in property <color> tint;
+    in property <bool> on: true;
+    width: 9px;
+    height: 9px;
+    border-radius: self.width / 2;
+    property <bool> pulse: false;
+    init => {
+        pulse = true;
+    }
+    Rectangle {
+        x: -4.5px;
+        y: -4.5px;
+        width: parent.width + 9px;
+        height: parent.height + 9px;
+        border-radius: self.width / 2;
+        background: root.tint.with-alpha(0.32);
+        opacity: (root.pulse && Ui.screen-on) ? 0.95 : 0.12;
+        animate opacity {
+            duration: 1600ms;
+            easing: ease-in-out;
+            iteration-count: -1;
+            direction: alternate;
+        }
+    }
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: self.width / 2;
+        background: root.on ? root.tint : Theme.muted;
+    }
+}
+
+// ── 卡片：圆角 + 描边 + 顶部发丝高光 + 标题 ──
+export component Card inherits Rectangle {
+    in property <string> title;
+    border-radius: 14px;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.border;
+    Rectangle {
+        x: 16px;
+        y: 0px;
+        height: 1px;
+        width: parent.width - 32px;
+        background: @linear-gradient(90deg, transparent 0%, Theme.card-hi 50%, transparent 100%);
+    }
+    Text {
+        x: 14px;
+        y: 9px;
+        text: root.title;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        color: Theme.emphasis;
+        font-family: Theme.font-body;
+    }
+}
+
+// ── 胶囊标签：显式宽度 + 手动垂直居中（CJK 行盒 ascent 大，纯居中会偏上，+1px 视觉补偿）──
+export component Pill inherits Rectangle {
+    in property <string> label;
+    in property <color> fg;
+    in property <color> bg;
+    height: 18px;
+    width: lbl.preferred-width + 16px;
+    border-radius: 9px;
+    background: root.bg;
+    border-width: 1px;
+    border-color: root.fg.with-alpha(0.28);
+    lbl := Text {
+        x: 8px;
+        y: Theme.text-nudge;
+        height: parent.height;
+        vertical-alignment: TextVerticalAlignment.center;
+        text: root.label;
+        font-size: 9px;
+        font-weight: 700;
+        color: root.fg;
+        font-family: Theme.font-body;
+    }
+}
+
+// ── 动画进度条 ──
+export component StatBar inherits Rectangle {
+    in property <float> pct; // 0-100
+    in property <color> tint;
+    height: 6px;
+    border-radius: self.height / 2;
+    background: Theme.track;
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        height: 100%;
+        width: parent.width * Math.max(0, Math.min(root.pct, 100)) / 100;
+        border-radius: self.height / 2;
+        background: @linear-gradient(90deg, root.tint.with-alpha(0.72) 0%, root.tint 100%);
+        animate width {
+            duration: 700ms;
+            easing: ease-out;
+        }
+    }
+}
+
+// ── 等化器柱状图：值 0-100，新样本在右侧、越新越亮 ──
+export component BarChart inherits Rectangle {
+    in property <[float]> values;
+    in property <color> tint;
+    property <int> n: values.length;
+    for v[i] in values: Rectangle {
+        property <float> t: (root.n <= 1) ? 0.0 : i * 1.0 / (root.n - 1);
+        x: i * (self.width + 2px);
+        width: (parent.width - (root.n - 1) * 2px) / root.n;
+        y: parent.height - self.height;
+        height: Math.max(2px, parent.height * Math.max(0, Math.min(v, 100)) / 100);
+        border-radius: self.width / 2;
+        background: @linear-gradient(180deg, root.tint 0%, root.tint.with-alpha(0.28) 100%);
+        opacity: 0.45 + 0.55 * t;
+        animate height {
+            duration: 900ms;
+            easing: ease-out;
+        }
+    }
+}
+
+// ── 面积图：线 + 渐隐填充，路径串由 Rust 生成（每次数据更新整体重建）──
+export component AreaChart inherits Rectangle {
+    in property <string> line-pts;
+    in property <string> area-pts;
+    in property <color> tint;
+    if root.area-pts != "": Path {
+        width: 100%;
+        height: 100%;
+        commands: root.area-pts;
+        fill: @linear-gradient(180deg, root.tint.with-alpha(0.30) 0%, root.tint.with-alpha(0.02) 100%);
+    }
+    if root.line-pts != "": Path {
+        width: 100%;
+        height: 100%;
+        commands: root.line-pts;
+        stroke: root.tint;
+        stroke-width: 2px;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
+}
+
+// ── 环形仪表：轨道 + 值弧（弧线串由 Rust 生成，含 120x120 盒内圆心 60,60 半径 53）──
+export component RingGauge inherits Rectangle {
+    in property <string> val-arc;
+    in property <color> tint;
+    in property <string> label;
+    in property <string> sub;
+    Path {
+        width: 100%;
+        height: 100%;
+        commands: "M 60 7 A 53 53 0 1 1 59.9 7";
+        stroke: Theme.track;
+        stroke-width: 7px;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
+    Path {
+        width: 100%;
+        height: 100%;
+        commands: root.val-arc;
+        stroke: root.tint;
+        stroke-width: 7px;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
+    VerticalLayout {
+        alignment: LayoutAlignment.center;
+        padding-left: 12px;
+        padding-right: 12px;
+        Mono {
+            text: root.label;
+            font-size: 22px;
+            font-weight: 700;
+            color: Theme.emphasis;
+            horizontal-alignment: TextHorizontalAlignment.center;
+        }
+        Text {
+            text: root.sub;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.center;
+        }
+    }
+}
+
+// ── 页签 ──
+export component TabPill inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    in property <int> idx;
+    height: 24px;
+    width: lbl.preferred-width + 26px;
+    border-radius: self.height / 2;
+    background: root.active ? Theme.accent : Theme.card-alt;
+    border-width: 1px;
+    border-color: root.active ? Theme.accent : Theme.border;
+    animate background {
+        duration: 260ms;
+        easing: ease-out;
+    }
+    lbl := Text {
+        x: 13px;
+        y: Theme.text-nudge;
+        height: parent.height;
+        vertical-alignment: TextVerticalAlignment.center;
+        text: root.label;
+        font-size: 10px;
+        font-weight: 700;
+        color: root.active ? (Theme.dark ? #071019 : #FFFFFF) : Theme.muted;
+        font-family: Theme.font-body;
+        animate color {
+            duration: 260ms;
+            easing: ease-out;
+        }
+    }
+    TouchArea {
+        clicked => {
+            Ui.go(root.idx);
+        }
+    }
+}
