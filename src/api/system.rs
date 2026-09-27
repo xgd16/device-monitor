@@ -47,7 +47,7 @@ pub async fn set_refresh(State(state): State<AppState>, Json(body): Json<Value>)
     success(json!({ "refresh_secs": secs }))
 }
 
-/// DRM 屏当前朝向。
+/// 物理屏当前朝向（供 Web 端展示；实际渲染由启动器拉起面板时读取 rotation.txt 生效）。
 pub async fn get_rotation() -> Json<Value> {
     success(json!({
         "rot270": crate::collector::hotkeys::rot270(),
@@ -56,8 +56,8 @@ pub async fn get_rotation() -> Json<Value> {
     }))
 }
 
-/// 设置 DRM 屏朝向。渲染线程 1Hz 轮询到变化后重建画布（字形按朝向预栅格化）。
-/// 与双击音量上走同一条状态与落盘路径，所以两条入口不会打架。
+/// 设置物理屏朝向。与双击音量上走同一条状态与落盘路径（rotation.txt），
+/// 由启动器在拉起面板时生效（面板重启后按新朝向渲染）。
 pub async fn set_rotation(Json(body): Json<Value>) -> Json<Value> {
     let Some(rot) = body.get("rotation").and_then(|v| v.as_str()) else {
         return error("缺少 rotation（rot90 / rot270）");

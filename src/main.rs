@@ -1,9 +1,8 @@
 //! Device Monitor 服务端入口
 //!
 //! 嵌入式 Linux 设备监控服务，提供：
-//! - REST API（`/api/*`）供 Web 前端查询与控制
+//! - REST API（`/api/*`）供 Web 前端与物理屏面板（`panel/`）查询与控制
 //! - WebSocket（`/ws/realtime`）推送实时系统快照
-//! - 可选 TUI（`--tui`）在物理 TTY 上显示仪表盘
 //! - 后台定时采集、SQLite 持久化、告警检测
 
 mod api;
@@ -11,8 +10,6 @@ mod collector;
 mod store;
 mod ws;
 mod alert;
-mod tui;
-mod screen;
 
 use axum::{Router, routing::{get, post, put, delete}};
 use tower_http::cors::{CorsLayer, Any};
@@ -30,9 +27,9 @@ pub struct AppState {
     pub db: Arc<store::Database>,
     /// 告警引擎（需写锁才能调用 `check`）
     pub alert_engine: Arc<RwLock<alert::AlertEngine>>,
-    /// 最新一次系统概览的 watch 接收端（与 WebSocket/TUI 共享）
+    /// 最新一次系统概览的 watch 接收端（WebSocket 推送用）
     pub latest: watch::Receiver<collector::SystemOverview>,
-    /// 界面刷新间隔（秒）：即采集心跳，WS 推送与 DRM 屏重绘随之变化。
+    /// 界面刷新间隔（秒）：即采集心跳，WS 推送与物理屏面板数据随之变化。
     /// Web 端可调（1/3/5/10），持久化在 refresh_secs.txt。
     pub refresh_secs: Arc<AtomicU64>,
 }
@@ -42,86 +39,11 @@ async fn main() {
     // 日志：默认 info 级别，可通过 RUST_LOG 环境变量调整
     fmt().with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap())).init();
 
-    let args: Vec<String> = std::env::args().collect();
-    let enable_tui = args.contains(&"--tui".to_string());
-    let enable_screen = args.contains(&"--screen".to_string());
-
-    // ── 离屏导出预览（--screen-dump <path>，不需要 DRM，可在服务运行时执行）──
-    if let Some(i) = args.iter().position(|a| a == "--screen-dump") {
-        let path = args
-            .get(i + 1)
-            .cloned()
-            .unwrap_or_else(|| "/tmp/device-monitor-screen.ppm".to_string());
-        // 未显式指定 90/270 时跟随落盘朝向，导出的图才和屏上一致
-        let rot = if args.iter().any(|a| a == "270") {
-            screen::Rotation::Rot270
-        } else if args.iter().any(|a| a == "90") {
-            screen::Rotation::Rot90
-        } else if store::settings::load_rotation().as_deref() == Some("rot270") {
-            screen::Rotation::Rot270
-        } else {
-            screen::Rotation::Rot90
-        };
-        // 主题：--light / --dark 显式指定，否则跟随落盘值（与屏上所见一致）
-        let light = if args.iter().any(|a| a == "--light") {
-            true
-        } else if args.iter().any(|a| a == "--dark") {
-            false
-        } else {
-            store::settings::load_theme().as_deref() == Some("light")
-        };
-        crate::collector::hotkeys::set_light(light);
-        // 页码与屏上「当前第 N / 3 页」一致（1-based）
-        let page = match args.iter().position(|a| a == "--page").and_then(|i| args.get(i + 1)).map(|s| s.as_str()) {
-            Some("clock") | Some("3") => 2u8,
-            Some("tokens") | Some("2") => 1u8,
-            _ => 0u8,
-        };
-        // --at <时刻>：把第 3 页冻结在指定时刻渲染，用于预览其他时段的版式。
-        //   绝对值：`--at 1800000061`（Unix 秒）
-        //   相对值：`--at +3600` / `--at -3600`（相对当前时间，便于「看一小时后」）
-        // 幽灵像素由 clock.rs 的同进程单测保证，不靠跨进程比对——两个进程的电池
-        // 读数、RTC 秒数等实时数据必然漂移，差异无法归因。
-        if let Some(raw) = args
-            .iter()
-            .position(|a| a == "--at")
-            .and_then(|i| args.get(i + 1))
-        {
-            let parsed = if let Some(digits) =
-                raw.strip_prefix('+').or_else(|| raw.strip_prefix('-'))
-            {
-                // 相对值：`+3600` / `-3600`
-                let sign = if raw.starts_with('-') { -1 } else { 1 };
-                digits
-                    .parse::<i64>()
-                    .ok()
-                    .map(|v| chrono::Local::now().timestamp() + sign * v)
-            } else {
-                raw.parse::<i64>().ok()
-            };
-            if parsed.is_none() {
-                eprintln!("--at 需要 Unix 秒（如 1800000061）或 ±偏移秒（如 +3600），收到 {raw:?}");
-            }
-            screen::clock::set_fake_now(parsed);
-        }
-        let overview = collector::collect_system_overview();
-        match screen::dump(&overview, rot, &path, page) {
-            Ok(()) => {
-                println!("已写出 {path} 与 {path}.raw.ppm");
-                std::process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("导出失败: {e}");
-                std::process::exit(1);
-            }
-        }
-    }
-
     // ── 初始化存储与告警 ──
     let db = Arc::new(store::Database::new("device_monitor.db").expect("Failed to init database"));
     let alert_engine = Arc::new(RwLock::new(alert::AlertEngine::new(db.clone())));
 
-    // watch channel：后台采集任务 send，API/WebSocket/TUI receive
+    // watch channel：后台采集任务 send，API/WebSocket receive
     let initial = collector::collect_system_overview();
     let (tx, rx) = watch::channel(initial);
 
@@ -133,10 +55,16 @@ async fn main() {
         refresh_secs: refresh_secs.clone(),
     };
 
-    // ── 启动电源键 / 音量键监听（音量键用于物理屏切页）──
+    // ── 启动电源键 / 音量键监听 ──
+    // 电源键：单击熄/亮屏、双击手电筒（与 Web 端硬件接口共享同一状态）。
+    // 音量键：双击音量上翻转物理屏朝向并落盘 rotation.txt，面板下次启动按新值渲染。
     collector::power_key::start_listener();
     collector::hotkeys::start_listener();
-    collector::hotkeys::install_debug_signals();
+    // 朝向状态与落盘对齐：Web 端 /api/system/rotation 展示与双击翻转都依赖它；
+    // 不初始化会出现「展示 rot90 而实际 rot270」以及第一次双击写回原值的假失灵。
+    crate::collector::hotkeys::set_rot270(
+        store::settings::load_rotation().as_deref() == Some("rot270"),
+    );
 
     // ── 后台采集任务 ──
     let db_bg = db.clone();
@@ -145,7 +73,7 @@ async fn main() {
     let refresh_bg = refresh_secs.clone();
     let persist_interval = std::time::Duration::from_secs(store::persist_interval_secs());
     tracing::info!(
-        "实时刷新：每 {} 秒采集（WS 推送与 DRM 屏跟随，可选 {:?} 秒）",
+        "实时刷新：每 {} 秒采集（WS 推送与物理屏面板跟随，可选 {:?} 秒）",
         refresh_bg.load(Ordering::Relaxed),
         store::settings::REFRESH_CHOICES
     );
@@ -206,64 +134,6 @@ async fn main() {
             }
         }
     });
-
-    // ── 可选物理屏横屏仪表（DRM/KMS 直绘 + 软件旋转）──
-    //
-    // 初始化失败必须让进程退出，启动器据此回退到 kmscon/ASCII TUI；
-    // 否则会出现「API 活着但屏幕空白」的静默失败。
-    if enable_screen {
-        let rotate_arg = args
-            .iter()
-            .position(|a| a == "--rotate")
-            .and_then(|i| args.get(i + 1))
-            .map(|s| s.as_str());
-        // 朝向优先级：命令行显式指定 > 落盘值（双击音量上切换会写）> 默认 Rot90
-        let rot = match rotate_arg {
-            Some("270") => screen::Rotation::Rot270,
-            Some("90") => screen::Rotation::Rot90,
-            _ => match store::settings::load_rotation().as_deref() {
-                Some("rot270") => screen::Rotation::Rot270,
-                _ => screen::Rotation::Rot90,
-            },
-        };
-        // 必须让 hotkeys 的朝向状态与屏上实际朝向对齐：否则若落盘是 rot270，
-        // 第一次双击会「翻转成 rot270」——屏上什么都不变，看着像按键失灵。
-        crate::collector::hotkeys::set_rot270(matches!(rot, screen::Rotation::Rot270));
-        // 主题同理：按落盘值初始化，否则屏上会以错误的配色启动
-        crate::collector::hotkeys::set_light(
-            store::settings::load_theme().as_deref() == Some("light"),
-        );
-        match screen::open(rot) {
-            Ok(scr) => {
-            let rx_screen = state.latest.clone();
-            let db_screen = db.clone();
-            let refresh_screen = refresh_secs.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = screen::run(scr, rx_screen, Some(db_screen), refresh_screen) {
-                        tracing::error!("screen: 渲染循环退出: {}", e);
-                    }
-                });
-            }
-            Err(e) => {
-                tracing::error!("screen: 初始化失败: {} — 退出以便回退 kmscon/ASCII", e);
-                std::process::exit(3);
-            }
-        }
-    }
-
-    // ── 可选 TUI 模式 ──
-    if enable_tui {
-        let tty = args.iter().position(|a| a == "--tty")
-            .and_then(|i| args.get(i + 1).cloned())
-            .unwrap_or_else(|| "/dev/tty1".to_string());
-        let mut tui_rx = state.latest.clone();
-        let db_tui = db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = tui::run_tui(&mut tui_rx, &tty, Some(db_tui)).await {
-                tracing::error!("TUI error: {}", e);
-            }
-        });
-    }
 
     // ── REST API 路由 ──
     let api_routes = Router::new()

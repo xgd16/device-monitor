@@ -1,6 +1,6 @@
 # Device Monitor
 
-面向嵌入式 Linux 设备（Android 手机、开发板等）的**系统监控与硬件控制**平台。通过 **物理屏仪表**、Web 仪表盘、REST API、WebSocket 实时推送和字符 TUI 集中展示 CPU、内存、磁盘、网络、温度、电池、代理（mihomo）与 LLM 网关（XTokenHub）指标，并支持手电筒、屏幕亮度、充电电流/模式、GPU 频率上限、状态 LED、扬声器、振动马达等硬件操作。
+面向嵌入式 Linux 设备（Android 手机、开发板等）的**系统监控与硬件控制**平台。通过 **物理屏 GPU 仪表（面板）**、Web 仪表盘、REST API 与 WebSocket 实时推送集中展示 CPU、内存、磁盘、网络、温度、电池、代理（mihomo）与 LLM 网关（XTokenHub）指标，并支持手电筒、屏幕亮度、充电电流/模式、GPU 频率上限、状态 LED、扬声器、振动马达等硬件操作。
 
 > 仓库地址：[github.com/xgd16/device-monitor](https://github.com/xgd16/device-monitor)
 
@@ -59,15 +59,13 @@
 
 ### 物理屏与按键
 
-- **DRM/KMS 直绘横屏仪表**（首选）：`--screen`，横屏卡片布局，共 **2 页**（系统指标页 / XTokenHub Token 页）
-- **kmscon UTF-8 字符 TUI**（回退）：`--tui`，支持中文（需 `kmscon` + `font-noto-cjk`）
-- **裸 VT ASCII TUI**（兜底）：无 CJK 字形环境
-- **按键**：电源键单击 = 屏幕熄灭/点亮（熄屏时暂停渲染与提交，采集与 WS 继续）、双击 = 切换白光/黄光手电筒；音量加/减键 = 上一页/下一页
-- 启动链路、DRM 细节、排障见 **[SCREEN.md](SCREEN.md)**
+- **GPU 物理屏仪表**（唯一显示）：`panel/` crate（Slint 1.18 + femtovg，直驱 KMS/GLES），三页卡片布局（系统监控 / Token 用量 / 时钟），触摸操作（切页 / 滑动 / 底栏主题）。由 `device-monitor-launcher.sh` 拉起，与 API 服务组合为 `device-monitor.service`；面板异常退出自动重拉。
+- **按键**：电源键单击 = 屏幕熄灭/点亮（熄屏时面板暂停渲染，采集与 WS 继续）、双击 = 切换白光/黄光手电筒；音量上双击 = 翻转屏幕横向朝向（落盘 `rotation.txt`，面板重启后生效）
+- 旧 DRM/KMS 直绘（`--screen`）与 kmscon/ASCII 字符 TUI（`--tui`）渲染器及其回退链已于 2026-09-27 移除
 
 ### 其他
 
-- **WebSocket 实时推送**：按界面刷新间隔推送完整 `SystemOverview` JSON（Web 端可调 **1/3/5/10 秒**，默认 5 秒；同一心跳同时驱动 DRM 物理屏与 TUI）
+- **WebSocket 实时推送**：按界面刷新间隔推送完整 `SystemOverview` JSON（Web 端可调 **1/3/5/10 秒**，默认 5 秒；物理屏面板按同一刷新间隔取值）
 - **SQLite 历史存储**：指标快照与告警记录，默认每 30 秒落库、自动清理 7 天前数据
 - **Web 前端**：React + HeroUI，暗色/亮色主题，ECharts 趋势图
 
@@ -79,8 +77,7 @@
 flowchart TB
     subgraph client [客户端]
         Web[Web 浏览器]
-        Screen[物理屏仪表]
-        TUI[TTY 终端]
+        Screen[物理屏 GPU 面板]
         API_Client[API 调用方]
     end
 
@@ -90,7 +87,6 @@ flowchart TB
         Alert[alert 告警引擎]
         Store[(SQLite)]
         Static[static/ 前端静态文件]
-        Render[screen/ DRM 直绘]
         Input[power_key / hotkeys]
     end
 
@@ -103,13 +99,10 @@ flowchart TB
     Web -->|HTTP /api/*| Axum
     Web -->|WS /ws/realtime| Axum
     Web -->|静态资源| Static
-    TUI -->|watch channel| Collector
-    Render -->|watch channel| Collector
+    Screen -->|REST + WS :3000| Axum
     API_Client --> Axum
 
     Input --> Evdev
-    Input --> Render
-    Render -->|DRM/KMS| Screen
     Axum --> Collector
     Collector --> Proc
     Collector --> Cmd
@@ -121,7 +114,7 @@ flowchart TB
 **数据流：**
 
 1. 后台任务每 **5 秒**调用 `collect_system_overview()` 采集系统指标
-2. 结果通过 `watch` channel 广播给 WebSocket 客户端、物理屏仪表和 TUI
+2. 结果通过 `watch` channel 广播给 WebSocket 客户端；物理屏面板是独立进程，经 REST + WebSocket 从本机 API 取数
 3. 同时写入 SQLite，并触发告警引擎检查；大核调度按同一份负载数据决策
 4. 前端通过 WebSocket 接收实时数据，硬件状态/GPU 每 2 秒、系统状态卡每 5 秒、其他部分每 10–30 秒 REST 轮询
 
@@ -132,7 +125,7 @@ flowchart TB
 | 层级 | 技术 |
 |------|------|
 | 后端 | Rust 2024、Axum 0.8、Tokio、Rusqlite（bundled）、Tracing |
-| 物理屏直绘 | drm 0.15、ab_glyph（CJK 灰度抗锯齿）、bytemuck |
+| 物理屏面板 | Slint 1.18 + femtovg（GLES 渲染，linuxkms 直驱 DRM，libinput 触摸） |
 | 前端 | React 19、TypeScript、Vite、HeroUI v3、Zustand、ECharts、xterm.js；包管理器 **pnpm** |
 | 部署 | systemd 服务单元（`device-monitor.service`）、`build.sh` |
 
@@ -150,13 +143,11 @@ device-monitor/
 │   │   ├── battery.rs              # 电池、健康度、充电上限
 │   │   ├── hardware.rs             # 手电筒/背光/LED/充电/GPU/扬声器
 │   │   ├── mihomo.rs / xtokenhub.rs
-│   │   ├── hotkeys.rs / power_key.rs   # 音量键翻页、电源键行为
+│   │   ├── hotkeys.rs / power_key.rs   # 音量键（朝向翻转）、电源键行为
 │   │   └── disk.rs / memory.rs / network.rs / process.rs / thermal.rs
-│   ├── screen/                 # 物理屏 DRM 直绘仪表（canvas/font/layout/theme/token）
 │   ├── store/                  # SQLite 持久化
 │   ├── alert/                  # 告警引擎
-│   ├── ws/                     # WebSocket 推送 + PTY 终端
-│   └── tui/                    # 字符 TUI
+│   └── ws/                     # WebSocket 推送 + PTY 终端
 ├── device-monitor-web/         # React 前端源码
 │   └── src/
 │       ├── components/         # 仪表盘卡片组件
@@ -166,17 +157,15 @@ device-monitor/
 ├── static/                     # 前端构建产物（由 Vite 输出，gitignore）
 ├── scripts/                    # mihomo 订阅脚本与本地覆盖配置
 ├── .opencode/rules/            # 编码规范（Rust / React / 项目指南）
+├── panel/                      # 物理屏 GPU 面板（Slint + femtovg，独立 crate）
 ├── Cargo.toml
 ├── build.sh                    # 构建前端+后端并重启服务
-├── device-monitor-launcher.sh  # 三级回退启动器（systemd 调用）
+├── device-monitor-launcher.sh  # 启动器：API 常驻 + GPU 面板自动重拉（systemd 调用）
 ├── setup-permissions.sh        # 硬件 sysfs 权限修复
-├── setup-tui-utf8.sh           # kmscon + CJK 字体配置
-├── SCREEN.md                   # 物理屏 DRM 直绘仪表说明与排障
-├── KMSCON_TUI_ADAPTATION.md    # kmscon TUI 适配说明
 └── test_vibrate.rs             # 振动马达 ioctl 测试工具（rustc 直接编译）
 ```
 
-运行时生成、不纳入版本管理的文件：`device_monitor.db*`、`screen.log`、`static/`、`target/`、`node_modules/`、`battery_effective_max.txt`、`battery_low_streak.txt`、`battery_session_peak.txt`、`refresh_secs.txt`、`.device-monitor-tui-wrapper.sh`。
+运行时生成、不纳入版本管理的文件：`device_monitor.db*`、`static/`、`target/`、`node_modules/`、`battery_effective_max.txt`、`battery_low_streak.txt`、`battery_session_peak.txt`、`refresh_secs.txt`、`rotation.txt`、`panel-theme.txt`、`panel.log`、`api.log`。
 
 ---
 
@@ -263,37 +252,29 @@ pnpm dev
 
 ---
 
-## 物理屏仪表与 TUI
+## 物理屏仪表（GPU 面板）
+
+物理屏显示由独立进程 `panel/` 承担（Slint + femtovg，直驱 KMS），经本机 REST + WebSocket 从服务端取数，触摸交互（切页 / 滑动 / 底栏主题）：
 
 ```bash
-# 首选：DRM/KMS 直绘横屏仪表（自绘像素排版，不依赖终端字体）
-./target/release/device-monitor-server --screen --rotate 90
+# 构建面板（workspace 成员，随 cargo build --release 一起编）
+cargo build --release
 
-# 离屏导出预览（不需要 DRM，可在服务运行时执行）
-./target/release/device-monitor-server --screen-dump /tmp/scr.ppm          # 当前页
-./target/release/device-monitor-server --screen-dump /tmp/scr.ppm --page 1 # 指定页
+# 设备上运行（由 device-monitor-launcher.sh 自动拉起，一般不需要手工执行）
+SLINT_SCALE_FACTOR=2 SLINT_KMS_ROTATION=90 ./target/release/device-monitor-panel
 
-# 回退 1：kmscon UTF-8 字符 TUI（中文需 kmscon + font-noto-cjk）
-sudo sh setup-tui-utf8.sh
-TUI_UTF8=1 LANG=zh_CN.UTF-8 ./target/release/device-monitor-server --tui --tty -
-
-# 回退 2：裸 VT ASCII TUI
-./target/release/device-monitor-server --tui --tty /dev/tty1
+# macOS 预览（winit 窗口）
+cargo run -p device-monitor-panel -- --demo
 ```
 
-各级界面与 Web 服务共享同一 `watch` 数据通道，可同时运行。
-
-生产环境由 `device-monitor-launcher.sh` 按「DRM 横屏 → kmscon UTF-8 → 裸 ASCII」三级回退启动，启动前会解绑内核 framebuffer 控制台（fbcon），避免 console 重画盖掉面板画面；回退到字符 TUI 前再绑回。启动器可用的环境变量：
+生产环境由 `device-monitor-launcher.sh` 启动：① API 常驻（:3000，面板与 Web 的数据源）；② Slint GPU 面板（唯一显示，异常退出 5 秒自动重拉）。启动前会解绑内核 framebuffer 控制台（fbcon），避免 console 重画盖掉面板画面。启动器可用的环境变量：
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
-| `SCREEN_ROTATE` | 横屏旋转方向 `90` / `270` | `90` |
-| `DEVICE_MONITOR_FORCE_TUI` | `1` = 跳过 DRM 直绘，直接用 kmscon | 未设置 |
-| `DEVICE_MONITOR_FORCE_ASCII` | `1` = 直接裸 ASCII TUI | 未设置 |
-| `TUI_FONT_SIZE` | kmscon 字号（不设则按分辨率估算） | 自动 |
-| `TUI_TARGET_COLS` / `TUI_TARGET_ROWS` | 估算字号时的目标列数/行数 | `82` / `72` |
+| `SCREEN_ROTATE` | 横屏旋转方向 `90` / `270`（未设置时读 `rotation.txt`） | `90` |
+| `SLINT_SCALE_FACTOR` | 面板缩放（2 → 逻辑 1170x540） | `2` |
 
-面板行为的完整说明（软件旋转、逐帧 commit 的坑、背光与 DPMS、字体缺字形、自愈逻辑、运维命令）见 **[SCREEN.md](SCREEN.md)**。
+旧 DRM/KMS 直绘（`--screen`）与 kmscon/ASCII 字符 TUI（`--tui`）已于 2026-09-27 移除，服务进程不再接受任何命令行参数。
 
 ---
 
@@ -327,7 +308,7 @@ sudo ./test_vibrate 500   # 振动 500ms
 ## systemd 部署（当前使用）
 
 系统上以 `device-monitor.service` 常驻运行，工作目录 `device-monitor`，启动器为
-`device-monitor-launcher.sh`（DRM 横屏仪表 → kmscon UTF-8 TUI → 裸 ASCII 三级回退）。
+`device-monitor-launcher.sh`（API 常驻 + Slint GPU 面板，面板异常退出自动重拉）。
 
 ```bash
 # 构建前端 + 后端
@@ -339,7 +320,7 @@ cargo build --release
 
 # 重启服务
 sudo systemctl restart device-monitor
-journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
+journalctl -u device-monitor -f      # 面板日志见 panel.log，服务日志见 api.log
 ```
 
 附带的两个 drop-in（`/etc/systemd/system/device-monitor.service.d/`）：
@@ -554,9 +535,9 @@ journalctl -u device-monitor -f      # 物理屏渲染日志另见 screen.log
 | `MIHOMO_FETCH_SUB_SCRIPT` | 订阅更新脚本路径 | `/home/user/code/fetch_sub.py` |
 | `BATTERY_EFFECTIVE_MAX_PCT` | 强制指定电池实际上限 SOC（跳过学习） | 未设置 |
 | `SHELL` | Web 终端默认 shell | `/bin/sh` |
-| `LANG` / `LC_ALL` | TUI 字符集（中文需 `zh_CN.UTF-8`） | 系统默认 |
+| `LANG` / `LC_ALL` | 服务/面板字符集（中文需 `zh_CN.UTF-8`） | 系统默认 |
 
-启动器另有 `SCREEN_ROTATE`、`DEVICE_MONITOR_FORCE_TUI`、`DEVICE_MONITOR_FORCE_ASCII`、`TUI_FONT_SIZE`、`TUI_TARGET_COLS`、`TUI_TARGET_ROWS`，见「物理屏仪表与 TUI」。
+启动器另有 `SCREEN_ROTATE`、`SLINT_SCALE_FACTOR`，见「物理屏仪表（GPU 面板）」。
 
 示例：
 
@@ -568,14 +549,7 @@ RUST_LOG=debug ./target/release/device-monitor-server
 
 ## 命令行参数
 
-| 参数 | 说明 |
-|------|------|
-| `--screen` | 启用物理屏 DRM/KMS 直绘横屏仪表 |
-| `--rotate <90\|270>` | 横屏旋转方向，默认 `90` |
-| `--screen-dump <path>` | 离屏导出 PPM 预览（不需要 DRM，可服务运行时执行） |
-| `--page <n>` | 配合 `--screen-dump` 指定导出页（0 起） |
-| `--tui` | 启用字符 TUI 仪表盘 |
-| `--tty <path>` | TUI 目标 TTY 设备，默认 `/dev/tty1`；`-` 表示写 stdout（kmscon 用） |
+服务进程无命令行参数（旧渲染器模式已移除）；物理屏面板为独立二进制，支持 `--demo`（macOS 预览）与 `--page <0-2>`（直达某页）。
 
 ---
 
@@ -587,7 +561,7 @@ RUST_LOG=debug ./target/release/device-monitor-server
 
 ### 物理屏画面被控制台日志盖掉 / 黑屏
 
-DRM 直绘要求内核 framebuffer 控制台（fbcon）处于解绑状态，`device-monitor-launcher.sh` 会自动处理；手工排查与自愈细节见 [SCREEN.md](SCREEN.md)。
+面板直驱 KMS 要求内核 framebuffer 控制台（fbcon）处于解绑状态，`device-monitor-launcher.sh` 会自动处理；面板自身日志见 `panel.log`。
 
 ### 硬件控制返回权限错误
 
@@ -609,10 +583,10 @@ DRM 直绘要求内核 framebuffer 控制台（fbcon）处于解绑状态，`dev
 # 记录数与时间跨度：oldest_metric/newest_metric 差值应 ≤ 保留天数
 curl -s http://127.0.0.1:3000/api/database/stats
 # 清理任务是否在跑（每小时一行）
-grep -a 数据清理 screen.log || journalctl -u device-monitor | grep 数据清理
+grep -a 数据清理 api.log || journalctl -u device-monitor | grep 数据清理
 ```
 
-> 服务由 `device-monitor-launcher.sh` 拉起时，其 stdout/stderr 被重定向到 `screen.log`，所以服务自身的日志（含清理记录）在那里；`journalctl` 只有启动器输出的几行。
+> 服务由 `device-monitor-launcher.sh` 拉起时，其 stdout/stderr 被重定向到 `api.log`（追加写），所以服务自身的日志（含清理记录）在那里；`journalctl` 只有启动器输出的几行。
 
 跨度正常就说明清理在跑，体积问题出在落库频率：调大 `METRICS_PERSIST_SECS`（如 60），或直接 `POST /api/database/cleanup` 立刻回收。
 
@@ -630,4 +604,4 @@ grep -a 数据清理 screen.log || journalctl -u device-monitor | grep 数据清
 
 - [Axum Web 框架](https://github.com/tokio-rs/axum)
 - [HeroUI React 组件库](https://heroui.com/)
-- [SCREEN.md — 物理屏 DRM 直绘仪表](SCREEN.md)
+- [Slint UI 框架](https://slint.dev/)

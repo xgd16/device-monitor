@@ -98,25 +98,3 @@ pub fn get_disk_type(block_dev: &str) -> String {
         _ => "未知".to_string(),
     }
 }
-
-/// 从 `df -h -T` 输出收集去重后的块设备名（最多 `limit` 个）。
-pub fn list_block_devices(limit: usize) -> Vec<String> {
-    let mut devices = Vec::new();
-    if let Ok(output) = std::process::Command::new("df").args(["-h", "-T"]).output() {
-        let text = String::from_utf8_lossy(&output.stdout);
-        for line in text.lines().skip(1) {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 7 || !parts[0].starts_with("/dev/") {
-                continue;
-            }
-            let block_dev = extract_block_dev(parts[0]);
-            if !devices.contains(&block_dev) {
-                devices.push(block_dev);
-                if devices.len() >= limit {
-                    break;
-                }
-            }
-        }
-    }
-    devices
-}
