@@ -35,13 +35,9 @@ export component LiveDot inherits Rectangle {
         height: parent.height + 9px;
         border-radius: self.width / 2;
         background: root.tint.with-alpha(0.32);
-        opacity: (root.pulse && Ui.screen-on) ? 0.95 : 0.12;
-        animate opacity {
-            duration: 1600ms;
-            easing: ease-in-out;
-            iteration-count: -1;
-            direction: alternate;
-        }
+        // 呼吸相位由 Rust tick 每秒推进（替代 iteration-count:-1 无限动画——
+        // 那个写法会让渲染循环永不空闲，常驻烧一个 CPU 核）
+        opacity: (root.pulse && Ui.screen-on) ? Ui.live-pulse : 0.12;
     }
     Rectangle {
         width: 100%;
@@ -115,10 +111,8 @@ export component StatBar inherits Rectangle {
         width: parent.width * Math.max(0, Math.min(root.pct, 100)) / 100;
         border-radius: self.height / 2;
         background: @linear-gradient(90deg, root.tint.with-alpha(0.72) 0%, root.tint 100%);
-        animate width {
-            duration: 700ms;
-            easing: ease-out;
-        }
+        // 不做 width 过渡动画：本机是常亮仪表，秒级/3 秒级的数据刷新会把
+        // 动画窗口铺满 100% 时间，Slint 渲染循环永不空闲（实测常驻烧一个 CPU 核）
     }
 }
 
@@ -136,10 +130,7 @@ export component BarChart inherits Rectangle {
         border-radius: self.width / 2;
         background: @linear-gradient(180deg, root.tint 0%, root.tint.with-alpha(0.28) 100%);
         opacity: 0.45 + 0.55 * t;
-        animate height {
-            duration: 900ms;
-            easing: ease-out;
-        }
+        // 同上：height 过渡动画会让高频数据刷新持续喂渲染循环，去掉
     }
 }
 
@@ -241,6 +232,13 @@ export component TabPill inherits Rectangle {
         }
     }
     TouchArea {
+        pointer-event(e) => {
+            Ui.touch-probe = true;
+            // 页签在顶栏卡片 (14,14) 内，横排 y=17：换算到窗口坐标供探针显示
+            Ui.probe-x = 800px + self.mouse-x;
+            Ui.probe-y = 31px + self.mouse-y;
+            Ui.probe(self.mouse-x / 1px, self.mouse-y / 1px, (e.kind == PointerEventKind.down ? "tab-down" : (e.kind == PointerEventKind.up ? "tab-up" : "tab-move")));
+        }
         clicked => {
             Ui.go(root.idx);
         }

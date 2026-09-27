@@ -14,7 +14,7 @@
 //! - 天气 curl 15min、世界时钟子进程 30s 缓存、秒级时钟 1s
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -49,6 +49,14 @@ const LON: f64 = 108.9398;
 const SUN_H0_DEG: f64 = -0.833;
 
 static REFRESH_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+// TPS 流限频：网关每 500ms 推一条 stats.throughput（2Hz），逐条刷 UI 会让
+// Slint 渲染循环停不下来（每条消息 = 一次全屏重绘）。样本照常进滑窗，
+// UI 落刷搭 1s 时钟 tick 的车（无新样本时完全不碰 UI，不产生渲染）。
+static TPS_WIN: Mutex<VecDeque<f32>> = Mutex::new(VecDeque::new());
+static TPS_STREAMS: AtomicI32 = AtomicI32::new(0);
+static TPS_SEQ: AtomicU64 = AtomicU64::new(0);
+static TPS_SEQ_DONE: AtomicU64 = AtomicU64::new(0);
 
 fn main() {
     // linuxkms 后端在初始化时读环境变量；edition 2024 中 set_var 是 unsafe，
@@ -110,6 +118,10 @@ fn main() {
             let _ = std::fs::write("panel-theme.txt", if dark { "dark" } else { "light" });
         });
     }
+    // 触摸调试探针：触点逻辑坐标落 panel.log（部署期诊断，代价可忽略）
+    app.global::<Ui>().on_probe(|x, y, kind| {
+        eprintln!("[touch-probe] {kind} x={x:.1} y={y:.1} (logical 1170x540)");
+    });
 
     // 秒级时钟 + 时间进度 + 日出相位 + 世界时钟（子进程 30s 缓存）
     let timer = slint::Timer::default();
@@ -407,6 +419,38 @@ fn tick_clock(w: &Weak<App>) {
     let sec = now.second();
     clk.set_sec_pct(sec as f32 / 60.0 * 100.0);
     clk.set_sec_str(format!("第 {sec} 秒 / 60").into());
+
+    // 呼吸/脉冲相位：1Hz 步进（替代 iteration-count:-1 无限动画；后者令渲染循环不空闲）
+    let secf = sec as f32;
+    let breathe = |t: f32, period: f32| 0.5 - 0.5 * (std::f32::consts::TAU * t / period).cos();
+    clk.set_glow_a(0.78 + 0.17 * breathe(secf, 10.4));
+    clk.set_glow_b(0.40 + 0.12 * breathe(secf + 3.2, 12.8));
+    clk.set_sun_halo(0.45 + 0.50 * breathe(secf, 2.0));
+    ui.global::<Ui>().set_live_pulse(0.30 + 0.65 * breathe(secf, 2.0));
+
+    // XTokenHub TPS：把 WS 2Hz 样本限量到 1Hz 落 UI（无新样本则不碰，不产生渲染）
+    {
+        let seq = TPS_SEQ.load(Ordering::Relaxed);
+        if seq != TPS_SEQ_DONE.swap(seq, Ordering::Relaxed) {
+            let vals: Vec<f32> = {
+                let wnd = TPS_WIN.lock().unwrap_or_else(|p| p.into_inner());
+                wnd.iter().copied().collect()
+            };
+            let (line, area) = polyline(&vals, TPS_W, TPS_H, "");
+            let cur = vals.last().copied().unwrap_or(0.0);
+            let avg = if vals.is_empty() { 0.0 } else { vals.iter().sum::<f32>() / vals.len() as f32 };
+            let peak = vals.iter().cloned().fold(0.0f32, f32::max);
+            let info = format!("滑窗均值 {avg:.0} · 峰值 {peak:.0} tokens/s · 采样 {}/{TPS_POINTS}", vals.len());
+            let tok = ui.global::<Tok>();
+            tok.set_tps(cur);
+            tok.set_tps_str(format!("{cur:.0}").into());
+            tok.set_streams(TPS_STREAMS.load(Ordering::Relaxed));
+            tok.set_tps_line(line.into());
+            tok.set_tps_area(area.into());
+            tok.set_tps_info(info.into());
+        }
+    }
+
     let wd = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         [now.weekday().num_days_from_monday() as usize];
     clk.set_date_line(
@@ -1633,12 +1677,11 @@ fn apply_token(
     .ok();
 }
 
-/// WS 长连接：2Hz 吞吐滑窗 + 最近一次调用 + stats.updated 限频刷新信号。
+/// WS 长连接：2Hz 吞吐滑窗（UI 由 1s tick 限频落刷）+ 最近一次调用 + stats.updated 刷新信号。
 fn spawn_token_ws(w: Weak<App>) {
     std::thread::Builder::new()
         .name("xtb-ws".into())
         .spawn(move || {
-            let mut tps: VecDeque<f32> = VecDeque::new();
             loop {
                 match tungstenite::connect(XTB_WS) {
                     Err(e) => {
@@ -1653,11 +1696,11 @@ fn spawn_token_ws(w: Weak<App>) {
                         loop {
                             match socket.read() {
                                 Ok(tungstenite::Message::Text(t)) => {
-                                    handle_ws_msg(&w, &mut tps, &t);
+                                    handle_ws_msg(&w, &t);
                                 }
                                 Ok(tungstenite::Message::Binary(b)) => {
                                     if let Ok(s) = std::str::from_utf8(&b) {
-                                        handle_ws_msg(&w, &mut tps, s);
+                                        handle_ws_msg(&w, s);
                                     }
                                 }
                                 Ok(tungstenite::Message::Close(_)) => {
@@ -1706,33 +1749,23 @@ fn set_ws_ok(w: &Weak<App>, ok: bool, err: Option<String>) {
     .ok();
 }
 
-fn handle_ws_msg(w: &Weak<App>, tps: &mut VecDeque<f32>, text: &str) {
+fn handle_ws_msg(w: &Weak<App>, text: &str) {
     let Ok(v) = serde_json::from_str::<Value>(text) else { return };
     match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
         "stats.throughput" => {
             let p = v.get("payload").cloned().unwrap_or(json!({}));
             let val = jf(&p, "tokens_per_sec") as f32;
             let streams = ji(&p, "active_streams") as i32;
-            tps.push_back(val);
-            while tps.len() > TPS_POINTS {
-                tps.pop_front();
+            {
+                let mut wnd = TPS_WIN.lock().unwrap_or_else(|p| p.into_inner());
+                wnd.push_back(val);
+                while wnd.len() > TPS_POINTS {
+                    wnd.pop_front();
+                }
             }
-            let vals: Vec<f32> = tps.iter().copied().collect();
-            let (line, area) = polyline(&vals, TPS_W, TPS_H, "");
-            let cur = vals.last().copied().unwrap_or(0.0);
-            let avg = if vals.is_empty() { 0.0 } else { vals.iter().sum::<f32>() / vals.len() as f32 };
-            let peak = vals.iter().cloned().fold(0.0f32, f32::max);
-            let info = format!("滑窗均值 {avg:.0} · 峰值 {peak:.0} tokens/s · 采样 {}/{}", vals.len(), TPS_POINTS);
-            w.upgrade_in_event_loop(move |ui| {
-                let tok = ui.global::<Tok>();
-                tok.set_tps(cur);
-                tok.set_tps_str(format!("{cur:.0}").into());
-                tok.set_streams(streams);
-                tok.set_tps_line(line.into());
-                tok.set_tps_area(area.into());
-                tok.set_tps_info(info.into());
-            })
-            .ok();
+            TPS_STREAMS.store(streams, Ordering::Relaxed);
+            TPS_SEQ.fetch_add(1, Ordering::Relaxed);
+            // 不在这里刷 UI：交给 tick_clock 每秒统一落（否则 2Hz 消息持续喂渲染循环）
         }
         "request.completed" => {
             let p = v.get("payload").cloned().unwrap_or(json!({}));

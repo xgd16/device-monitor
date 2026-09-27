@@ -162,6 +162,10 @@ export component App inherits Window {
             TouchArea {
                 property <length> press-x: 0px;
                 pointer-event(e) => {
+                    Ui.touch-probe = true;
+                    Ui.probe-x = self.mouse-x + 14px;
+                    Ui.probe-y = self.mouse-y + 82px;
+                    Ui.probe(self.mouse-x / 1px, self.mouse-y / 1px, (e.kind == PointerEventKind.down ? "swipe-down" : (e.kind == PointerEventKind.up ? "swipe-up" : "swipe-move")));
                     if (e.kind == PointerEventKind.down) {
                         press-x = self.mouse-x;
                     }
@@ -331,11 +335,43 @@ export component App inherits Window {
                     vertical-alignment: TextVerticalAlignment.center;
                 }
                 TouchArea {
+                    pointer-event(e) => {
+                        Ui.touch-probe = true;
+                        Ui.probe-x = 1096px + self.mouse-x;
+                        Ui.probe-y = 500px + self.mouse-y;
+                        Ui.probe(self.mouse-x / 1px, self.mouse-y / 1px, (e.kind == PointerEventKind.down ? "theme-down" : (e.kind == PointerEventKind.up ? "theme-up" : "theme-move")));
+                    }
                     clicked => {
                         Ui.toggle-theme();
                     }
                 }
             }
         }
+    }
+
+    // ── 触摸调试探针：最近触点十字光标（红色，非交互、不挡输入）──
+    if Ui.touch-probe: Rectangle {
+        x: Ui.probe-x - 16px;
+        y: Ui.probe-y - 0.75px;
+        width: 32px;
+        height: 1.5px;
+        background: #FF5D68;
+    }
+    if Ui.touch-probe: Rectangle {
+        x: Ui.probe-x - 0.75px;
+        y: Ui.probe-y - 16px;
+        width: 1.5px;
+        height: 32px;
+        background: #FF5D68;
+    }
+    if Ui.touch-probe: Rectangle {
+        x: Ui.probe-x - 5px;
+        y: Ui.probe-y - 5px;
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        border-width: 1.5px;
+        border-color: #FF5D68;
+        background: transparent;
     }
 }
