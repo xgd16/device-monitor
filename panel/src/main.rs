@@ -50,6 +50,10 @@ const SUN_H0_DEG: f64 = -0.833;
 
 static REFRESH_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+/// 熄屏降负载：屏幕状态镜像（bl_power 事实源，true=亮）。
+/// 由 screen-watch 线程维护；tick / 轮询线程据此短路，熄屏期间零重绘零拉取。
+static SCREEN_ON: AtomicBool = AtomicBool::new(true);
+
 // TPS 流限频：网关每 500ms 推一条 stats.throughput（2Hz），逐条刷 UI 会让
 // Slint 渲染循环停不下来（每条消息 = 一次全屏重绘）。样本照常进滑窗，
 // UI 落刷搭 1s 时钟 tick 的车（无新样本时完全不碰 UI，不产生渲染）。
@@ -135,6 +139,7 @@ fn main() {
     if demo {
         spawn_demo(weak.clone());
     } else {
+        spawn_screen_watch(weak.clone());
         spawn_system_poller(weak.clone());
         spawn_token_poller(weak.clone());
         spawn_token_ws(weak.clone());
@@ -411,6 +416,16 @@ fn short_span(secs: f64) -> String {
 
 fn tick_clock(w: &Weak<App>) {
     let Some(ui) = w.upgrade() else { return };
+    // 熄屏降负载：跳过全部属性更新——没有变化 femtovg 就不会重绘，
+    // 秒级 timer 只剩一次空查询，GPU 归零。唤醒由 screen-watch 补 tick。
+    if !ui.global::<Ui>().get_screen_on() {
+        return;
+    }
+    tick_now(&ui);
+}
+
+/// tick 主体（亮屏路径）；熄屏唤醒瞬间由 screen-watch 在事件循环里直接调用。
+fn tick_now(ui: &App) {
     let clk = ui.global::<Clk>();
     let now = Local::now();
 
@@ -604,6 +619,56 @@ fn tick_clock(w: &Weak<App>) {
 }
 
 type SunPair = Option<(f64, f64)>;
+
+/// 读背光 DPMS 状态（msm 把 bl_power=4 当熄屏）；读失败视为亮屏（fail-open）。
+fn read_screen_on() -> bool {
+    std::fs::read_to_string("/sys/class/backlight/ae94000.dsi.0/bl_power")
+        .map(|s| s.trim() != "4")
+        .unwrap_or(true)
+}
+
+/// 熄屏降负载监视：poll bl_power（灭 1s / 亮 3s），连续 2 次读到新状态才切换。
+/// 亮屏瞬间：同步 Ui.screen-on → 立即补一轮时钟 tick → 置刷新请求，
+/// sys-poll / token-poll 下一轮（≤2s / ≤5s）全量恢复。
+fn spawn_screen_watch(w: Weak<App>) {
+    std::thread::Builder::new()
+        .name("screen-watch".into())
+        .spawn(move || {
+            let mut cur = read_screen_on();
+            let mut pending = cur;
+            let mut hits = 0u32;
+            SCREEN_ON.store(cur, Ordering::Relaxed);
+            loop {
+                let now_on = read_screen_on();
+                if now_on != pending {
+                    pending = now_on;
+                    hits = 0;
+                }
+                hits += 1;
+                if hits >= 2 && now_on != cur {
+                    cur = now_on;
+                    SCREEN_ON.store(cur, Ordering::Relaxed);
+                    tracing_or_log(if cur {
+                        "亮屏：恢复 tick/轮询，立即补一轮刷新"
+                    } else {
+                        "熄屏：停 tick 与轮询（screen-watch 1s 巡检）"
+                    });
+                    let on = cur;
+                    let _ = w.upgrade_in_event_loop(move |ui| {
+                        ui.global::<Ui>().set_screen_on(on);
+                        if on {
+                            tick_now(&ui);
+                        }
+                    });
+                    if on {
+                        REFRESH_REQUESTED.store(true, Ordering::Relaxed);
+                    }
+                }
+                std::thread::sleep(Duration::from_secs(if cur { 3 } else { 1 }));
+            }
+        })
+        .expect("screen-watch 线程启动失败");
+}
 
 static WEATHER: OnceLock<Mutex<WeatherNow>> = OnceLock::new();
 
@@ -893,6 +958,11 @@ fn spawn_system_poller(w: Weak<App>) {
             let mut it = 0u64;
             loop {
                 it += 1;
+                // 熄屏降负载：跳过拉取与上屏（screen-watch 负责唤醒，醒来 ≤2s 恢复）
+                if !SCREEN_ON.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_secs(2));
+                    continue;
+                }
                 match fetch_json(&format!("{BASE}/system/overview")) {
                     Ok(ov) => {
                         fail = 0;
@@ -1235,9 +1305,7 @@ fn apply_hardware(w: &Weak<App>, v: &Value) {
     };
     let br = jf(&brightness, "percent") as i64;
     // 熄屏检测（msm 把 bl_power=4 当 DPMS）
-    let screen_on = std::fs::read_to_string("/sys/class/backlight/ae94000.dsi.0/bl_power")
-        .map(|s| s.trim() != "4")
-        .unwrap_or(true);
+    let screen_on = read_screen_on();
     {
         let mut g = HW_LATEST.lock().unwrap_or_else(|p| p.into_inner());
         *g = HwLatest {
@@ -1404,6 +1472,11 @@ fn spawn_token_poller(w: Weak<App>) {
     std::thread::Builder::new()
         .name("xtb-poll".into())
         .spawn(move || loop {
+            // 熄屏降负载：跳过 stats 拉取与上屏（醒来 ≤5s 恢复，WS 样本照常进滑窗）
+            if !SCREEN_ON.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            }
             let midnight = Local::now()
                 .date_naive()
                 .and_hms_opt(0, 0, 0)

@@ -83,30 +83,62 @@ async fn main() {
         store::retention_days()
     );
     tokio::spawn(async move {
-        let mut cur_secs = refresh_bg.load(Ordering::Relaxed);
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(cur_secs));
+        // ── 熄屏降负载 ──
+        // 固定 interval 换成 2s 分片轮询：每片读一次 bl_power（0=亮 4=灭，读失败视为亮屏）。
+        // 亮屏（或有活跃 WS 看板）按 refresh_secs 采集；熄屏且没人看时拉长到 screen_off_secs，
+        // 落库/告警随采集自然变疏。亮屏后 ≤2s 恢复满频。
+        const BL_POWER: &str = "/sys/class/backlight/ae94000.dsi.0/bl_power";
+        let screen_off_secs = std::env::var("SCREEN_OFF_REFRESH_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&v| v >= 5)
+            .unwrap_or(30);
+        let mut slice = tokio::time::interval(std::time::Duration::from_secs(2));
         let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
         // 采集与落库解耦：实时刷新按 refresh_secs，落库按 persist_interval 节流。
         let mut last_persist = std::time::Instant::now()
             .checked_sub(persist_interval)
             .unwrap_or_else(std::time::Instant::now);
+        let mut last_collect: Option<std::time::Instant> = None;
+        let mut prev_screen_on = true;
         loop {
             tokio::select! {
-                // 按刷新间隔采集一次系统指标
-                _ = interval.tick() => {
-                    let overview = collector::collect_system_overview();
-                    if let Err(e) = collector::hardware::apply_cpu_status_led_link(overview.cpu.overall_usage as f64) {
-                        tracing::error!("CPU 状态灯联动失败: {}", e);
+                // 分片唤醒：检查屏幕状态，到点才采集
+                _ = slice.tick() => {
+                    let screen_on = std::fs::read_to_string(BL_POWER)
+                        .map(|s| s.trim() != "4")
+                        .unwrap_or(true);
+                    collector::power_key::update_screen_state(screen_on);
+                    if screen_on != prev_screen_on {
+                        prev_screen_on = screen_on;
+                        tracing::info!(
+                            "屏幕{}：采集间隔 {}s（refresh={}s）",
+                            if screen_on { "点亮" } else { "熄灭" },
+                            if screen_on { refresh_bg.load(Ordering::Relaxed) } else { screen_off_secs },
+                            refresh_bg.load(Ordering::Relaxed)
+                        );
                     }
-                    let _ = tx.send(overview.clone());
-                    if last_persist.elapsed() >= persist_interval {
-                        last_persist = std::time::Instant::now();
-                        if let Err(e) = db_bg.store_metrics(&overview) {
-                            tracing::error!("Failed to store metrics: {}", e);
+                    let want_secs = if screen_on || ws::client_count() > 0 {
+                        refresh_bg.load(Ordering::Relaxed)
+                    } else {
+                        screen_off_secs
+                    };
+                    if last_collect.is_none_or(|t| t.elapsed().as_secs() >= want_secs) {
+                        last_collect = Some(std::time::Instant::now());
+                        let overview = collector::collect_system_overview();
+                        if let Err(e) = collector::hardware::apply_cpu_status_led_link(overview.cpu.overall_usage as f64) {
+                            tracing::error!("CPU 状态灯联动失败: {}", e);
                         }
+                        let _ = tx.send(overview.clone());
+                        if last_persist.elapsed() >= persist_interval {
+                            last_persist = std::time::Instant::now();
+                            if let Err(e) = db_bg.store_metrics(&overview) {
+                                tracing::error!("Failed to store metrics: {}", e);
+                            }
+                        }
+                        let mut engine = ae_bg.write().await;
+                        engine.check(&overview);
                     }
-                    let mut engine = ae_bg.write().await;
-                    engine.check(&overview);
                 }
                 // 每小时清理超过保留期（默认 7 天）的历史数据
                 _ = cleanup_interval.tick() => {
@@ -125,12 +157,6 @@ async fn main() {
                         }
                     }
                 }
-            }
-            // Web 端改了刷新间隔就重建定时器；新定时器首个 tick 立即到期，改动即刻生效
-            let want = refresh_bg.load(Ordering::Relaxed);
-            if want != cur_secs {
-                cur_secs = want;
-                interval = tokio::time::interval(std::time::Duration::from_secs(want));
             }
         }
     });
