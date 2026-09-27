@@ -668,76 +668,93 @@ fn tick_now(ui: &App) {
 
 type SunPair = Option<(f64, f64)>;
 
-/// 在 /sys/bus/iio 里找第一个三轴加速度计；没有则 None（退回手动/文件模式）。
-fn find_accel() -> Option<String> {
-    let dir = std::fs::read_dir("/sys/bus/iio/devices").ok()?;
-    for entry in dir.flatten() {
-        let p = entry.path();
-        if p.join("in_accel_x_raw").exists() && p.join("in_accel_z_raw").exists() {
-            return p.to_str().map(|s| s.to_string());
-        }
-    }
-    None
+/// 读 ssccli 一帧加速度（m/s²）。传感器挂 SLPI，AP 侧无 sysfs，唯一用户态通道
+/// 是 libssc：`ssccli --sensor accelerometer` 流式输出（SSC 会话 ~10-45s 自行结束，
+/// 调用方循环重拉）。格式：`Accelerometer sensor measurement: X=… Y=… Z=… m/s²`
+/// 2026-09-27 实测标定（恒等矩阵）：横屏持机重力沿 X 短轴，竖屏沿 Y 长轴，平放 Z≈9.8。
+fn parse_accel_frame(line: &str) -> Option<(f64, f64, f64)> {
+    let m = line.split("X=").nth(1)?;
+    let x: f64 = m.split("Y=").next()?.split(' ').next()?.parse().ok()?;
+    let m = line.split("Y=").nth(1)?;
+    let y: f64 = m.split("Z=").next()?.split(' ').next()?.parse().ok()?;
+    let z: f64 = line.split("Z=").nth(1)?.trim_end_matches("m/s²").trim().parse().ok()?;
+    Some((x, y, z))
 }
 
-/// 读加速度计判定「竖持」（y 长轴重力分量明显大于 x 短轴）；平放（z 主导）返回 None 不切。
-/// 单位归一到 m/s²：raw × in_accel_scale（内核 mount_matrix 若有则在 sysfs 已换算）。
-fn accel_is_portrait(dir: &str) -> Option<bool> {
-    let rd = |f: &str| {
-        std::fs::read_to_string(format!("{dir}/{f}"))
-            .ok()
-            .and_then(|s| s.trim().parse::<f64>().ok())
-    };
-    let (x, y, z) = (rd("in_accel_x_raw")?, rd("in_accel_y_raw")?, rd("in_accel_z_raw")?);
-    let scale = rd("in_accel_scale").unwrap_or(1.0).abs().max(f64::EPSILON);
-    let (gx, gy, gz) = (x * scale, y * scale, z * scale);
-    if gz.abs() > 7.0 {
-        return None;
-    }
-    Some(gy.abs() > gx.abs() * 1.15)
-}
-
-/// 方向自动切换（偏好为 auto 且加速度计可用时启动）：连续 3 次（6s）读数一致且
-/// 与当前相反才切换；切换写 panel-mode.txt 后退出进程，由启动器 ≤5s 拉起新方向
-/// 的实例；切换后 30s 冷却防抖。
+/// 方向自动切换（偏好为 auto 且 ssccli 可用时启动）：传感器判定竖持 =
+/// |gy| > |gx|×1.15 且非平放（|gz|>7 视为平放，保持现状）；连续 3 帧一致才切，
+/// 切换写 panel-mode.txt 后退出进程，由启动器 ≤5s 拉起新方向实例；切换后 30s 冷却。
+/// ssccli 会话自断则 2s 后重拉（自愈）。
 fn spawn_orientation_watch(portrait_now: bool, auto: bool) {
     if !auto {
         return;
     }
-    let Some(accel) = find_accel() else {
-        eprintln!("[panel] 无加速度计，方向固定（可写 panel-orientation.txt 手动指定）");
+    if std::process::Command::new("ssccli")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        eprintln!("[panel] ssccli 不可用，方向固定（可写 panel-orientation.txt 手动指定）");
         return;
-    };
-    eprintln!("[panel] 加速度计 {accel}，自动方向切换开启");
+    }
+    eprintln!("[panel] 加速度计（libssc）自动方向切换开启");
     std::thread::Builder::new()
         .name("orientation-watch".into())
         .spawn(move || {
             // cur 不变：方向翻转即退出进程由启动器重启，所以单进程内恒定
             let cur = portrait_now;
-            let want: std::cell::Cell<Option<bool>> = std::cell::Cell::new(None);
-            let hits = std::cell::Cell::new(0u32);
+            let mut want: Option<bool> = None;
+            let mut hits = 0u32;
             let cooldown = Instant::now();
             loop {
-                if cooldown.elapsed() >= Duration::from_secs(30)
-                    && let Some(p) = accel_is_portrait(&accel)
+                // 拉起一次 ssccli 流，读到会话结束；流内逐帧判定
+                if let Ok(mut child) = std::process::Command::new("ssccli")
+                    .arg("--sensor")
+                    .arg("accelerometer")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
                 {
-                    if p != cur {
-                        if want.get() == Some(p) {
-                            hits.set(hits.get() + 1);
-                        } else {
-                            want.set(Some(p));
-                            hits.set(1);
+                    if let Some(out) = child.stdout.take() {
+                        let mut reader = std::io::BufReader::new(out);
+                        loop {
+                            let mut line = String::new();
+                            match std::io::BufRead::read_line(&mut reader, &mut line) {
+                                Ok(0) | Err(_) => break, // 会话结束（SSC ~45s 自断）
+                                Ok(_) => {}
+                            }
+                            let Some((gx, gy, gz)) = parse_accel_frame(&line) else {
+                                continue;
+                            };
+                            if cooldown.elapsed() < Duration::from_secs(30) || gz.abs() > 7.0 {
+                                continue;
+                            }
+                            let p = gy.abs() > gx.abs() * 1.15;
+                            if p != cur {
+                                if want == Some(p) {
+                                    hits += 1;
+                                } else {
+                                    want = Some(p);
+                                    hits = 1;
+                                }
+                                if hits >= 3 {
+                                    let m = if p { "portrait" } else { "landscape" };
+                                    let _ = std::fs::write(ORIENT_MODE_FILE, format!("{m}\n"));
+                                    tracing_or_log(&format!(
+                                        "方向切换 → {m}（加速度计 g={gx:+.1}/{gy:+.1}/{gz:+.1}），重启面板生效"
+                                    ));
+                                    let _ = child.kill();
+                                    std::process::exit(0);
+                                }
+                            } else {
+                                want = None;
+                                hits = 0;
+                            }
                         }
-                        if hits.get() >= 3 {
-                            let m = if p { "portrait" } else { "landscape" };
-                            let _ = std::fs::write(ORIENT_MODE_FILE, format!("{m}\n"));
-                            tracing_or_log(&format!("方向切换 → {m}（加速度计），重启面板生效"));
-                            std::process::exit(0);
-                        }
-                    } else {
-                        want.set(None);
-                        hits.set(0);
                     }
+                    let _ = child.wait();
                 }
                 std::thread::sleep(Duration::from_secs(2));
             }
