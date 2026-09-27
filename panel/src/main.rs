@@ -59,10 +59,9 @@ static REFRESH_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// 由 screen-watch 线程维护；tick / 轮询线程据此短路，熄屏期间零重绘零拉取。
 static SCREEN_ON: AtomicBool = AtomicBool::new(true);
 
-/// 方向文件：panel-orientation.txt = 显式偏好（portrait/landscape，缺省 auto）；
-/// panel-mode.txt = 上次自动切换结果（启动初值）；rotation.txt 沿用横屏朝向。
+/// 方向偏好文件：panel-orientation.txt = 设置页手动选择（portrait/landscape，缺省横屏）；
+/// rotation.txt 沿用横屏朝向。
 const ORIENT_PREF_FILE: &str = "panel-orientation.txt";
-const ORIENT_MODE_FILE: &str = "panel-mode.txt";
 const ROTATION_FILE: &str = "rotation.txt";
 
 // TPS 流限频：网关每 500ms 推一条 stats.throughput（2Hz），逐条刷 UI 会让
@@ -93,19 +92,14 @@ fn main() {
         .and_then(|v| v.parse::<i32>().ok())
         .unwrap_or(0);
 
-    // ── 屏幕方向（进程常量，切换 = 写 panel-mode.txt 后退出、启动器重拉）──
-    // 优先级：PANEL_MODE env（调试）> panel-orientation.txt 显式偏好 > panel-mode.txt
-    //（上次自动切换结果）> 横屏。竖屏时按横屏朝向推导 KMS 旋转（270→0 / 90→180），
-    // 保持「哪边朝上」的用户习惯不变。
-    let pref = std::fs::read_to_string(ORIENT_PREF_FILE).unwrap_or_default();
-    let pref = pref.trim();
-    let explicit = pref == "portrait" || pref == "landscape";
+    // ── 屏幕方向（进程常量；切换 = 设置页写 panel-orientation.txt 后退出、启动器重拉）──
+    // 优先级：PANEL_MODE env（调试）> panel-orientation.txt（设置页持久化）> 横屏。
+    // 竖屏时按横屏朝向推导 KMS 旋转（270→0 / 90→180），保持「哪边朝上」的用户习惯不变。
     let mode = std::env::var("PANEL_MODE")
         .ok()
         .filter(|m| m == "portrait" || m == "landscape")
-        .or_else(|| explicit.then(|| pref.to_string()))
         .or_else(|| {
-            std::fs::read_to_string(ORIENT_MODE_FILE)
+            std::fs::read_to_string(ORIENT_PREF_FILE)
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|m| m == "portrait" || m == "landscape")
@@ -125,6 +119,7 @@ fn main() {
     let app = App::new().expect("无法创建 Slint 组件（检查字体/后端依赖）");
     let weak = app.as_weak();
     app.global::<Ui>().set_portrait(portrait);
+    app.global::<Ui>().set_panel_version(env!("CARGO_PKG_VERSION").into());
 
     // 字体与文字垂直居中补偿：.slint 里的默认值即设备值（Noto Sans CJK SC）；
     // macOS 预览字体不同（苹方），行盒度量随之不同，这里按苹方重新校准。
@@ -152,7 +147,7 @@ fn main() {
         .map(|s| s.trim() != "light")
         .unwrap_or(true);
     app.global::<Theme>().set_dark(dark);
-    app.global::<Ui>().set_page(page_arg.clamp(0, 2));
+    app.global::<Ui>().set_page(page_arg.clamp(0, 3));
     {
         let w = weak.clone();
         app.global::<Ui>().on_toggle_theme(move || {
@@ -168,6 +163,27 @@ fn main() {
         eprintln!("[touch-probe] {kind} x={x:.1} y={y:.1} (logical 1170x540)");
     });
 
+    // 设置页手动选方向：设备上写偏好文件后退出（启动器 ≤5s 按新方向重拉，KMS 旋转
+    // 与触摸矩阵由启动器联动）；macOS 预览无 DRM/触摸牵挂，直接热切换布局便于预览。
+    {
+        let w = weak.clone();
+        app.global::<Ui>().on_set_orientation(move |p: bool| {
+            if demo {
+                if let Some(ui) = w.upgrade() {
+                    ui.global::<Ui>().set_portrait(p);
+                }
+                return;
+            }
+            if p == portrait {
+                return;
+            }
+            let m = if p { "portrait" } else { "landscape" };
+            let _ = std::fs::write(ORIENT_PREF_FILE, format!("{m}\n"));
+            tracing_or_log(&format!("设置页手动切换方向 → {m}，退出由启动器按新方向拉起"));
+            std::process::exit(0);
+        });
+    }
+
     // 秒级时钟 + 时间进度 + 日出相位 + 世界时钟（子进程 30s 缓存）
     let timer = slint::Timer::default();
     {
@@ -181,7 +197,6 @@ fn main() {
         spawn_demo(weak.clone());
     } else {
         spawn_screen_watch(weak.clone());
-        spawn_orientation_watch(portrait, !explicit);
         spawn_system_poller(weak.clone());
         spawn_token_poller(weak.clone());
         spawn_token_ws(weak.clone());
@@ -667,120 +682,6 @@ fn tick_now(ui: &App) {
 }
 
 type SunPair = Option<(f64, f64)>;
-
-/// 读 ssccli 一帧加速度（m/s²）。传感器挂 SLPI，AP 侧无 sysfs，唯一用户态通道
-/// 是 libssc：`ssccli --sensor accelerometer` 流式输出（SSC 会话 ~10-45s 自行结束，
-/// 调用方循环重拉）。格式：`Accelerometer sensor measurement: X=… Y=… Z=… m/s²`
-/// 2026-09-27 实测标定（恒等矩阵）：横屏持机重力沿 X 短轴，竖屏沿 Y 长轴，平放 Z≈9.8。
-fn parse_accel_frame(line: &str) -> Option<(f64, f64, f64)> {
-    let m = line.split("X=").nth(1)?;
-    let x: f64 = m.split("Y=").next()?.split(' ').next()?.parse().ok()?;
-    let m = line.split("Y=").nth(1)?;
-    let y: f64 = m.split("Z=").next()?.split(' ').next()?.parse().ok()?;
-    let z: f64 = line.split("Z=").nth(1)?.trim_end_matches("m/s²").trim().parse().ok()?;
-    Some((x, y, z))
-}
-
-/// 方向自动切换（偏好为 auto 且 ssccli 可用时启动）：传感器判定竖持 =
-/// |gy| > |gx|×1.15 且非平放（|gz|>7 视为平放，保持现状）；连续 3 帧一致才切，
-/// 切换写 panel-mode.txt 后退出进程，由启动器 ≤5s 拉起新方向实例；切换后 30s 冷却。
-/// ssccli 会话自断则 2s 后重拉（自愈）。
-fn spawn_orientation_watch(portrait_now: bool, auto: bool) {
-    if !auto {
-        return;
-    }
-    if std::process::Command::new("ssccli")
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_err()
-    {
-        eprintln!("[panel] ssccli 不可用，方向固定（可写 panel-orientation.txt 手动指定）");
-        return;
-    }
-    eprintln!("[panel] 加速度计（libssc）自动方向切换开启");
-    const ACCEL_FILE: &str = "/tmp/panel-accel.log";
-    std::thread::Builder::new()
-        .name("orientation-watch".into())
-        .spawn(move || {
-            // cur 不变：方向翻转即退出进程由启动器重启，所以单进程内恒定
-            let cur = portrait_now;
-            let mut want: Option<bool> = None;
-            let mut hits = 0u32;
-            let cooldown = Instant::now();
-            loop {
-                // 不走管道：ssccli（glib）会话自断后疑似有孤儿进程持有管道写端，
-                // EOF 永不到来、读行阻塞。改为 20s 一轮写文件 + 增量读取解析。
-                let _ = std::fs::write(ACCEL_FILE, b"");
-                let spawned = std::fs::File::create(ACCEL_FILE).ok().and_then(|f| {
-                    std::process::Command::new("timeout")
-                        .args(["20", "ssccli", "--sensor", "accelerometer"])
-                        .stdout(std::process::Stdio::from(f))
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                        .ok()
-                });
-                if spawned.is_none() {
-                    std::thread::sleep(Duration::from_secs(5));
-                    continue;
-                }
-                let mut off: u64 = 0;
-                for _ in 0..44 {
-                    std::thread::sleep(Duration::from_millis(500));
-                    let Ok(meta) = std::fs::metadata(ACCEL_FILE) else {
-                        continue;
-                    };
-                    let len = meta.len();
-                    if len <= off {
-                        continue;
-                    }
-                    let Ok(mut f) = std::fs::OpenOptions::new().read(true).open(ACCEL_FILE) else {
-                        continue;
-                    };
-                    use std::io::{Read as _, Seek as _};
-                    if f.seek(std::io::SeekFrom::Start(off)).is_err() {
-                        continue;
-                    }
-                    let mut buf = String::new();
-                    if f.read_to_string(&mut buf).is_err() {
-                        continue;
-                    }
-                    off = len;
-                    for line in buf.lines() {
-                        let Some((gx, gy, gz)) = parse_accel_frame(line) else {
-                            continue;
-                        };
-                        if cooldown.elapsed() < Duration::from_secs(30) || gz.abs() > 7.0 {
-                            continue;
-                        }
-                        let p = gy.abs() > gx.abs() * 1.15;
-                        if p != cur {
-                            if want == Some(p) {
-                                hits += 1;
-                            } else {
-                                want = Some(p);
-                                hits = 1;
-                            }
-                            if hits >= 3 {
-                                let m = if p { "portrait" } else { "landscape" };
-                                let _ = std::fs::write(ORIENT_MODE_FILE, format!("{m}\n"));
-                                tracing_or_log(&format!(
-                                    "方向切换 → {m}（加速度计 g={gx:+.1}/{gy:+.1}/{gz:+.1}），重启面板生效"
-                                ));
-                                std::process::exit(0);
-                            }
-                        } else {
-                            want = None;
-                            hits = 0;
-                        }
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(500));
-            }
-        })
-        .ok();
-}
 
 /// 读背光 DPMS 状态（msm 把 bl_power=4 当熄屏）；读失败视为亮屏（fail-open）。
 fn read_screen_on() -> bool {

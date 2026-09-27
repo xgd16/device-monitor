@@ -251,8 +251,8 @@ export component TabPill inherits Rectangle {
     TouchArea {
         pointer-event(e) => {
             Ui.touch-probe = true;
-            // 页签在顶栏卡片 (14,14) 内，横排 y=17：换算到窗口坐标供探针显示
-            Ui.probe-x = 800px + self.mouse-x;
+            // 页签在顶栏卡片 (14,14) 内，横排 y=17、x=736：换算到窗口坐标供探针显示
+            Ui.probe-x = 736px + self.mouse-x;
             Ui.probe-y = 31px + self.mouse-y;
             Ui.probe(self.mouse-x / 1px, self.mouse-y / 1px, (e.kind == PointerEventKind.down ? "tab-down" : (e.kind == PointerEventKind.up ? "tab-up" : "tab-move")));
         }

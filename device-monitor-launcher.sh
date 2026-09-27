@@ -129,16 +129,12 @@ try_panel() {
     90 | 270) ;;
     *) rotate=90 ;;
   esac
-  # 竖屏模式（面板自动切换写 panel-mode.txt；panel-orientation.txt 为显式覆盖）：
+  # 竖屏模式由面板设置页手动选择并持久化（panel-orientation.txt：portrait/landscape）：
   # 竖屏旋转 = 横屏朝向的对偶（270→0 / 90→180），触摸矩阵随实际旋转联动。
   _mode=""
   if [ -r "$DEPLOY_DIR/panel-orientation.txt" ]; then
     _pref=$(tr -d ' \t\n' < "$DEPLOY_DIR/panel-orientation.txt" 2>/dev/null)
     case "$_pref" in portrait | landscape) _mode=$_pref ;; esac
-  fi
-  if [ -z "$_mode" ] && [ -r "$DEPLOY_DIR/panel-mode.txt" ]; then
-    _last=$(tr -d ' \t\n' < "$DEPLOY_DIR/panel-mode.txt" 2>/dev/null)
-    case "$_last" in portrait | landscape) _mode=$_last ;; esac
   fi
   if [ "$_mode" = portrait ]; then
     case "$rotate" in

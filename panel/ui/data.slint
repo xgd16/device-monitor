@@ -255,13 +255,15 @@ export global Clk {
     in-out property <float> sun-halo: 0.7;
 }
 
-// ── 面板壳状态：页面切换 / 熄屏感知 / 竖屏模式 ──
+// ── 面板壳状态：页面切换 / 熄屏感知 / 竖屏模式 / 设置 ──
 export global Ui {
     in-out property <int> page: 0;
-    in-out property <int> page-count: 3;
+    in-out property <int> page-count: 4;
     in-out property <bool> screen-on: true;
     // 竖屏模式：窗口 540x1170 + 竖版布局（进程常量，切换 = 重启面板）
     in-out property <bool> portrait: false;
+    // 面板版本（设置页「关于」展示，Rust 启动时写入）
+    in-out property <string> panel-version: "";
     // LiveDot 呼吸相位（Rust tick 每秒推进，同上）
     in-out property <float> live-pulse: 0.9;
 
@@ -281,4 +283,7 @@ export global Ui {
         page = page <= 0 ? page-count - 1 : page - 1;
     }
     callback toggle-theme();
+    // 设置页手动选方向（true=竖屏）：设备上写 panel-orientation.txt 后退出重启；
+    // macOS 预览直接热切换布局
+    callback set-orientation(bool);
 }

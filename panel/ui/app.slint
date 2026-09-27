@@ -7,9 +7,11 @@ import { TabPill, LiveDot, Mono } from "widgets.slint";
 import { PageSystem } from "page-system.slint";
 import { PageToken } from "page-token.slint";
 import { PageClock } from "page-clock.slint";
+import { PageSettings } from "page-settings.slint";
 import { PageSystemP } from "page-system.slint";
 import { PageTokenP } from "page-token.slint";
 import { PageClockP } from "page-clock.slint";
+import { PageSettingsP } from "page-settings.slint";
 
 // Rust 侧要访问的全局与结构体必须从主文件 re-export
 export { Theme } from "theme.slint";
@@ -106,9 +108,9 @@ export component App inherits Window {
                 color: Theme.muted;
             }
             HorizontalLayout {
-                x: 800px;
+                x: 736px;
                 y: 17px;
-                width: 200px;
+                width: 260px;
                 height: 24px;
                 spacing: 6px;
                 TabPill {
@@ -127,6 +129,12 @@ export component App inherits Window {
                     label: "时钟";
                     active: Ui.page == 2;
                     idx: 2;
+                    horizontal-stretch: 0;
+                }
+                TabPill {
+                    label: "设置";
+                    active: Ui.page == 3;
+                    idx: 3;
                     horizontal-stretch: 0;
                 }
             }
@@ -168,6 +176,10 @@ export component App inherits Window {
             }
             PageClock {
                 idx: 2;
+                y: 0px;
+            }
+            PageSettings {
+                idx: 3;
                 y: 0px;
             }
             TouchArea {
@@ -262,7 +274,7 @@ export component App inherits Window {
             }
             // 页码指示点（可点）
             Rectangle {
-                x: 956px;
+                x: 934px;
                 y: 13px;
                 width: Ui.page == 0 ? 16px : 6px;
                 height: 4px;
@@ -279,7 +291,7 @@ export component App inherits Window {
                 }
             }
             Rectangle {
-                x: 978px;
+                x: 956px;
                 y: 13px;
                 width: Ui.page == 1 ? 16px : 6px;
                 height: 4px;
@@ -296,7 +308,7 @@ export component App inherits Window {
                 }
             }
             Rectangle {
-                x: 1000px;
+                x: 978px;
                 y: 13px;
                 width: Ui.page == 2 ? 16px : 6px;
                 height: 4px;
@@ -312,12 +324,29 @@ export component App inherits Window {
                     }
                 }
             }
+            Rectangle {
+                x: 1000px;
+                y: 13px;
+                width: Ui.page == 3 ? 16px : 6px;
+                height: 4px;
+                border-radius: 2px;
+                background: Ui.page == 3 ? Theme.accent : Theme.track;
+                animate width {
+                    duration: 260ms;
+                    easing: ease-out;
+                }
+                TouchArea {
+                    clicked => {
+                        Ui.go(3);
+                    }
+                }
+            }
             Mono {
                 x: 1020px;
                 y: 0px;
                 width: 70px;
                 height: 100%;
-                text: "第 \{(Ui.page + 1)} / 3 页";
+                text: "第 \{(Ui.page + 1)} / 4 页";
                 font-size: 8px;
                 color: Theme.muted;
                 horizontal-alignment: TextHorizontalAlignment.right;
@@ -419,9 +448,9 @@ export component App inherits Window {
                     horizontal-alignment: TextHorizontalAlignment.right;
                 }
                 HorizontalLayout {
-                    x: 242px;
+                    x: 36px;
                     y: 34px;
-                    width: 256px;
+                    width: 260px;
                     height: 24px;
                     spacing: 6px;
                     TabPill {
@@ -442,13 +471,21 @@ export component App inherits Window {
                         idx: 2;
                         horizontal-stretch: 0;
                     }
+                    TabPill {
+                        label: "设置";
+                        active: Ui.page == 3;
+                        idx: 3;
+                        horizontal-stretch: 0;
+                    }
                 }
                 Text {
-                    x: 36px;
+                    x: 362px;
                     y: 40px;
+                    width: 136px;
                     text: Clk.date-line;
                     font-size: 8px;
                     color: Theme.muted;
+                    horizontal-alignment: TextHorizontalAlignment.right;
                 }
             }
 
@@ -469,6 +506,10 @@ export component App inherits Window {
                 }
                 PageClockP {
                     idx: 2;
+                    y: 0px;
+                }
+                PageSettingsP {
+                    idx: 3;
                     y: 0px;
                 }
                 TouchArea {
@@ -544,7 +585,7 @@ export component App inherits Window {
                     vertical-alignment: TextVerticalAlignment.center;
                 }
                 Rectangle {
-                    x: 306px;
+                    x: 284px;
                     y: 13px;
                     width: Ui.page == 0 ? 16px : 6px;
                     height: 4px;
@@ -561,7 +602,7 @@ export component App inherits Window {
                     }
                 }
                 Rectangle {
-                    x: 328px;
+                    x: 306px;
                     y: 13px;
                     width: Ui.page == 1 ? 16px : 6px;
                     height: 4px;
@@ -578,7 +619,7 @@ export component App inherits Window {
                     }
                 }
                 Rectangle {
-                    x: 350px;
+                    x: 328px;
                     y: 13px;
                     width: Ui.page == 2 ? 16px : 6px;
                     height: 4px;
@@ -594,12 +635,29 @@ export component App inherits Window {
                         }
                     }
                 }
+                Rectangle {
+                    x: 350px;
+                    y: 13px;
+                    width: Ui.page == 3 ? 16px : 6px;
+                    height: 4px;
+                    border-radius: 2px;
+                    background: Ui.page == 3 ? Theme.accent : Theme.track;
+                    animate width {
+                        duration: 260ms;
+                        easing: ease-out;
+                    }
+                    TouchArea {
+                        clicked => {
+                            Ui.go(3);
+                        }
+                    }
+                }
                 Mono {
                     x: 372px;
                     y: 0px;
                     width: 56px;
                     height: 100%;
-                    text: "第 \{(Ui.page + 1)} / 3 页";
+                    text: "第 \{(Ui.page + 1)} / 4 页";
                     font-size: 8px;
                     color: Theme.muted;
                     horizontal-alignment: TextHorizontalAlignment.right;

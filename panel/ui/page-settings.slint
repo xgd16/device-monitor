@@ -1,0 +1,397 @@
+// 第 4 页：设置。方向（横/竖，写 panel-orientation.txt 后重启面板生效）+ 主题 + 关于。
+// 横版 1142x404 双列，竖版 512x1028 单列；按钮为大触控目标（本机是触摸屏）。
+import { Theme } from "theme.slint";
+import { Sys, Ui } from "data.slint";
+import { Card, Mono } from "widgets.slint";
+
+// 大号选择按钮：选中态 = 主题色描边 + 淡色底 + 彩色说明文字
+component OptBtn inherits Rectangle {
+    in property <string> label;
+    in property <string> sub: "";
+    in property <bool> sel;
+    in property <color> tint: Theme.accent;
+    callback pick();
+    border-radius: 14px;
+    background: root.sel ? root.tint.with-alpha(0.13) : Theme.card-alt;
+    border-width: 1.5px;
+    border-color: root.sel ? root.tint : Theme.border;
+    animate background {
+        duration: 200ms;
+        easing: ease-out;
+    }
+    animate border-color {
+        duration: 200ms;
+        easing: ease-out;
+    }
+    VerticalLayout {
+        padding: 12px;
+        alignment: center;
+        spacing: 6px;
+        Text {
+            text: root.label;
+            font-size: 17px;
+            font-weight: 700;
+            color: root.sel ? Theme.emphasis : Theme.fg;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.center;
+        }
+        Text {
+            text: root.sub;
+            font-size: 8.5px;
+            color: root.sel ? root.tint : Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.center;
+        }
+    }
+    TouchArea {
+        clicked => {
+            root.pick();
+        }
+    }
+}
+
+// 键值行：键左灰、值右亮（等宽）
+component Kv inherits Rectangle {
+    in property <string> k;
+    in property <string> v;
+    height: 24px;
+    Text {
+        x: 0px;
+        y: Theme.text-nudge;
+        height: parent.height;
+        vertical-alignment: TextVerticalAlignment.center;
+        text: root.k;
+        font-size: 9px;
+        color: Theme.muted;
+        font-family: Theme.font-body;
+    }
+    Mono {
+        x: 120px;
+        width: parent.width - 120px;
+        y: Theme.text-nudge;
+        height: parent.height;
+        vertical-alignment: TextVerticalAlignment.center;
+        text: root.v;
+        font-size: 10px;
+        color: Theme.emphasis;
+        horizontal-alignment: TextHorizontalAlignment.right;
+    }
+}
+
+// ── 横屏版（1142x404）：方向 / 主题 双列 + 关于通栏 ──
+export component PageSettings inherits Rectangle {
+    in property <int> idx: 3;
+    x: (root.idx - Ui.page) * ((root.idx - Ui.page) <= 0 ? 395px : 1142px);
+    animate x {
+        duration: 520ms;
+        easing: ease-out;
+    }
+    width: 1142px;
+    height: 404px;
+    // 非激活页全透明：滑动复位后相邻页不得透出（与其他页一致）
+    property <bool> act: Ui.page == root.idx;
+    opacity: act ? 1.0 : 0.0;
+    animate opacity {
+        duration: 420ms;
+        easing: ease-out;
+        delay: 40ms;
+    }
+
+    Card {
+        x: 0px;
+        y: 0px;
+        width: 560px;
+        height: 240px;
+        title: "显示方向";
+        Text {
+            x: 14px;
+            y: 30px;
+            width: 530px;
+            text: "切换后面板自动重启（约 5 秒黑屏），触摸坐标随朝向自动校准；选择会记忆，重启后保持。";
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            wrap: word-wrap;
+        }
+        OptBtn {
+            x: 14px;
+            y: 64px;
+            width: 259px;
+            height: 152px;
+            label: "横屏";
+            sub: "1170 × 540 · 默认";
+            sel: !Ui.portrait;
+            pick => {
+                Ui.set-orientation(false);
+            }
+        }
+        OptBtn {
+            x: 287px;
+            y: 64px;
+            width: 259px;
+            height: 152px;
+            label: "竖屏";
+            sub: "540 × 1170";
+            tint: Theme.accent2;
+            sel: Ui.portrait;
+            pick => {
+                Ui.set-orientation(true);
+            }
+        }
+    }
+
+    Card {
+        x: 576px;
+        y: 0px;
+        width: 566px;
+        height: 240px;
+        title: "外观主题";
+        Text {
+            x: 14px;
+            y: 30px;
+            width: 536px;
+            text: "立即生效并记忆（panel-theme.txt）。深色适配夜间，浅色适配强光环境。";
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            wrap: word-wrap;
+        }
+        OptBtn {
+            x: 14px;
+            y: 64px;
+            width: 262px;
+            height: 152px;
+            label: "深色";
+            sub: "夜间友好";
+            sel: Theme.dark;
+            pick => {
+                if (!Theme.dark) {
+                    Ui.toggle-theme();
+                }
+            }
+        }
+        OptBtn {
+            x: 290px;
+            y: 64px;
+            width: 262px;
+            height: 152px;
+            label: "浅色";
+            sub: "强光可读";
+            tint: Theme.warning;
+            sel: !Theme.dark;
+            pick => {
+                if (Theme.dark) {
+                    Ui.toggle-theme();
+                }
+            }
+        }
+    }
+
+    Card {
+        x: 0px;
+        y: 254px;
+        width: 1142px;
+        height: 150px;
+        title: "关于";
+        Kv {
+            x: 14px;
+            y: 42px;
+            width: 540px;
+            k: "面板版本";
+            v: "v" + Ui.panel-version;
+        }
+        Kv {
+            x: 14px;
+            y: 74px;
+            width: 540px;
+            k: "采集间隔";
+            v: "\{Sys.refresh-secs}s";
+        }
+        Kv {
+            x: 588px;
+            y: 42px;
+            width: 540px;
+            k: "运行时长";
+            v: Sys.uptime;
+        }
+        Kv {
+            x: 588px;
+            y: 74px;
+            width: 540px;
+            k: "屏幕状态";
+            v: Ui.screen-on ? "亮屏" : "熄屏（降负载中）";
+        }
+        Text {
+            x: 14px;
+            y: 112px;
+            width: 1114px;
+            text: "数据源 本机 API :3000 · XTokenHub :9192 · 天气 Open-Meteo（15 分钟）　|　配置 panel-orientation.txt · panel-theme.txt";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+    }
+}
+
+// ── 竖屏版（512x1028）：单列堆叠 ──
+export component PageSettingsP inherits Rectangle {
+    in property <int> idx: 3;
+    x: (root.idx - Ui.page) * ((root.idx - Ui.page) <= 0 ? 256px : 512px);
+    animate x {
+        duration: 520ms;
+        easing: ease-out;
+    }
+    width: 512px;
+    height: 1028px;
+    property <bool> act: Ui.page == root.idx;
+    opacity: act ? 1.0 : 0.0;
+    animate opacity {
+        duration: 420ms;
+        easing: ease-out;
+        delay: 40ms;
+    }
+
+    Card {
+        x: 0px;
+        y: 0px;
+        width: 512px;
+        height: 300px;
+        title: "显示方向";
+        Text {
+            x: 14px;
+            y: 30px;
+            width: 484px;
+            text: "切换后面板自动重启（约 5 秒黑屏），触摸坐标随朝向自动校准；选择会记忆，重启后保持。";
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            wrap: word-wrap;
+        }
+        OptBtn {
+            x: 14px;
+            y: 70px;
+            width: 235px;
+            height: 190px;
+            label: "横屏";
+            sub: "1170 × 540 · 默认";
+            sel: !Ui.portrait;
+            pick => {
+                Ui.set-orientation(false);
+            }
+        }
+        OptBtn {
+            x: 263px;
+            y: 70px;
+            width: 235px;
+            height: 190px;
+            label: "竖屏";
+            sub: "540 × 1170";
+            tint: Theme.accent2;
+            sel: Ui.portrait;
+            pick => {
+                Ui.set-orientation(true);
+            }
+        }
+    }
+
+    Card {
+        x: 0px;
+        y: 316px;
+        width: 512px;
+        height: 300px;
+        title: "外观主题";
+        Text {
+            x: 14px;
+            y: 30px;
+            width: 484px;
+            text: "立即生效并记忆（panel-theme.txt）。深色适配夜间，浅色适配强光环境。";
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            wrap: word-wrap;
+        }
+        OptBtn {
+            x: 14px;
+            y: 70px;
+            width: 235px;
+            height: 190px;
+            label: "深色";
+            sub: "夜间友好";
+            sel: Theme.dark;
+            pick => {
+                if (!Theme.dark) {
+                    Ui.toggle-theme();
+                }
+            }
+        }
+        OptBtn {
+            x: 263px;
+            y: 70px;
+            width: 235px;
+            height: 190px;
+            label: "浅色";
+            sub: "强光可读";
+            tint: Theme.warning;
+            sel: !Theme.dark;
+            pick => {
+                if (Theme.dark) {
+                    Ui.toggle-theme();
+                }
+            }
+        }
+    }
+
+    Card {
+        x: 0px;
+        y: 632px;
+        width: 512px;
+        height: 260px;
+        title: "关于";
+        Kv {
+            x: 14px;
+            y: 42px;
+            width: 484px;
+            k: "面板版本";
+            v: "v" + Ui.panel-version;
+        }
+        Kv {
+            x: 14px;
+            y: 74px;
+            width: 484px;
+            k: "运行时长";
+            v: Sys.uptime;
+        }
+        Kv {
+            x: 14px;
+            y: 106px;
+            width: 484px;
+            k: "采集间隔";
+            v: "\{Sys.refresh-secs}s";
+        }
+        Kv {
+            x: 14px;
+            y: 138px;
+            width: 484px;
+            k: "屏幕状态";
+            v: Ui.screen-on ? "亮屏" : "熄屏（降负载中）";
+        }
+        Text {
+            x: 14px;
+            y: 180px;
+            width: 484px;
+            text: "数据源 本机 API :3000 · XTokenHub :9192 · 天气 Open-Meteo（15 分钟）";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: 14px;
+            y: 200px;
+            width: 484px;
+            text: "配置 panel-orientation.txt · panel-theme.txt";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+    }
+}
