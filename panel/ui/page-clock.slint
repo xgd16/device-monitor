@@ -1,6 +1,6 @@
 // 第 3 页：时钟/时间页。
 // 左列（650）：大时钟卡 232 + 天气卡 320 + 电池卡 320（并排 162 高）；
-// 右列（462）：时间进度 114 + 世界时钟 130 + 日出日落 140。
+// 右列（482 = 1142-660，右缘对齐顶/底栏）：时间进度 114 + 世界时钟 130 + 日出日落 140。
 // 日出弧线由 Rust 按固定盒子 420x76 计算（含地平线基线）。
 import { Theme } from "theme.slint";
 import { Sys, Clk, Ui } from "data.slint";
@@ -49,7 +49,7 @@ export component PageClock inherits Rectangle {
                 width: 320px;
                 height: 240px;
                 opacity: Ui.screen-on ? Clk.glow-a : 0.0;
-                background: @radial-gradient(circle, Theme.glow-a.with-alpha(0.55) 0%, transparent 62%);
+                background: @radial-gradient(circle, Theme.glow-a.with-alpha(0.55) 0%, Theme.glow-a.with-alpha(0.0) 62%);
             }
             Rectangle {
                 x: 60px;
@@ -57,7 +57,7 @@ export component PageClock inherits Rectangle {
                 width: 260px;
                 height: 200px;
                 opacity: Ui.screen-on ? Clk.glow-b : 0.0;
-                background: @radial-gradient(circle, Theme.glow-b.with-alpha(0.4) 0%, transparent 58%);
+                background: @radial-gradient(circle, Theme.glow-b.with-alpha(0.4) 0%, Theme.glow-b.with-alpha(0.0) 58%);
             }
 
             hh := Mono {
@@ -297,11 +297,11 @@ export component PageClock inherits Rectangle {
         }
     }
 
-    // ── 右列 ──
+    // ── 右列 ──（482 = 1142-660，右缘与顶栏/底栏卡片对齐）
     Rectangle {
         x: 660px;
         y: act ? 0px : 14px;
-        width: 462px;
+        width: 482px;
         height: 404px;
         opacity: act ? 1.0 : 0.0;
         animate opacity {
@@ -318,13 +318,13 @@ export component PageClock inherits Rectangle {
         Card {
             x: 0px;
             y: 0px;
-            width: 462px;
+            width: 482px;
             height: 114px;
             title: "时间进度";
             for pr[i] in Clk.prog: Rectangle {
                 x: 14px;
                 y: 26px + i * 21px;
-                width: 434px;
+                width: 454px;
                 height: 18px;
                 Text {
                     x: 0px;
@@ -361,7 +361,7 @@ export component PageClock inherits Rectangle {
                     x: 362px;
                     y: Theme.text-nudge;
                     height: parent.height;
-                    width: 72px;
+                    width: 92px;
                     text: pr.left;
                     font-size: 8px;
                     color: Theme.muted;
@@ -374,13 +374,13 @@ export component PageClock inherits Rectangle {
         Card {
             x: 0px;
             y: 124px;
-            width: 462px;
+            width: 482px;
             height: 130px;
             title: "世界时钟";
             for w[i] in Clk.world: Rectangle {
-                x: 14px + Math.mod(i, 2) * 222px;
+                x: 14px + Math.mod(i, 2) * 232px;
                 y: 26px + Math.floor(i / 2) * 34px;
-                width: 212px;
+                width: 222px;
                 height: 30px;
                 Text {
                     x: 0px;
@@ -407,7 +407,7 @@ export component PageClock inherits Rectangle {
                     vertical-alignment: TextVerticalAlignment.center;
                 }
                 Mono {
-                    x: 152px;
+                    x: 162px;
                     y: Theme.text-nudge;
                     height: parent.height;
                     width: 60px;
@@ -424,7 +424,7 @@ export component PageClock inherits Rectangle {
         Card {
             x: 0px;
             y: 264px;
-            width: 462px;
+            width: 482px;
             height: 140px;
             title: "日出日落 · 西安";
             Text {
@@ -438,7 +438,7 @@ export component PageClock inherits Rectangle {
                 horizontal-alignment: TextHorizontalAlignment.right;
             }
             Rectangle {
-                x: 14px;
+                x: 31px;
                 y: 20px;
                 width: 420px;
                 height: 76px;
@@ -517,7 +517,7 @@ export component PageClock inherits Rectangle {
             StatBar {
                 x: 14px;
                 y: 122px;
-                width: 434px;
+                width: 454px;
                 height: 3.5px;
                 pct: Clk.phase-pct;
                 tint: Clk.is-day ? Theme.warning : Theme.muted;

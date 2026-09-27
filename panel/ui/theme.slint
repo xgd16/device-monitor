@@ -2,20 +2,22 @@
 //
 // 沿用本仓库「语义槽」约定：绘制代码只引用 Theme::*，不写硬编码色值；
 // 规范色值 = 深色主题（OLED 近黑省电），dark=false 时逐槽位映射到浅色主题。
+// 视觉方向「精密仪器」：深色 = 蓝黑虚空上的冷光仪表（冰川青主强调），
+// 浅色 = 瓷白底上的墨色仪表（深青主强调）；两套同族不同气质。
 // Rust 侧启动时按平台覆盖 font-body / font-mono（macOS 用苹方/Menlo 预览）。
 export global Theme {
     in-out property <bool> dark: true;
 
     // ── 背景层次：base < card < card-alt，靠亮度差造层级 ──
-    out property <color> bg: dark ? #05070B : #F1F3F7;
-    out property <color> card: dark ? #0B111B : #FFFFFF;
-    out property <color> card-alt: dark ? #141C2A : #E8ECF2;
-    out property <color> track: dark ? #1B2534 : #DDE3EC;
-    out property <color> border: dark ? #1E2A3E : #D3D9E3;
-    // 卡片顶部高光发丝线 / 氛围光斑
-    out property <color> card-hi: dark ? #33405A : #FFFFFF;
-    out property <color> glow-a: dark ? #1A3555 : #D8E6FA;
-    out property <color> glow-b: dark ? #14283F : #EDE4F8;
+    out property <color> bg: dark ? #04060A : #E8ECF3;
+    out property <color> card: dark ? #0B1322 : #FFFFFF;
+    out property <color> card-alt: dark ? #152134 : #EDF1F8;
+    out property <color> track: dark ? #1E2C44 : #D7DFEA;
+    out property <color> border: dark ? #243450 : #C6D2E2;
+    // 卡片顶部高光发丝线 / 氛围光斑（浅色下发丝线隐入白卡，由描边承担轮廓）
+    out property <color> card-hi: dark ? #40577F : #FFFFFF;
+    out property <color> glow-a: dark ? #0F3D5C : #D3E9FA;
+    out property <color> glow-b: dark ? #23204A : #E6E2F8;
     // 渐变色标里不能调用函数，柔光色在这里预算好
     out property <color> glow-a-soft: glow-a.with-alpha(0.38);
     out property <color> glow-b-soft: glow-b.with-alpha(0.30);
@@ -23,17 +25,17 @@ export global Theme {
     out property <color> glow-hero-b: glow-b.with-alpha(0.40);
 
     // ── 前景 ──
-    out property <color> fg: dark ? #C9D4E4 : #333D4D;
-    out property <color> muted: dark ? #75849C : #5F6E83;
-    out property <color> emphasis: dark ? #F2F6FC : #0E141E;
+    out property <color> fg: dark ? #C7D3E4 : #2E3A4A;
+    out property <color> muted: dark ? #7C8BA6 : #5E6C80;
+    out property <color> emphasis: dark ? #F4F8FF : #0C1424;
 
     // ── 强调 / 状态 ──
-    out property <color> accent: dark ? #4EA3FF : #2563EB;
-    out property <color> accent2: dark ? #BB9AF7 : #7C3AED;
-    out property <color> success: dark ? #3FD07C : #15803D;
-    out property <color> warning: dark ? #FFB428 : #B45309;
-    out property <color> error: dark ? #FF5D68 : #C62828;
-    out property <color> info: dark ? #45D3D3 : #0E7490;
+    out property <color> accent: dark ? #4CC3FF : #0284C7;
+    out property <color> accent2: dark ? #B39DF9 : #6D4AC8;
+    out property <color> success: dark ? #38D192 : #17984F;
+    out property <color> warning: dark ? #FFBE3D : #B45309;
+    out property <color> error: dark ? #FF6570 : #C62F3B;
+    out property <color> info: dark ? #3FC9D4 : #0E7490;
 
     // 文字光学垂直居中补偿：Slint 按行盒（ascent+descent）中轴居中，与字形墨迹
     // 中轴不重合，按实测像素偏差补偿（全工程只调这一处）。

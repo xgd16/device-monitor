@@ -24,14 +24,14 @@ export component App inherits Window {
         y: -160px;
         width: 520px;
         height: 420px;
-        background: @radial-gradient(circle, Theme.glow-a-soft 0%, transparent 60%);
+        background: @radial-gradient(circle, Theme.glow-a-soft 0%, Theme.glow-a.with-alpha(0.0) 60%);
     }
     Rectangle {
         x: 820px;
         y: 300px;
         width: 500px;
         height: 400px;
-        background: @radial-gradient(circle, Theme.glow-b-soft 0%, transparent 60%);
+        background: @radial-gradient(circle, Theme.glow-b-soft 0%, Theme.glow-b.with-alpha(0.0) 60%);
     }
 
     FocusScope {
@@ -71,7 +71,7 @@ export component App inherits Window {
                 y: 0px;
                 height: 1px;
                 width: parent.width - 32px;
-                background: @linear-gradient(90deg, transparent 0%, Theme.card-hi 50%, transparent 100%);
+                background: @linear-gradient(90deg, Theme.card-hi.with-alpha(0.0) 0%, Theme.card-hi 50%, Theme.card-hi.with-alpha(0.0) 100%);
             }
             LiveDot {
                 x: 18px;

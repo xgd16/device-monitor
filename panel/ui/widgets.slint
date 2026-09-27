@@ -47,19 +47,26 @@ export component LiveDot inherits Rectangle {
     }
 }
 
-// ── 卡片：圆角 + 描边 + 顶部发丝高光 + 标题 ──
+// ── 卡片：圆角 + 描边 + 顶部微光 + 发丝高光 + 标题 ──
 export component Card inherits Rectangle {
     in property <string> title;
-    border-radius: 14px;
+    border-radius: 16px;
     background: Theme.card;
     border-width: 1px;
     border-color: Theme.border;
+    // 顶部微光 sheen：玻璃质感（深色下可见，浅色随 card-hi 隐入白卡）
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: 15px;
+        background: @linear-gradient(180deg, Theme.card-hi.with-alpha(0.09) 0%, Theme.card-hi.with-alpha(0.0) 26%);
+    }
     Rectangle {
         x: 16px;
         y: 0px;
         height: 1px;
         width: parent.width - 32px;
-        background: @linear-gradient(90deg, transparent 0%, Theme.card-hi 50%, transparent 100%);
+        background: @linear-gradient(90deg, Theme.card-hi.with-alpha(0.0) 0%, Theme.card-hi 50%, Theme.card-hi.with-alpha(0.0) 100%);
     }
     Text {
         x: 14px;
@@ -111,6 +118,16 @@ export component StatBar inherits Rectangle {
         width: parent.width * Math.max(0, Math.min(root.pct, 100)) / 100;
         border-radius: self.height / 2;
         background: @linear-gradient(90deg, root.tint.with-alpha(0.72) 0%, root.tint 100%);
+        // 亮端帽：填充末端一格高光，仪表指针般的细节
+        Rectangle {
+            x: parent.width - 2.5px;
+            y: 0px;
+            width: 2.5px;
+            height: 100%;
+            border-radius: 1.25px;
+            background: #FFFFFF;
+            opacity: root.pct > 2.5 ? 0.65 : 0.0;
+        }
         // 不做 width 过渡动画：本机是常亮仪表，秒级/3 秒级的数据刷新会把
         // 动画窗口铺满 100% 时间，Slint 渲染循环永不空闲（实测常驻烧一个 CPU 核）
     }
