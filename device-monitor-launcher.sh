@@ -161,6 +161,30 @@ bind_fbcon() {
   fi
 }
 
+# 触摸校准矩阵与屏幕朝向联动：Slint linuxkms 只旋转渲染、不对输入坐标做任何变换
+# （后端源码注释：implemented entirely inside the actual renderer），libinput 的
+# 校准矩阵是唯一修正点。两个横向朝向的矩阵互为 180° 对偶；规则内容与当前朝向
+# 不符时重写并触发 udev，面板随后打开输入设备即读到新矩阵。
+sync_touch_matrix() {
+  case "${1:-90}" in
+    270) _m="0 -1 1 1 0 0" ;; # x=1-ty, y=tx
+    *) _m="0 1 0 -1 0 1" ;;   # x=ty, y=1-tx（实测校准基准）
+  esac
+  _rule=/etc/udev/rules.d/70-stmfts-rotation.rules
+  _want='# stmfts 触摸校准矩阵 —— 由 device-monitor-launcher.sh 随屏幕朝向自动维护（矩阵行勿手改）
+# rot90 = 0 1 0 -1 0 1（基准，2026-09-27 实测）；rot270 = 0 -1 1 1 0 0（180° 对偶）
+ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="stmfts", ENV{LIBINPUT_CALIBRATION_MATRIX}="'"$_m"'"
+'
+  if [ "$(cat "$_rule" 2>/dev/null)" != "$(printf '%s' "$_want")" ]; then
+    printf '%s' "$_want" > "$_rule"
+    udevadm control --reload-rules >/dev/null 2>&1 || true
+    udevadm trigger --action=change --subsystem-match=input >/dev/null 2>&1 || true
+    udevadm settle --timeout=5 >/dev/null 2>&1 || true
+    log "触摸校准矩阵已随朝向同步（rotate=$1 → $_m）"
+  fi
+  return 0
+}
+
 # ── 首选：Slint GPU 面板（femtovg 直驱 GLES，数据走本机 API）──
 try_panel() {
   if [ "${DEVICE_MONITOR_FORCE_TUI:-0}" = "1" ]; then
@@ -184,6 +208,8 @@ try_panel() {
     90 | 270) ;;
     *) rotate=90 ;;
   esac
+  # 触摸坐标修正必须与朝向一致，否则触摸整体反 180°（见函数注释）
+  sync_touch_matrix "$rotate"
 
   log "Attempting Slint GPU panel (SLINT_KMS_ROTATION=$rotate)"
   : > "$PANEL_LOG"
