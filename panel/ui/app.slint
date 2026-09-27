@@ -166,22 +166,9 @@ export component App inherits Window {
             width: 1142px;
             height: 404px;
             clip: true;
-            PageSystem {
-                idx: 0;
-                y: 0px;
-            }
-            PageToken {
-                idx: 1;
-                y: 0px;
-            }
-            PageClock {
-                idx: 2;
-                y: 0px;
-            }
-            PageSettings {
-                idx: 3;
-                y: 0px;
-            }
+            // 滑动切页层必须声明在页面组件「之前」（z 序在下层）！Slint 命中测试自顶向下，
+            // TouchArea 按下即夺走指针并中止同层后续遍历——放上层会吞掉页内控件（设置页
+            // 方向/主题按钮）的全部点击；放下层则「按控件=控件处理，按空白=本层滑动切页」。
             TouchArea {
                 property <length> press-x: 0px;
                 pointer-event(e) => {
@@ -201,6 +188,22 @@ export component App inherits Window {
                         }
                     }
                 }
+            }
+            PageSystem {
+                idx: 0;
+                y: 0px;
+            }
+            PageToken {
+                idx: 1;
+                y: 0px;
+            }
+            PageClock {
+                idx: 2;
+                y: 0px;
+            }
+            PageSettings {
+                idx: 3;
+                y: 0px;
             }
         }
 
@@ -489,29 +492,13 @@ export component App inherits Window {
                 }
             }
 
-            // 页面容器（横向滑动切换，竖版页宽 512）
+            // 页面容器（横向滑动切换，竖版页宽 512；滑动层同横版——必须在下层）
             Rectangle {
                 x: 14px;
                 y: 88px;
                 width: 512px;
                 height: 1028px;
                 clip: true;
-                PageSystemP {
-                    idx: 0;
-                    y: 0px;
-                }
-                PageTokenP {
-                    idx: 1;
-                    y: 0px;
-                }
-                PageClockP {
-                    idx: 2;
-                    y: 0px;
-                }
-                PageSettingsP {
-                    idx: 3;
-                    y: 0px;
-                }
                 TouchArea {
                     property <length> press-x: 0px;
                     pointer-event(e) => {
@@ -531,6 +518,22 @@ export component App inherits Window {
                             }
                         }
                     }
+                }
+                PageSystemP {
+                    idx: 0;
+                    y: 0px;
+                }
+                PageTokenP {
+                    idx: 1;
+                    y: 0px;
+                }
+                PageClockP {
+                    idx: 2;
+                    y: 0px;
+                }
+                PageSettingsP {
+                    idx: 3;
+                    y: 0px;
                 }
             }
 
