@@ -544,3 +544,513 @@ export component PageClock inherits Rectangle {
         }
     }
 }
+
+// ── 竖屏版（540x1170）：单列堆叠，内容宽 484；数据/组件与横屏共用 ──
+export component PageClockP inherits Rectangle {
+    in property <int> idx: 2;
+    x: (root.idx - Ui.page) * ((root.idx - Ui.page) <= 0 ? 256px : 512px);
+    animate x {
+        duration: 520ms;
+        easing: ease-out;
+    }
+    width: 512px;
+    height: 1028px;
+    // 非激活页全透明：滑动复位后相邻页不得透出（与横版一致）
+    property <bool> act: Ui.page == root.idx;
+    opacity: act ? 1.0 : 0.0;
+    animate opacity {
+        duration: 420ms;
+        easing: ease-out;
+        delay: 40ms;
+    }
+    property <bool> act: Ui.page == root.idx;
+
+    Card {
+        x: 0px;
+        y: 0px;
+        width: 512px;
+        height: 232px;
+        title: "本机时刻";
+        Rectangle {
+            x: 260px;
+            y: -60px;
+            width: 240px;
+            height: 240px;
+            opacity: Ui.screen-on ? Clk.glow-a : 0.0;
+            background: @radial-gradient(circle, Theme.glow-hero-a 0%, Theme.glow-a.with-alpha(0.0) 62%);
+        }
+        Rectangle {
+            x: 40px;
+            y: -80px;
+            width: 220px;
+            height: 200px;
+            opacity: Ui.screen-on ? Clk.glow-b : 0.0;
+            background: @radial-gradient(circle, Theme.glow-hero-b 0%, Theme.glow-b.with-alpha(0.0) 58%);
+        }
+        hh := Mono {
+            x: 18px;
+            y: 26px;
+            text: Clk.hh;
+            font-size: 92px;
+            font-weight: 700;
+            color: Theme.emphasis;
+        }
+        colon := Mono {
+            x: hh.x + hh.preferred-width + 2px;
+            y: 26px;
+            text: ":";
+            font-size: 92px;
+            font-weight: 700;
+            color: Theme.accent;
+        }
+        mm := Mono {
+            x: colon.x + colon.preferred-width + 2px;
+            y: 26px;
+            text: Clk.mm;
+            font-size: 92px;
+            font-weight: 700;
+            color: Theme.emphasis;
+        }
+        Mono {
+            x: mm.x + mm.preferred-width + 22px;
+            y: 72px;
+            text: Clk.ss;
+            font-size: 36px;
+            font-weight: 700;
+            color: Theme.accent;
+        }
+        Text {
+            x: 18px;
+            y: 150px;
+            text: Clk.date-line;
+            font-size: 14px;
+            font-weight: 700;
+            color: Theme.fg;
+            font-family: Theme.font-body;
+        }
+        Mono {
+            x: 0px;
+            width: parent.width - 20px;
+            y: 162px;
+            text: Clk.sec-str;
+            font-size: 8px;
+            color: Theme.muted;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        StatBar {
+            x: 18px;
+            y: 178px;
+            width: 476px;
+            height: 4px;
+            pct: Clk.sec-pct;
+            tint: Theme.accent;
+        }
+        Mono {
+            x: 18px;
+            y: 192px;
+            width: 476px;
+            text: Clk.meta1;
+            font-size: 9px;
+            color: Theme.fg;
+        }
+        Mono {
+            x: 18px;
+            y: 210px;
+            width: 476px;
+            text: Clk.meta2;
+            font-size: 8px;
+            color: Theme.muted;
+        }
+    }
+
+    Card {
+        x: 0px;
+        y: 242px;
+        width: 251px;
+        height: 162px;
+        title: "天气 · 西安";
+        Text {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 11px;
+            text: Clk.w-note;
+            font-size: 7.5px;
+            color: Clk.w-ok ? Theme.muted : Theme.warning;
+            font-family: Theme.font-body;
+            overflow: elide;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        wtemp := Mono {
+            x: 14px;
+            y: 24px;
+            text: Clk.w-temp;
+            font-size: 34px;
+            font-weight: 700;
+            color: Clk.w-temp-c >= 35.0 ? Theme.error : (Clk.w-temp-c >= 28.0 ? Theme.warning : (Clk.w-temp-c <= 0.0 ? Theme.accent : Theme.emphasis));
+        }
+        Text {
+            x: wtemp.x + wtemp.preferred-width + 5px;
+            y: 34px;
+            text: "°C";
+            font-size: 11px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: wtemp.x + wtemp.preferred-width + 34px;
+            y: 40px;
+            text: Clk.w-desc;
+            font-size: 12px;
+            font-weight: 700;
+            color: Clk.w-wet ? Theme.info : Theme.fg;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+        Text {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 62px;
+            text: Clk.w-feels;
+            font-size: 9px;
+            color: Theme.fg;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        Text {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 78px;
+            text: Clk.w-wind;
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        Text {
+            x: 14px;
+            y: 100px;
+            width: 223px;
+            text: Clk.w-range;
+            font-size: 9px;
+            color: Theme.fg;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+        Text {
+            x: 14px;
+            y: 116px;
+            width: 223px;
+            text: Clk.w-extra;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+        StatBar {
+            x: 14px;
+            y: 136px;
+            width: 223px;
+            height: 4px;
+            pct: 100.0;
+            tint: Clk.w-ok ? Theme.info : Theme.warning;
+        }
+    }
+
+    Card {
+        x: 261px;
+        y: 242px;
+        width: 251px;
+        height: 162px;
+        title: "电池";
+        Pill {
+            y: 8px;
+            x: parent.width - self.width - 12px;
+            label: Sys.bat-pill;
+            fg: Sys.bat-charging ? Theme.success : Theme.accent;
+            bg: Theme.card-alt;
+            horizontal-stretch: 0;
+        }
+        RingGauge {
+            x: 4px;
+            y: 32px;
+            width: 118px;
+            height: 118px;
+            val-arc: Sys.bat-ring;
+            tint: Sys.bat-pct < 20 ? Theme.error : (Sys.bat-pct < 50 ? Theme.warning : Theme.success);
+            label: Sys.bat-str;
+            sub: "电量 %";
+        }
+        Text {
+            x: 134px;
+            y: 40px;
+            text: Sys.bat-remain;
+            font-size: 11px;
+            font-weight: 700;
+            color: Theme.fg;
+            font-family: Theme.font-body;
+        }
+        Mono {
+            x: 134px;
+            y: 64px;
+            width: 106px;
+            text: Sys.bat-voltage + "V · " + Sys.bat-current + "mA";
+            font-size: 8px;
+            color: Theme.muted;
+        }
+        Mono {
+            x: 134px;
+            y: 80px;
+            width: 106px;
+            text: Sys.bat-power + "W · " + Sys.bat-temp-str;
+            font-size: 8px;
+            color: Theme.muted;
+        }
+        Mono {
+            x: 134px;
+            y: 102px;
+            width: 106px;
+            text: Sys.bat-limit;
+            font-size: 8px;
+            color: Theme.muted;
+            overflow: elide;
+        }
+        Mono {
+            x: 134px;
+            y: 124px;
+            width: 106px;
+            text: Sys.bat-protocol == "" ? "" : "协议 " + Sys.bat-protocol;
+            font-size: 8.5px;
+            font-weight: 700;
+            color: Sys.bat-protocol == "" ? Theme.muted : Theme.accent;
+        }
+    }
+
+    Card {
+        x: 0px;
+        y: 414px;
+        width: 512px;
+        height: 114px;
+        title: "时间进度";
+        for pr[i] in Clk.prog: Rectangle {
+            x: 14px;
+            y: 26px + i * 21px;
+            width: 484px;
+            height: 18px;
+            Text {
+                x: 0px;
+                y: Theme.text-nudge;
+                height: parent.height;
+                width: 36px;
+                text: pr.label;
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            StatBar {
+                x: 42px;
+                y: 7px;
+                width: 270px;
+                height: 4.5px;
+                pct: pr.pct;
+                tint: Theme.accent;
+            }
+            Mono {
+                x: 320px;
+                y: Theme.text-nudge;
+                height: parent.height;
+                width: 60px;
+                text: pr.pct-str + "%";
+                font-size: 10px;
+                font-weight: 700;
+                color: Theme.accent;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 386px;
+                y: Theme.text-nudge;
+                height: parent.height;
+                width: 98px;
+                text: pr.left;
+                font-size: 8px;
+                color: Theme.muted;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+    }
+
+    Card {
+        x: 0px;
+        y: 538px;
+        width: 512px;
+        height: 130px;
+        title: "世界时钟";
+        for w[i] in Clk.world: Rectangle {
+            x: 14px + Math.mod(i, 2) * 249px;
+            y: 26px + Math.floor(i / 2) * 34px;
+            width: 235px;
+            height: 30px;
+            Text {
+                x: 0px;
+                y: Theme.text-nudge;
+                height: parent.height;
+                width: 90px;
+                text: w.name + w.mark;
+                font-size: 10.5px;
+                font-weight: 700;
+                color: Theme.fg;
+                font-family: Theme.font-body;
+                overflow: elide;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 90px;
+                y: Theme.text-nudge;
+                height: parent.height;
+                width: 50px;
+                text: w.offset;
+                font-size: 7.5px;
+                color: Theme.muted;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 144px;
+                y: Theme.text-nudge;
+                height: parent.height;
+                width: 70px;
+                text: w.time;
+                font-size: 14px;
+                font-weight: 700;
+                color: Theme.emphasis;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+    }
+
+    Card {
+        x: 0px;
+        y: 678px;
+        width: 512px;
+        height: 140px;
+        title: "日出日落 · 西安";
+        Text {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 11px;
+            text: Clk.sun-src;
+            font-size: 7.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        Rectangle {
+            x: 14px;
+            y: 20px;
+            width: 484px;
+            height: 76px;
+            Path {
+                x: 32px;
+                width: 420px;
+                height: 76px;
+                commands: Clk.sun-arc;
+                stroke: Theme.track;
+                stroke-width: 2px;
+                stroke-line-cap: round;
+                fill: transparent;
+            }
+            Rectangle {
+                x: Clk.sun-x * 1px + 27.5px;
+                y: Clk.sun-y * 1px - 4.5px;
+                width: 9px;
+                height: 9px;
+                border-radius: self.width / 2;
+                background: Clk.is-day ? Theme.warning : Theme.muted;
+                Rectangle {
+                    x: -3.5px;
+                    y: -3.5px;
+                    width: parent.width + 7px;
+                    height: parent.height + 7px;
+                    border-radius: self.width / 2;
+                    background: Theme.warning.with-alpha(0.3);
+                    opacity: Ui.screen-on ? Clk.sun-halo : 0.0;
+                }
+            }
+        }
+        Text {
+            x: 14px;
+            y: 102px;
+            text: "日出";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+        Mono {
+            x: 40px;
+            y: 102px;
+            text: Clk.sun-rise;
+            font-size: 13px;
+            font-weight: 700;
+            color: Theme.warning;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+        Text {
+            x: 150px;
+            y: 102px;
+            text: "日落";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+        Mono {
+            x: 176px;
+            y: 102px;
+            text: Clk.sun-set;
+            font-size: 13px;
+            font-weight: 700;
+            color: Theme.accent2;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+        Mono {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 104px;
+            text: "昼长 " + Clk.day-len + " · 正午 " + Clk.noon;
+            font-size: 9px;
+            color: Theme.fg;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        StatBar {
+            x: 14px;
+            y: 122px;
+            width: 484px;
+            height: 3.5px;
+            pct: Clk.phase-pct;
+            tint: Clk.is-day ? Theme.warning : Theme.muted;
+        }
+        Text {
+            x: 14px;
+            y: 128px;
+            width: 200px;
+            text: Clk.phase-line;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+        Mono {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 128px;
+            text: Clk.tomorrow;
+            font-size: 7.5px;
+            color: Theme.muted;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+    }
+}

@@ -870,3 +870,756 @@ export component PageSystem inherits Rectangle {
         }
     }
 }
+
+// ── 竖屏版（540x1170）：单列 + 半宽成对，内容宽 484（半宽卡 223）──
+// 取舍：内存/磁盘的近 2 分钟等化器与温度的低权值项在竖屏省略（前 4 个最热传感器）。
+export component PageSystemP inherits Rectangle {
+    in property <int> idx: 0;
+    x: (root.idx - Ui.page) * ((root.idx - Ui.page) <= 0 ? 256px : 512px);
+    animate x {
+        duration: 520ms;
+        easing: ease-out;
+    }
+    width: 512px;
+    height: 1028px;
+    // 非激活页全透明（与横版一致）
+    property <bool> act: Ui.page == root.idx;
+    opacity: act ? 1.0 : 0.0;
+    animate opacity {
+        duration: 420ms;
+        easing: ease-out;
+        delay: 40ms;
+    }
+
+    // ── CPU（全宽）──
+    Card {
+        x: 0px;
+        y: 0px;
+        width: 512px;
+        height: 174px;
+        title: "CPU";
+        Pill {
+            y: 8px;
+            x: parent.width - self.width - 12px;
+            label: Sys.governor;
+            fg: Theme.accent;
+            bg: Theme.card-alt;
+            horizontal-stretch: 0;
+        }
+        cpu_big := Mono {
+            x: 14px;
+            y: 28px;
+            text: Sys.cpu-str;
+            font-size: 34px;
+            font-weight: 700;
+            color: Theme.lvl(Sys.cpu-usage);
+        }
+        Text {
+            x: cpu_big.x + cpu_big.preferred-width + 4px;
+            y: 46px;
+            text: "%";
+            font-size: 13px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: 300px;
+            y: 16px;
+            text: "近 2 分钟";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        BarChart {
+            x: 300px;
+            y: 28px;
+            width: 184px;
+            height: 60px;
+            values: Sys.cpu-history;
+            tint: Theme.lvl(Sys.cpu-usage);
+        }
+        for c[i] in Sys.cores: Rectangle {
+            x: 14px + Math.mod(i, 4) * 120px;
+            y: 100px + Math.floor(i / 4) * 22px;
+            width: 114px;
+            height: 16px;
+            Text {
+                x: 0px;
+                y: 0px;
+                width: 18px;
+                text: "C\{c.id}";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            StatBar {
+                x: 22px;
+                y: 6px;
+                width: 58px;
+                height: 4px;
+                pct: c.usage;
+                tint: Theme.lvl(c.usage);
+            }
+            Mono {
+                x: 82px;
+                y: 0px;
+                width: 32px;
+                text: c.freq;
+                font-size: 8px;
+                color: Theme.muted;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+        Mono {
+            x: 14px;
+            y: 156px;
+            width: 484px;
+            text: "负载 " + Sys.load;
+            font-size: 8px;
+            color: Theme.muted;
+        }
+    }
+
+    // ── 内存（半宽，等化器省略）──
+    Card {
+        x: 0px;
+        y: 184px;
+        width: 251px;
+        height: 112px;
+        title: "内存";
+        mem_big := Mono {
+            x: 14px;
+            y: 22px;
+            text: Sys.mem-str + "%";
+            font-size: 26px;
+            font-weight: 700;
+            color: Theme.lvl(Sys.mem-pct);
+        }
+        Text {
+            x: mem_big.x + mem_big.preferred-width + 8px;
+            y: 34px;
+            text: Sys.mem-used + " / " + Sys.mem-total;
+            font-size: 9px;
+            color: Theme.fg;
+            font-family: Theme.font-body;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+        StatBar {
+            x: 14px;
+            y: 70px;
+            width: 223px;
+            height: 6px;
+            pct: Sys.mem-pct;
+            tint: Theme.lvl(Sys.mem-pct);
+        }
+        Mono {
+            x: 14px;
+            y: 86px;
+            width: 223px;
+            text: "可用 " + Sys.mem-avail + " · 交换 " + Sys.mem-swap;
+            font-size: 8px;
+            color: Theme.muted;
+            overflow: elide;
+        }
+    }
+
+    // ── 磁盘（半宽）──
+    Card {
+        x: 261px;
+        y: 184px;
+        width: 251px;
+        height: 112px;
+        title: "磁盘";
+        disk_big := Mono {
+            x: 14px;
+            y: 22px;
+            text: Sys.disk-str + "%";
+            font-size: 26px;
+            font-weight: 700;
+            color: Theme.lvl(Sys.disk-pct);
+        }
+        Text {
+            x: disk_big.x + disk_big.preferred-width + 8px;
+            y: 34px;
+            text: Sys.disk-used + " / " + Sys.disk-total;
+            font-size: 9px;
+            color: Theme.fg;
+            font-family: Theme.font-body;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+        StatBar {
+            x: 14px;
+            y: 70px;
+            width: 223px;
+            height: 6px;
+            pct: Sys.disk-pct;
+            tint: Theme.lvl(Sys.disk-pct);
+        }
+        Mono {
+            x: 14px;
+            y: 86px;
+            width: 223px;
+            text: Sys.disk-fs + " · inode " + Sys.disk-inode;
+            font-size: 8px;
+            color: Theme.muted;
+            overflow: elide;
+        }
+    }
+
+    // ── GPU（半宽）──
+    Card {
+        x: 0px;
+        y: 306px;
+        width: 251px;
+        height: 104px;
+        title: "GPU";
+        gpu_big := Mono {
+            x: 14px;
+            y: 22px;
+            text: Sys.gpu-freq;
+            font-size: 22px;
+            font-weight: 700;
+            color: Sys.gpu-suspended ? Theme.muted : Theme.success;
+        }
+        Text {
+            x: gpu_big.x + gpu_big.preferred-width + 5px;
+            y: 32px;
+            text: Sys.gpu-suspended ? "" : "MHz";
+            font-size: 9px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 30px;
+            text: Sys.gpu-name;
+            font-size: 9px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        StatBar {
+            x: 14px;
+            y: 58px;
+            width: 223px;
+            height: 5px;
+            pct: Sys.gpu-pct;
+            tint: Theme.accent;
+        }
+        Text {
+            x: 14px;
+            y: 72px;
+            width: 223px;
+            text: Sys.gpu-range;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+    }
+
+    // ── 温度（半宽，只显最热 4 项）──
+    Card {
+        x: 261px;
+        y: 306px;
+        width: 251px;
+        height: 104px;
+        title: "温度";
+        for t[i] in Sys.thermal: Rectangle {
+            x: 14px;
+            y: 26px + i * 19px;
+            width: 223px;
+            height: 18px;
+            visible: i < 4;
+            Text {
+                x: 0px;
+                y: 0px;
+                width: 150px;
+                text: t.name;
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                overflow: elide;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 160px;
+                y: 0px;
+                width: 63px;
+                text: t.temp-str;
+                font-size: 11px;
+                font-weight: 700;
+                color: Theme.tlvl(t.temp);
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+    }
+
+    // ── 进程（全宽）──
+    Card {
+        x: 0px;
+        y: 420px;
+        width: 512px;
+        height: 140px;
+        title: "进程";
+        Text {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 11px;
+            text: "共 " + Sys.procs-count + " 个";
+            font-size: 9px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        Text {
+            x: 14px;
+            y: 28px;
+            text: "PID";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: 64px;
+            y: 28px;
+            text: "CPU%";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: 118px;
+            y: 28px;
+            text: "内存";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: 180px;
+            y: 28px;
+            text: "名称";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Rectangle {
+            x: 14px;
+            y: 42px;
+            width: 484px;
+            height: 1px;
+            background: Theme.border;
+        }
+        for p[i] in Sys.procs: Rectangle {
+            x: 14px;
+            y: 48px + i * 15px;
+            width: 484px;
+            height: 14px;
+            Mono {
+                x: 0px;
+                y: 0px;
+                width: 44px;
+                text: p.pid-str;
+                font-size: 8px;
+                color: Theme.muted;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 50px;
+                y: 0px;
+                width: 56px;
+                text: p.cpu-str;
+                font-size: 9px;
+                color: Theme.lvl(p.cpu);
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 110px;
+                y: 0px;
+                width: 64px;
+                text: p.mem;
+                font-size: 8px;
+                color: Theme.fg;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Text {
+                x: 180px;
+                y: 0px;
+                width: 300px;
+                text: p.name;
+                font-size: 9px;
+                color: Theme.fg;
+                font-family: Theme.font-body;
+                overflow: elide;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+    }
+
+    // ── 电池（全宽）──
+    Card {
+        x: 0px;
+        y: 570px;
+        width: 512px;
+        height: 170px;
+        title: "电池";
+        Pill {
+            y: 8px;
+            x: parent.width - self.width - 12px;
+            label: Sys.bat-pill;
+            fg: Sys.bat-charging ? Theme.success : Theme.accent;
+            bg: Theme.card-alt;
+            horizontal-stretch: 0;
+        }
+        bat_big := Mono {
+            x: 14px;
+            y: 24px;
+            text: Sys.bat-str;
+            font-size: 34px;
+            font-weight: 700;
+            color: Sys.bat-pct < 20 ? Theme.error : (Sys.bat-pct < 50 ? Theme.warning : Theme.success);
+        }
+        Text {
+            x: bat_big.x + bat_big.preferred-width + 4px;
+            y: 42px;
+            text: "%";
+            font-size: 13px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Mono {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 36px;
+            text: Sys.bat-voltage + "V · " + Sys.bat-current + "mA";
+            font-size: 10px;
+            color: Theme.fg;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        StatBar {
+            x: 14px;
+            y: 74px;
+            width: 484px;
+            height: 7px;
+            pct: Sys.bat-pct;
+            tint: Sys.bat-pct < 20 ? Theme.error : (Sys.bat-pct < 50 ? Theme.warning : Theme.success);
+        }
+        // 两行三格：电池侧（功率/温度/剩余）+ 充电器侧（电压/电流/协议）
+        Rectangle {
+            x: 14px;
+            y: 92px;
+            width: 150px;
+            height: 32px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "功率";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Sys.bat-power;
+                font-size: 13px;
+                font-weight: 700;
+                color: Theme.fg;
+            }
+        }
+        Rectangle {
+            x: 178px;
+            y: 92px;
+            width: 150px;
+            height: 32px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "温度";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Sys.bat-temp-str;
+                font-size: 13px;
+                font-weight: 700;
+                color: Theme.tlvl(Sys.bat-temp);
+            }
+        }
+        Rectangle {
+            x: 342px;
+            y: 92px;
+            width: 156px;
+            height: 32px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "剩余";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Sys.bat-remain;
+                font-size: 13px;
+                font-weight: 700;
+                color: Theme.fg;
+            }
+        }
+        Rectangle {
+            x: 14px;
+            y: 128px;
+            width: 150px;
+            height: 32px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "充电电压";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Sys.bat-chg-v;
+                font-size: 13px;
+                font-weight: 700;
+                color: Sys.bat-chg-v == "--" ? Theme.muted : Theme.success;
+            }
+        }
+        Rectangle {
+            x: 178px;
+            y: 128px;
+            width: 150px;
+            height: 32px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "充电电流";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Sys.bat-chg-i;
+                font-size: 13px;
+                font-weight: 700;
+                color: Sys.bat-chg-i == "--" ? Theme.muted : Theme.success;
+            }
+        }
+        Rectangle {
+            x: 342px;
+            y: 128px;
+            width: 156px;
+            height: 32px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "充电协议";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Sys.bat-protocol == "" ? "--" : Sys.bat-protocol;
+                font-size: 13px;
+                font-weight: 700;
+                color: Sys.bat-protocol == "" ? Theme.muted : Theme.accent;
+            }
+        }
+        Mono {
+            x: 14px;
+            y: 156px;
+            width: 484px;
+            text: Sys.bat-limit;
+            font-size: 8px;
+            color: Theme.muted;
+            overflow: elide;
+        }
+    }
+
+    // ── 网络与无线（全宽）──
+    Card {
+        x: 0px;
+        y: 750px;
+        width: 512px;
+        height: 120px;
+        title: "网络与无线";
+        Text {
+            x: 14px;
+            y: 26px;
+            width: 250px;
+            text: Sys.wifi-ssid;
+            font-size: 11px;
+            font-weight: 700;
+            color: Sys.wifi-ok ? Theme.emphasis : Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+        Mono {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 26px;
+            text: Sys.wifi-signal-str;
+            font-size: 10px;
+            color: Theme.sig(Sys.wifi-signal);
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        Text {
+            x: 14px;
+            y: 44px;
+            width: 240px;
+            text: Sys.wifi-detail;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+        Text {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 44px;
+            text: Sys.bt;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        Rectangle {
+            x: 14px;
+            y: 60px;
+            width: 484px;
+            height: 1px;
+            background: Theme.border;
+        }
+        Mono {
+            x: 14px;
+            y: 66px;
+            text: "↓ " + Sys.rx;
+            font-size: 10px;
+            color: Theme.info;
+        }
+        Mono {
+            x: 170px;
+            y: 66px;
+            text: "↑ " + Sys.tx;
+            font-size: 10px;
+            color: Theme.accent2;
+        }
+        Rectangle {
+            x: 14px;
+            y: 86px;
+            width: 484px;
+            height: 1px;
+            background: Theme.border;
+        }
+        Text {
+            x: 14px;
+            y: 92px;
+            text: Sys.vpn-kind;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+        Text {
+            x: 56px;
+            y: 92px;
+            width: 200px;
+            text: Sys.vpn-node;
+            font-size: 10.5px;
+            font-weight: 700;
+            color: Sys.vpn-ok ? Theme.success : Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+        Mono {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 92px;
+            text: Sys.vpn-mode + " · " + Sys.vpn-conn;
+            font-size: 8px;
+            color: Theme.muted;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+    }
+
+    // ── 服务与告警（全宽）──
+    Card {
+        x: 0px;
+        y: 880px;
+        width: 512px;
+        height: 76px;
+        title: "服务与告警";
+        HorizontalLayout {
+            x: 14px;
+            y: 30px;
+            width: 484px;
+            height: 18px;
+            spacing: 6px;
+            for s in Sys.services: Rectangle {
+                width: stxt.preferred-width + 26px;
+                border-radius: 9px;
+                background: Theme.card-alt;
+                height: 18px;
+                horizontal-stretch: 0;
+                Dot {
+                    x: 7px;
+                    y: (parent.height - self.height) / 2;
+                    tint: s.state == "active" ? Theme.success : (s.state == "failed" ? Theme.error : (s.state == "inactive" ? Theme.warning : Theme.muted));
+                }
+                stxt := Text {
+                    x: 19px;
+                    y: Theme.text-nudge;
+                    height: parent.height;
+                    vertical-alignment: TextVerticalAlignment.center;
+                    text: s.name + " " + s.state;
+                    font-size: 8px;
+                    color: Theme.fg;
+                    font-family: Theme.font-body;
+                }
+            }
+        }
+    }
+}

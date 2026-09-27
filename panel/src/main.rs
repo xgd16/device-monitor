@@ -28,9 +28,14 @@ slint::include_modules!();
 /// 吞吐面积图盒子（page-token.slint 实时吞吐卡）
 const TPS_W: f32 = 309.0;
 const TPS_H: f32 = 72.0;
+/// 竖屏版图表盒宽（484 = 512 卡内宽），横竖两版同时生成
+const TPS_W_P: f32 = 484.0;
+/// 竖屏半宽卡（251 卡内宽 223）用的小图
+const TPS_W_S: f32 = 223.0;
 /// 7 天趋势面积图盒子（质量指标卡）
 const TREND_W: f32 = 353.0;
 const TREND_H: f32 = 40.0;
+const TREND_W_P: f32 = 484.0;
 /// 等化器柱数（CPU/内存历史，2s 采样 → 约 2 分钟窗口）
 const HIST_BARS: usize = 60;
 /// 吞吐滑窗点数（WS 2Hz → 约 30 秒）
@@ -53,6 +58,12 @@ static REFRESH_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// 熄屏降负载：屏幕状态镜像（bl_power 事实源，true=亮）。
 /// 由 screen-watch 线程维护；tick / 轮询线程据此短路，熄屏期间零重绘零拉取。
 static SCREEN_ON: AtomicBool = AtomicBool::new(true);
+
+/// 方向文件：panel-orientation.txt = 显式偏好（portrait/landscape，缺省 auto）；
+/// panel-mode.txt = 上次自动切换结果（启动初值）；rotation.txt 沿用横屏朝向。
+const ORIENT_PREF_FILE: &str = "panel-orientation.txt";
+const ORIENT_MODE_FILE: &str = "panel-mode.txt";
+const ROTATION_FILE: &str = "rotation.txt";
 
 // TPS 流限频：网关每 500ms 推一条 stats.throughput（2Hz），逐条刷 UI 会让
 // Slint 渲染循环停不下来（每条消息 = 一次全屏重绘）。样本照常进滑窗，
@@ -82,8 +93,38 @@ fn main() {
         .and_then(|v| v.parse::<i32>().ok())
         .unwrap_or(0);
 
+    // ── 屏幕方向（进程常量，切换 = 写 panel-mode.txt 后退出、启动器重拉）──
+    // 优先级：PANEL_MODE env（调试）> panel-orientation.txt 显式偏好 > panel-mode.txt
+    //（上次自动切换结果）> 横屏。竖屏时按横屏朝向推导 KMS 旋转（270→0 / 90→180），
+    // 保持「哪边朝上」的用户习惯不变。
+    let pref = std::fs::read_to_string(ORIENT_PREF_FILE).unwrap_or_default();
+    let pref = pref.trim();
+    let explicit = pref == "portrait" || pref == "landscape";
+    let mode = std::env::var("PANEL_MODE")
+        .ok()
+        .filter(|m| m == "portrait" || m == "landscape")
+        .or_else(|| explicit.then(|| pref.to_string()))
+        .or_else(|| {
+            std::fs::read_to_string(ORIENT_MODE_FILE)
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|m| m == "portrait" || m == "landscape")
+        })
+        .unwrap_or_else(|| "landscape".into());
+    let portrait = mode == "portrait";
+    if portrait {
+        let base = std::fs::read_to_string(ROTATION_FILE)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| "270".into());
+        let rot = if base == "90" { "180" } else { "0" };
+        // 后端在 app.run() 时才读该 env，此处覆盖启动器给的横屏值
+        unsafe { std::env::set_var("SLINT_KMS_ROTATION", rot) };
+        eprintln!("[panel] 竖屏模式（SLINT_KMS_ROTATION={rot}，来源 {mode}）");
+    }
+
     let app = App::new().expect("无法创建 Slint 组件（检查字体/后端依赖）");
     let weak = app.as_weak();
+    app.global::<Ui>().set_portrait(portrait);
 
     // 字体与文字垂直居中补偿：.slint 里的默认值即设备值（Noto Sans CJK SC）；
     // macOS 预览字体不同（苹方），行盒度量随之不同，这里按苹方重新校准。
@@ -140,6 +181,7 @@ fn main() {
         spawn_demo(weak.clone());
     } else {
         spawn_screen_watch(weak.clone());
+        spawn_orientation_watch(portrait, !explicit);
         spawn_system_poller(weak.clone());
         spawn_token_poller(weak.clone());
         spawn_token_ws(weak.clone());
@@ -453,6 +495,8 @@ fn tick_now(ui: &App) {
                 wnd.iter().copied().collect()
             };
             let (line, area) = polyline(&vals, TPS_W, TPS_H, "");
+            let (line_p, area_p) = polyline(&vals, TPS_W_P, TPS_H, "");
+            let (line_s, area_s) = polyline(&vals, TPS_W_S, TPS_H, "");
             let cur = vals.last().copied().unwrap_or(0.0);
             let avg = if vals.is_empty() { 0.0 } else { vals.iter().sum::<f32>() / vals.len() as f32 };
             let peak = vals.iter().cloned().fold(0.0f32, f32::max);
@@ -463,6 +507,10 @@ fn tick_now(ui: &App) {
             tok.set_streams(TPS_STREAMS.load(Ordering::Relaxed));
             tok.set_tps_line(line.into());
             tok.set_tps_area(area.into());
+            tok.set_tps_line_p(line_p.into());
+            tok.set_tps_area_p(area_p.into());
+            tok.set_tps_line_s(line_s.into());
+            tok.set_tps_area_s(area_s.into());
             tok.set_tps_info(info.into());
         }
     }
@@ -619,6 +667,83 @@ fn tick_now(ui: &App) {
 }
 
 type SunPair = Option<(f64, f64)>;
+
+/// 在 /sys/bus/iio 里找第一个三轴加速度计；没有则 None（退回手动/文件模式）。
+fn find_accel() -> Option<String> {
+    let dir = std::fs::read_dir("/sys/bus/iio/devices").ok()?;
+    for entry in dir.flatten() {
+        let p = entry.path();
+        if p.join("in_accel_x_raw").exists() && p.join("in_accel_z_raw").exists() {
+            return p.to_str().map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// 读加速度计判定「竖持」（y 长轴重力分量明显大于 x 短轴）；平放（z 主导）返回 None 不切。
+/// 单位归一到 m/s²：raw × in_accel_scale（内核 mount_matrix 若有则在 sysfs 已换算）。
+fn accel_is_portrait(dir: &str) -> Option<bool> {
+    let rd = |f: &str| {
+        std::fs::read_to_string(format!("{dir}/{f}"))
+            .ok()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+    };
+    let (x, y, z) = (rd("in_accel_x_raw")?, rd("in_accel_y_raw")?, rd("in_accel_z_raw")?);
+    let scale = rd("in_accel_scale").unwrap_or(1.0).abs().max(f64::EPSILON);
+    let (gx, gy, gz) = (x * scale, y * scale, z * scale);
+    if gz.abs() > 7.0 {
+        return None;
+    }
+    Some(gy.abs() > gx.abs() * 1.15)
+}
+
+/// 方向自动切换（偏好为 auto 且加速度计可用时启动）：连续 3 次（6s）读数一致且
+/// 与当前相反才切换；切换写 panel-mode.txt 后退出进程，由启动器 ≤5s 拉起新方向
+/// 的实例；切换后 30s 冷却防抖。
+fn spawn_orientation_watch(portrait_now: bool, auto: bool) {
+    if !auto {
+        return;
+    }
+    let Some(accel) = find_accel() else {
+        eprintln!("[panel] 无加速度计，方向固定（可写 panel-orientation.txt 手动指定）");
+        return;
+    };
+    eprintln!("[panel] 加速度计 {accel}，自动方向切换开启");
+    std::thread::Builder::new()
+        .name("orientation-watch".into())
+        .spawn(move || {
+            // cur 不变：方向翻转即退出进程由启动器重启，所以单进程内恒定
+            let cur = portrait_now;
+            let want: std::cell::Cell<Option<bool>> = std::cell::Cell::new(None);
+            let hits = std::cell::Cell::new(0u32);
+            let cooldown = Instant::now();
+            loop {
+                if cooldown.elapsed() >= Duration::from_secs(30)
+                    && let Some(p) = accel_is_portrait(&accel)
+                {
+                    if p != cur {
+                        if want.get() == Some(p) {
+                            hits.set(hits.get() + 1);
+                        } else {
+                            want.set(Some(p));
+                            hits.set(1);
+                        }
+                        if hits.get() >= 3 {
+                            let m = if p { "portrait" } else { "landscape" };
+                            let _ = std::fs::write(ORIENT_MODE_FILE, format!("{m}\n"));
+                            tracing_or_log(&format!("方向切换 → {m}（加速度计），重启面板生效"));
+                            std::process::exit(0);
+                        }
+                    } else {
+                        want.set(None);
+                        hits.set(0);
+                    }
+                }
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        })
+        .ok();
+}
 
 /// 读背光 DPMS 状态（msm 把 bl_power=4 当熄屏）；读失败视为亮屏（fail-open）。
 fn read_screen_on() -> bool {
@@ -1577,6 +1702,7 @@ fn apply_token(
         .map(|a| a.iter().map(|p| ji(p, "requests") as f32).collect())
         .unwrap_or_default();
     let (trend_line, trend_area) = polyline(&trend_pts, TREND_W, TREND_H, "");
+    let (trend_line_p, trend_area_p) = polyline(&trend_pts, TREND_W_P, TREND_H, "");
 
     let total_all: i64 = by_model
         .and_then(|m| m.as_array())
@@ -1736,6 +1862,8 @@ fn apply_token(
         tok.set_cache7_num(hit7 as f32);
         tok.set_trend_line(trend_line.into());
         tok.set_trend_area(trend_area.into());
+        tok.set_trend_line_p(trend_line_p.into());
+        tok.set_trend_area_p(trend_area_p.into());
         tok.set_trend_info(trend_info.into());
         tok.set_lt_tokens(lt_tokens_s.into());
         tok.set_lt_peak(lt_peak_s.into());
@@ -2026,6 +2154,8 @@ fn spawn_demo(w: Weak<App>) {
                 }
                 let vals: Vec<f32> = tps.iter().copied().collect();
                 let (line, area) = polyline(&vals, TPS_W, TPS_H, "");
+                let (line_p, area_p) = polyline(&vals, TPS_W_P, TPS_H, "");
+                let (line_s, area_s) = polyline(&vals, TPS_W_S, TPS_H, "");
                 let cur = v;
                 let streams = if burst == 1 { 2 } else { 0 };
                 let last = "glm-4.7-plus · bigmodel 官方 · macbook-claude-code · 1.2万 tokens · ¥2.8140 · 6.4s";
@@ -2036,6 +2166,10 @@ fn spawn_demo(w: Weak<App>) {
                     tok.set_streams(streams);
                     tok.set_tps_line(line.into());
                     tok.set_tps_area(area.into());
+                    tok.set_tps_line_p(line_p.into());
+                    tok.set_tps_area_p(area_p.into());
+                    tok.set_tps_line_s(line_s.into());
+                    tok.set_tps_area_s(area_s.into());
                     tok.set_last_req(last.into());
                 })
                 .ok();

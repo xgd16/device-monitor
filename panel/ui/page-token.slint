@@ -754,3 +754,705 @@ export component PageToken inherits Rectangle {
         }
     }
 }
+
+// ── 竖屏版（540x1170）：单列/半宽混排，内容宽 484（半宽卡 223）──
+export component PageTokenP inherits Rectangle {
+    in property <int> idx: 1;
+    x: (root.idx - Ui.page) * ((root.idx - Ui.page) <= 0 ? 256px : 512px);
+    animate x {
+        duration: 520ms;
+        easing: ease-out;
+    }
+    width: 512px;
+    height: 1028px;
+    // 非激活页全透明（与横版一致）
+    property <bool> act: Ui.page == root.idx;
+    opacity: act ? 1.0 : 0.0;
+    animate opacity {
+        duration: 420ms;
+        easing: ease-out;
+        delay: 40ms;
+    }
+
+    // ── 今日用量（半宽）──
+    Card {
+        x: 0px;
+        y: 0px;
+        width: 251px;
+        height: 184px;
+        title: "今日用量";
+        req_big := Mono {
+            x: 14px;
+            y: 24px;
+            text: Tok.today-reqs;
+            font-size: 34px;
+            font-weight: 700;
+            color: Theme.accent;
+        }
+        Text {
+            x: req_big.x + req_big.preferred-width + 6px;
+            y: 42px;
+            text: "次请求";
+            font-size: 10px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Rectangle {
+            x: 14px;
+            y: 64px;
+            width: 223px;
+            height: 22px;
+            Text {
+                x: 0px;
+                text: "Tokens";
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 0px;
+                width: 223px;
+                text: Tok.t-tokens;
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.emphasis;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+        Rectangle {
+            x: 14px;
+            y: 86px;
+            width: 223px;
+            height: 22px;
+            Text {
+                x: 0px;
+                text: "缓存命中";
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 0px;
+                width: 223px;
+                text: Tok.t-cached;
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.info;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+        Rectangle {
+            x: 14px;
+            y: 108px;
+            width: 223px;
+            height: 22px;
+            Text {
+                x: 0px;
+                text: "费用";
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 0px;
+                width: 223px;
+                text: Tok.t-cost;
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.emphasis;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+        Rectangle {
+            x: 14px;
+            y: 130px;
+            width: 223px;
+            height: 22px;
+            Text {
+                x: 0px;
+                text: "缓存命中率";
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 0px;
+                width: 223px;
+                text: Tok.t-hit;
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.success;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+        Rectangle {
+            x: 14px;
+            y: 156px;
+            width: 223px;
+            height: 1px;
+            background: Theme.border;
+        }
+        Text {
+            x: 14px;
+            y: 160px;
+            text: Tok.forecast;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+        Mono {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 160px;
+            text: Tok.daily-avg;
+            font-size: 8px;
+            color: Theme.muted;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+    }
+
+    // ── 实时吞吐（半宽）──
+    Card {
+        x: 261px;
+        y: 0px;
+        width: 251px;
+        height: 184px;
+        title: "实时吞吐";
+        Pill {
+            y: 8px;
+            x: parent.width - self.width - 12px;
+            label: "活跃流 \{Tok.streams}";
+            fg: Tok.streams > 0 ? Theme.success : Theme.muted;
+            bg: Theme.card-alt;
+            horizontal-stretch: 0;
+        }
+        tps_big := Mono {
+            x: 14px;
+            y: 20px;
+            text: Tok.tps-str;
+            font-size: 26px;
+            font-weight: 700;
+            color: Theme.info;
+        }
+        Text {
+            x: tps_big.x + tps_big.preferred-width + 5px;
+            y: 33px;
+            text: "tokens/s";
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        LiveDot {
+            x: 206px;
+            y: 30px;
+            tint: Tok.ws-ok ? Theme.info : Theme.warning;
+            on: Tok.ws-ok;
+        }
+        Rectangle {
+            x: 14px;
+            y: 52px;
+            width: 223px;
+            height: 72px;
+            background: Theme.card-alt;
+            border-radius: 8px;
+            AreaChart {
+                x: 0px;
+                y: 0px;
+                width: 223px;
+                height: 72px;
+                line-pts: Tok.tps-line-s;
+                area-pts: Tok.tps-area-s;
+                tint: Theme.info;
+            }
+        }
+        Mono {
+            x: 14px;
+            y: 128px;
+            width: 223px;
+            text: Tok.tps-info;
+            font-size: 7.5px;
+            color: Theme.muted;
+            overflow: elide;
+        }
+        Rectangle {
+            x: 14px;
+            y: 141px;
+            width: 223px;
+            height: 1px;
+            background: Theme.border;
+        }
+        Text {
+            x: 14px;
+            y: 145px;
+            text: "最近一次调用";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: 14px;
+            y: 156px;
+            width: 223px;
+            text: Tok.last-req;
+            font-size: 8.5px;
+            color: Theme.fg;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+    }
+
+    // ── 模型排行 ──
+    Card {
+        x: 0px;
+        y: 194px;
+        width: 512px;
+        height: 176px;
+        title: "模型排行（近 7 天）";
+        if Tok.models.length == 0: Text {
+            x: 14px;
+            y: 40px;
+            text: "无数据";
+            font-size: 10px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        for m[i] in Tok.models: Rectangle {
+            x: 14px;
+            y: 26px + i * 28px;
+            width: 484px;
+            height: 26px;
+            Text {
+                x: 0px;
+                y: 0px;
+                width: 170px;
+                text: m.name;
+                font-size: 10.5px;
+                font-weight: 700;
+                color: Theme.emphasis;
+                font-family: Theme.font-body;
+                overflow: elide;
+            }
+            Mono {
+                x: 176px;
+                y: 1px;
+                width: 52px;
+                text: m.reqs;
+                font-size: 9px;
+                color: Theme.fg;
+            }
+            Mono {
+                x: 232px;
+                y: 1px;
+                width: 70px;
+                text: m.tokens;
+                font-size: 8px;
+                color: Theme.muted;
+            }
+            Mono {
+                x: 0px;
+                width: 484px;
+                y: 0px;
+                text: m.cost;
+                font-size: 10.5px;
+                font-weight: 700;
+                color: Theme.rank-color(i);
+                horizontal-alignment: TextHorizontalAlignment.right;
+            }
+            StatBar {
+                x: 0px;
+                y: 16px;
+                width: 400px;
+                height: 4px;
+                pct: m.share;
+                tint: [Theme.accent, Theme.success, Theme.info, Theme.accent2, Theme.warning, Theme.error][Math.mod(i, 6)];
+            }
+            Mono {
+                x: 406px;
+                y: 12px;
+                width: 34px;
+                text: m.share-str;
+                font-size: 8px;
+                color: Theme.muted;
+            }
+        }
+    }
+
+    // ── 上游渠道与余额 ──
+    Card {
+        x: 0px;
+        y: 380px;
+        width: 512px;
+        height: 186px;
+        title: "上游渠道与余额";
+        Text {
+            x: 0px;
+            width: parent.width - 14px;
+            y: 11px;
+            text: "按用量 Top · 条=平均延迟";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        if Tok.chans.length == 0: Text {
+            x: 14px;
+            y: 40px;
+            text: "无数据";
+            font-size: 10px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        for ch[i] in Tok.chans: Rectangle {
+            x: 14px;
+            y: 26px + i * 38px;
+            width: 484px;
+            height: 36px;
+            Text {
+                x: 0px;
+                y: 0px;
+                width: 110px;
+                text: ch.name;
+                font-size: 10px;
+                color: Theme.fg;
+                font-family: Theme.font-body;
+                overflow: elide;
+            }
+            Mono {
+                x: 114px;
+                y: 1px;
+                width: 44px;
+                text: ch.reqs;
+                font-size: 9px;
+                color: Theme.fg;
+            }
+            Mono {
+                x: 160px;
+                y: 1px;
+                width: 46px;
+                text: ch.avg;
+                font-size: 9px;
+                color: ch.health < 3.0 ? Theme.success : (ch.health < 8.0 ? Theme.warning : Theme.error);
+            }
+            Text {
+                x: 208px;
+                y: 1px;
+                width: 120px;
+                text: ch.balance;
+                font-size: 8px;
+                color: ch.balance == "余额 —" ? Theme.muted : Theme.info;
+                font-family: Theme.font-body;
+                overflow: elide;
+            }
+            Mono {
+                x: 0px;
+                width: 484px;
+                y: 0px;
+                text: ch.cost;
+                font-size: 10px;
+                font-weight: 700;
+                color: Theme.success;
+                horizontal-alignment: TextHorizontalAlignment.right;
+            }
+            StatBar {
+                x: 0px;
+                y: 20px;
+                width: 484px;
+                height: 4px;
+                pct: ch.share;
+                tint: ch.health < 3.0 ? Theme.success : (ch.health < 8.0 ? Theme.warning : Theme.error);
+            }
+        }
+    }
+
+    // ── 质量指标 ──
+    Card {
+        x: 0px;
+        y: 576px;
+        width: 512px;
+        height: 140px;
+        title: "质量指标（近 7 天）";
+        Rectangle {
+            x: 14px;
+            y: 24px;
+            width: 150px;
+            height: 40px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "错误率";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Tok.err-str + "%";
+                font-size: 16px;
+                font-weight: 700;
+                color: Tok.err-pct < 3.0 ? Theme.success : (Tok.err-pct < 10.0 ? Theme.warning : Theme.error);
+            }
+        }
+        Rectangle {
+            x: 178px;
+            y: 24px;
+            width: 150px;
+            height: 40px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "平均延迟";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Tok.avg-lat;
+                font-size: 16px;
+                font-weight: 700;
+                color: Tok.avg-lat == "--" ? Theme.muted : (Tok.avg-lat-num < 3.0 ? Theme.success : (Tok.avg-lat-num < 8.0 ? Theme.warning : Theme.error));
+            }
+        }
+        Rectangle {
+            x: 342px;
+            y: 24px;
+            width: 154px;
+            height: 40px;
+            Text {
+                x: 0px;
+                y: 0px;
+                height: 10px;
+                vertical-alignment: TextVerticalAlignment.top;
+                text: "缓存命中";
+                font-size: 8px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+            }
+            Mono {
+                x: 0px;
+                y: 13px;
+                height: 18px;
+                vertical-alignment: TextVerticalAlignment.center;
+                text: Tok.cache7;
+                font-size: 16px;
+                font-weight: 700;
+                color: Tok.cache7-num >= 80.0 ? Theme.success : (Tok.cache7-num >= 50.0 ? Theme.warning : Theme.error);
+            }
+        }
+        StatBar {
+            x: 14px;
+            y: 72px;
+            width: 484px;
+            height: 4px;
+            pct: Tok.err-pct;
+            tint: Tok.err-pct < 3.0 ? Theme.success : (Tok.err-pct < 10.0 ? Theme.warning : Theme.error);
+        }
+        Rectangle {
+            x: 14px;
+            y: 82px;
+            width: 484px;
+            height: 40px;
+            background: Theme.card-alt;
+            border-radius: 8px;
+            AreaChart {
+                x: 0px;
+                y: 0px;
+                width: 484px;
+                height: 40px;
+                line-pts: Tok.trend-line-p;
+                area-pts: Tok.trend-area-p;
+                tint: Theme.accent;
+            }
+        }
+        Mono {
+            x: 14px;
+            y: 126px;
+            width: 484px;
+            text: Tok.trend-info;
+            font-size: 8px;
+            color: Theme.muted;
+            overflow: elide;
+        }
+    }
+
+    // ── 调用方（半宽）──
+    Card {
+        x: 0px;
+        y: 726px;
+        width: 251px;
+        height: 130px;
+        title: "调用方";
+        if Tok.keys.length == 0: Text {
+            x: 14px;
+            y: 40px;
+            text: "无数据";
+            font-size: 10px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        for k[i] in Tok.keys: Rectangle {
+            x: 14px;
+            y: 26px + i * 24px;
+            width: 223px;
+            height: 22px;
+            Text {
+                x: 0px;
+                y: 0px;
+                width: 100px;
+                text: k.name;
+                font-size: 9px;
+                color: Theme.fg;
+                font-family: Theme.font-body;
+                overflow: elide;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 104px;
+                y: 0px;
+                width: 46px;
+                text: k.reqs;
+                font-size: 8.5px;
+                color: Theme.fg;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 152px;
+                y: 0px;
+                width: 40px;
+                text: k.share;
+                font-size: 8px;
+                color: Theme.muted;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 0px;
+                width: 223px;
+                y: 0px;
+                text: k.cost;
+                font-size: 9.5px;
+                font-weight: 700;
+                color: Theme.fg;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+    }
+
+    // ── 网关与累计（半宽）──
+    Card {
+        x: 261px;
+        y: 726px;
+        width: 251px;
+        height: 130px;
+        title: "网关与累计";
+        Pill {
+            y: 8px;
+            x: parent.width - self.width - 12px;
+            label: Tok.gw-state;
+            fg: Tok.gw-state == "正常" ? Theme.success : (Tok.gw-state == "WS 断开" ? Theme.warning : Theme.error);
+            bg: Theme.card-alt;
+            horizontal-stretch: 0;
+        }
+        Rectangle {
+            x: 14px;
+            y: 28px;
+            width: 223px;
+            height: 22px;
+            Text {
+                x: 0px;
+                text: "累计 tokens";
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 0px;
+                width: 223px;
+                text: Tok.lt-tokens;
+                font-size: 11px;
+                font-weight: 700;
+                color: Theme.emphasis;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+        Rectangle {
+            x: 14px;
+            y: 52px;
+            width: 223px;
+            height: 22px;
+            Text {
+                x: 0px;
+                text: "峰值日";
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 0px;
+                width: 223px;
+                text: Tok.lt-peak;
+                font-size: 11px;
+                font-weight: 700;
+                color: Theme.fg;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+        Rectangle {
+            x: 14px;
+            y: 76px;
+            width: 223px;
+            height: 22px;
+            Text {
+                x: 0px;
+                text: "连续 / 最长";
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+            Mono {
+                x: 0px;
+                width: 223px;
+                text: Tok.lt-streak;
+                font-size: 11px;
+                font-weight: 700;
+                color: Theme.fg;
+                horizontal-alignment: TextHorizontalAlignment.right;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+        Text {
+            x: 14px;
+            y: 104px;
+            width: 223px;
+            text: Tok.last-error == "" ? Tok.budget : Tok.last-error;
+            font-size: 8px;
+            color: Tok.last-error == "" ? Theme.muted : Theme.error;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+    }
+}
