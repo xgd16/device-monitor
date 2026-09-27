@@ -348,30 +348,4 @@ export component App inherits Window {
             }
         }
     }
-
-    // ── 触摸调试探针：最近触点十字光标（红色，非交互、不挡输入）──
-    if Ui.touch-probe: Rectangle {
-        x: Ui.probe-x - 16px;
-        y: Ui.probe-y - 0.75px;
-        width: 32px;
-        height: 1.5px;
-        background: #FF5D68;
-    }
-    if Ui.touch-probe: Rectangle {
-        x: Ui.probe-x - 0.75px;
-        y: Ui.probe-y - 16px;
-        width: 1.5px;
-        height: 32px;
-        background: #FF5D68;
-    }
-    if Ui.touch-probe: Rectangle {
-        x: Ui.probe-x - 5px;
-        y: Ui.probe-y - 5px;
-        width: 10px;
-        height: 10px;
-        border-radius: 5px;
-        border-width: 1.5px;
-        border-color: #FF5D68;
-        background: transparent;
-    }
 }
