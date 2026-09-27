@@ -67,26 +67,43 @@ modetest -M msm -p | sed -n '4p'   # 间隔几秒采样两次
 - 排版规范取自 `tui-design` skill（Widget Dashboard 范式、语义色板 `theme.rs`、
   层次：卡片标题 muted+Bold、主数值 emphasis+超大字号、颜色只做语义提示且数值始终同时呈现）
 
-## 启动链路（三级回退）
+## 启动链路（API 常驻 + 四级显示回退）
 
 `device-monitor-launcher.sh`：
 
 ```
-1) --screen（DRM 直绘横屏）      ← 首选
-2) kmscon + --tui（竖屏字符 TUI） ← 回退
-3) --tui（裸 VT ASCII）          ← 最后
+0) API server（无 --screen，常驻 3000 端口）  ← 面板数据源，始终先起
+1) device-monitor-panel（Slint+femtovg GPU）  ← 首选显示
+2) --screen（DRM CPU 直绘横屏）               ← 回退（--screen 自带 API，起前先停 0）
+3) kmscon + --tui（竖屏字符 TUI）             ← 回退
+4) --tui（裸 VT ASCII）                       ← 最后
 ```
 
-判据是 20 秒内 `http://127.0.0.1:3000/api/system/overview` 是否 200；
-`--screen` 初始化失败会 `exit(3)`，让启动器继续往下回退（避免「API 活着但屏幕空白」）。
+- GPU 面板的健康判据是「存活跑过 12 秒」（EGL/DRM 初始化失败都会在几秒内退出）；
+  旧 `--screen` 判据仍是 20 秒内 `http://127.0.0.1:3000/api/system/overview` 返回 200。
+- 回退到 `--screen` 前启动器会先杀掉常驻 API 实例（`--screen` 模式自己带 API，避免 3000 端口冲突）。
+- `--screen` 初始化失败会 `exit(3)`，让启动器继续往下回退（避免「API 活着但屏幕空白」）。
 
 环境变量：
-- `SCREEN_ROTATE=90|270` 旋转方向
-- `DEVICE_MONITOR_FORCE_TUI=1` 跳过 DRM 横屏
+- `SCREEN_ROTATE=90|270` 旋转方向（GPU 面板读它→`SLINT_KMS_ROTATION`；未设置时两者都回落到 rotation.txt/90）
+- `DEVICE_MONITOR_FORCE_SCREEN=1` 跳过 GPU 面板，直接用旧 `--screen`
+- `DEVICE_MONITOR_FORCE_TUI=1` 跳过两条 DRM 路径
 - `DEVICE_MONITOR_FORCE_ASCII=1` 直接用裸 ASCII TUI
+- `SLINT_SCALE_FACTOR` 面板缩放（默认 2 → 逻辑 1170x540 @2x）
 
-启动器会把 `--screen` 进程的 stdout/stderr 重定向到 `screen.log`（否则日志经 tty1
-会触发 fbcon 重绘，把画面盖掉）。
+GPU 面板日志在 `panel.log`，常驻 API 日志在 `api.log`，旧渲染器日志在 `screen.log`。
+
+## GPU 面板（panel/，Slint + femtovg）
+
+`panel/` 是独立 crate（workspace member），消费本机 API 渲染同一套三页仪表：
+
+- 设备端跑法（linuxkms+libinput 直驱 DRM，无需窗口系统）：
+  `SLINT_SCALE_FACTOR=2 SLINT_KMS_ROTATION=90 device-monitor-panel`（需 root）
+- macOS 预览：`cargo run -p device-monitor-panel -- --demo`（winit 窗口 + 苹方，`--page N` 直达某页）
+- 编译特性按平台分流（见 `panel/Cargo.toml`）；勿用已废弃的 `backend-linuxkms-noseat`
+- 触摸旋转靠 udev 规则给 stmfts 下发 `LIBINPUT_CALIBRATION_MATRIX`（`/etc/udev/rules.d/70-stmfts-rotation.rules`）
+- 文字光学垂直居中统一走 `Theme.text-nudge`（按设备 Noto CJK 校准 0.25px；macOS 苹方在
+  Rust 侧覆盖；可用 `PANEL_TEXT_NUDGE` 现场微调，`PANEL_FONT_BODY/PANEL_FONT_MONO` 换字体）
 
 ## 离屏导出（无 DRM，可在服务运行时执行）
 

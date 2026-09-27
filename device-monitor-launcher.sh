@@ -1,17 +1,23 @@
 #!/bin/sh
-# 单服务启动器：优先启动 DRM 横屏仪表（--screen），失败依次回退 kmscon UTF-8 TUI、裸 ASCII TUI。
+# 单服务启动器：API 常驻 + 显示链降级。
+#   显示优先级：Slint GPU 面板（panel）→ 旧 DRM 横屏（--screen）→ kmscon UTF-8 TUI → 裸 ASCII TUI
 # 由 systemd device-monitor.service 调用，保证 API 始终可用。
 #
 # 可用环境变量：
-#   SCREEN_ROTATE=90|270        横屏旋转方向（默认 90）
-#   DEVICE_MONITOR_FORCE_TUI=1  跳过 DRM 横屏，直接用 kmscon
+#   SCREEN_ROTATE=90|270        横屏旋转方向（默认 90；未显式设置时读 rotation.txt 兜底）
+#   DEVICE_MONITOR_FORCE_SCREEN=1 跳过 GPU 面板，直接用旧 --screen 渲染
+#   DEVICE_MONITOR_FORCE_TUI=1  跳过两条 DRM 路径，直接用 kmscon
 #   DEVICE_MONITOR_FORCE_ASCII=1 直接裸 ASCII TUI
 #   TUI_FONT_SIZE                kmscon 字号
+#   SLINT_SCALE_FACTOR           面板缩放（默认 2 → 逻辑 1170x540）
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$DEPLOY_DIR/target/release/device-monitor-server"
+PANEL_BIN="$DEPLOY_DIR/target/release/device-monitor-panel"
 WRAPPER="$DEPLOY_DIR/.device-monitor-tui-wrapper.sh"
 SCREEN_LOG="$DEPLOY_DIR/screen.log"
+PANEL_LOG="$DEPLOY_DIR/panel.log"
+API_LOG="$DEPLOY_DIR/api.log"
 LOG_TAG="device-monitor-launcher"
 KMSCON="/usr/libexec/kmscon/kmscon"
 [ -x "$KMSCON" ] || KMSCON="/usr/bin/kmscon"
@@ -97,7 +103,113 @@ fallback_ascii() {
   exec "$BIN" --tui
 }
 
-# 首选：DRM/KMS 直绘横屏仪表（自绘像素排版，不依赖 kmscon/终端字体）
+# ── API 常驻：面板数据源。--screen 模式自带 API，走旧链前要先杀掉这个实例 ──
+API_PID=""
+start_api() {
+  [ -x "$BIN" ] || { log "server binary not found: $BIN"; return 1; }
+  if health_check; then
+    log "API already healthy (external instance?)"
+    return 0
+  fi
+  env LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 TUI_UTF8=1 RUST_LOG="${RUST_LOG:-info}" \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    "$BIN" >>"$API_LOG" 2>&1 &
+    API_PID=$!
+  i=0
+  while [ "$i" -lt 20 ]; do
+    sleep 1
+    i=$((i + 1))
+    if health_check; then
+      log "API healthy (pid=$API_PID)"
+      return 0
+    fi
+    if ! kill -0 "$API_PID" 2>/dev/null; then
+      log "API server exited early (see $API_LOG)"
+      wait "$API_PID" 2>/dev/null || true
+      API_PID=""
+      return 1
+    fi
+  done
+  log "API health check timed out after 20s"
+  kill "$API_PID" 2>/dev/null || true
+  wait "$API_PID" 2>/dev/null || true
+  API_PID=""
+  return 1
+}
+
+stop_api() {
+  if [ -n "$API_PID" ] && kill -0 "$API_PID" 2>/dev/null; then
+    kill "$API_PID" 2>/dev/null || true
+    wait "$API_PID" 2>/dev/null || true
+    log "API instance stopped (旧链自带 API)"
+  fi
+  API_PID=""
+}
+
+# 解绑内核 framebuffer 控制台（fbcon）：否则我们服务的 stdout（tty1）、
+# 内核 printk、以及面板 unblank 都会让 fbcon 把控制台画到屏幕上，抢走画面。
+unbind_fbcon() {
+  if [ -w /sys/class/vtconsole/vtcon1/bind ]; then
+    echo 0 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null && log "fbcon 已解绑（避免控制台抢屏）"
+  fi
+}
+
+# 回退到字符 TUI 前必须把 fbcon 绑回来，否则控制台是哑设备、什么也显示不出来
+bind_fbcon() {
+  if [ -w /sys/class/vtconsole/vtcon1/bind ]; then
+    echo 1 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null && log "fbcon 已重新绑定"
+  fi
+}
+
+# ── 首选：Slint GPU 面板（femtovg 直驱 GLES，数据走本机 API）──
+try_panel() {
+  if [ "${DEVICE_MONITOR_FORCE_TUI:-0}" = "1" ]; then
+    log "Skipping GPU panel (DEVICE_MONITOR_FORCE_TUI=1)"
+    return 1
+  fi
+  if [ "${DEVICE_MONITOR_FORCE_SCREEN:-0}" = "1" ]; then
+    log "Skipping GPU panel (DEVICE_MONITOR_FORCE_SCREEN=1)"
+    return 1
+  fi
+  [ -x "$PANEL_BIN" ] || { log "panel binary not found: $PANEL_BIN"; return 1; }
+
+  cleanup_kmscon
+  unbind_fbcon
+  # 朝向：SCREEN_ROTATE 显式设置 > rotation.txt（旧渲染器留下的用户朝向）> 90。
+  rotate="${SCREEN_ROTATE:-}"
+  if [ -z "$rotate" ] && [ -r "$DEPLOY_DIR/rotation.txt" ]; then
+    rotate=$(tr -dc '0-9' < "$DEPLOY_DIR/rotation.txt" 2>/dev/null)
+  fi
+  case "$rotate" in
+    90 | 270) ;;
+    *) rotate=90 ;;
+  esac
+
+  log "Attempting Slint GPU panel (SLINT_KMS_ROTATION=$rotate)"
+  : > "$PANEL_LOG"
+  env LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 RUST_LOG="${RUST_LOG:-info}" \
+    SLINT_KMS_ROTATION="$rotate" SLINT_SCALE_FACTOR="${SLINT_SCALE_FACTOR:-2}" \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    "$PANEL_BIN" >>"$PANEL_LOG" 2>&1 &
+  panel_pid=$!
+
+  # 面板不提供 HTTP，健康标准 = 存活跑过 12 秒（DRAM 初始化/EGL 失败都会在几秒内退出）
+  i=0
+  while [ "$i" -lt 12 ]; do
+    sleep 1
+    i=$((i + 1))
+    if ! kill -0 "$panel_pid" 2>/dev/null; then
+      log "GPU panel exited early (see $PANEL_LOG)"
+      wait "$panel_pid" 2>/dev/null || true
+      return 1
+    fi
+  done
+  log "GPU panel running (pid=$panel_pid, rotate=$rotate)"
+  wait "$panel_pid"
+  return $?
+}
+
+# ── 回退 1：旧 DRM/KMS 直绘横屏仪表（自绘像素排版，不依赖 kmscon/终端字体）──
 try_screen() {
   if [ "${DEVICE_MONITOR_FORCE_TUI:-0}" = "1" ]; then
     log "Skipping DRM screen (DEVICE_MONITOR_FORCE_TUI=1)"
@@ -106,11 +218,7 @@ try_screen() {
   [ -x "$BIN" ] || { log "binary not found: $BIN"; return 1; }
 
   cleanup_kmscon
-  # 解绑内核 framebuffer 控制台（fbcon）：否则我们服务的 stdout（tty1）、
-  # 内核 printk、以及面板 unblank 都会让 fbcon 把控制台画到面板上，抢走画面。
-  if [ -w /sys/class/vtconsole/vtcon1/bind ]; then
-    echo 0 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null && log "fbcon 已解绑（避免控制台抢屏）"
-  fi
+  unbind_fbcon
   # 朝向只在 SCREEN_ROTATE 显式设置时才传给程序（当作一次性覆盖）。
   # 不能无条件给个默认值：程序里「命令行 > rotation.txt > Rot90」，
   # 启动器硬塞 --rotate 90 会让双击音量加存下的朝向每次开机都被覆盖掉，
@@ -150,13 +258,7 @@ try_screen() {
   return 1
 }
 
-# 回退到字符 TUI 前必须把 fbcon 绑回来，否则控制台是哑设备、什么也显示不出来
-bind_fbcon() {
-  if [ -w /sys/class/vtconsole/vtcon1/bind ]; then
-    echo 1 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null && log "fbcon 已重新绑定"
-  fi
-}
-
+# ── 回退 2：kmscon UTF-8 竖屏 TUI ──
 try_kmscon() {
   bind_fbcon
   [ -x "$KMSCON" ] || { log "kmscon not found, skip UTF-8"; return 1; }
@@ -204,15 +306,26 @@ if [ "${DEVICE_MONITOR_FORCE_ASCII:-0}" = "1" ]; then
   fallback_ascii
 fi
 
-# 1) DRM 横屏仪表
+# 1) API 常驻 + GPU 面板
+if start_api; then
+  if try_panel; then
+    exit 0
+  fi
+  # 面板没起来或中途退出：旧 --screen 自带 API，先让出 3000 端口
+  stop_api
+else
+  log "API unavailable; skipping GPU panel"
+fi
+
+# 2) 旧 DRM 横屏仪表
 if try_screen; then
   exit 0
 fi
 
-# 2) kmscon UTF-8 竖屏 TUI
+# 3) kmscon UTF-8 竖屏 TUI
 if try_kmscon; then
   exit 0
 fi
 
-# 3) 裸 ASCII TUI
+# 4) 裸 ASCII TUI
 fallback_ascii
