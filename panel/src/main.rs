@@ -244,13 +244,13 @@ fn clean_proxy(name: &str) -> String {
     let mut chars = name.chars().peekable();
     while let Some(c) = chars.next() {
         if ('\u{1F1E6}'..='\u{1F1FF}').contains(&c) {
-            if let Some(&n) = chars.peek() {
-                if ('\u{1F1E6}'..='\u{1F1FF}').contains(&n) {
-                    out.push(char::from_u32(c as u32 - 0x1F1E6 + 65).unwrap_or('?'));
-                    out.push(char::from_u32(n as u32 - 0x1F1E6 + 65).unwrap_or('?'));
-                    chars.next();
-                    continue;
-                }
+            if let Some(&n) = chars.peek()
+                && ('\u{1F1E6}'..='\u{1F1FF}').contains(&n)
+            {
+                out.push(char::from_u32(c as u32 - 0x1F1E6 + 65).unwrap_or('?'));
+                out.push(char::from_u32(n as u32 - 0x1F1E6 + 65).unwrap_or('?'));
+                chars.next();
+                continue;
             }
             continue;
         }
@@ -320,14 +320,15 @@ struct SunState {
 }
 
 static SUN: OnceLock<Mutex<Option<SunState>>> = OnceLock::new();
-static WORLD: OnceLock<Mutex<Option<(Instant, Vec<CityRowSigned>)>>> = OnceLock::new();
+static WORLD: OnceLock<Mutex<WorldCache>> = OnceLock::new();
 
 type CityRowSigned = (String, String, String, String); // (name, mark, offset, time)
+type WorldCache = Option<(Instant, Vec<CityRowSigned>)>;
 
 fn sun() -> &'static Mutex<Option<SunState>> {
     SUN.get_or_init(|| Mutex::new(None))
 }
-fn world() -> &'static Mutex<Option<(Instant, Vec<CityRowSigned>)>> {
+fn world() -> &'static Mutex<WorldCache> {
     WORLD.get_or_init(|| Mutex::new(None))
 }
 
@@ -634,10 +635,10 @@ fn weather_cell() -> &'static Mutex<WeatherNow> {
 /// 当日 (日出, 日落, 是否来自天气接口)：优先接口，退回本地推算。
 fn weather_sun(today: NaiveDate) -> (f64, f64, bool) {
     let g = weather_cell().lock().unwrap_or_else(|p| p.into_inner());
-    if let (Some(r), Some(st)) = (g.sunrise.as_deref(), g.sunset.as_deref()) {
-        if let (Some(rh), Some(sh)) = (parse_hhmm(r), parse_hhmm(st)) {
-            return (rh, sh, true);
-        }
+    if let (Some(r), Some(st)) = (g.sunrise.as_deref(), g.sunset.as_deref())
+        && let (Some(rh), Some(sh)) = (parse_hhmm(r), parse_hhmm(st))
+    {
+        return (rh, sh, true);
     }
     drop(g);
     let (r, s) = sun_times(today).unwrap_or((6.5, 18.5));
@@ -771,16 +772,15 @@ wind_speed_10m,wind_direction_10m,precipitation\
         vec!["-s", "--max-time", "20", "--noproxy", "*", "-H", "Accept: application/json", &url],
     ];
     for args in &attempts {
-        if let Ok(out) = std::process::Command::new("curl").args(args).output() {
-            if out.status.success() {
-                if let Some(w) = parse_weather(&String::from_utf8_lossy(&out.stdout)) {
-                    return Some(WeatherNow {
-                        ok: true,
-                        updated: Some(Instant::now()),
-                        ..w
-                    });
-                }
-            }
+        if let Ok(out) = std::process::Command::new("curl").args(args).output()
+            && out.status.success()
+            && let Some(w) = parse_weather(&String::from_utf8_lossy(&out.stdout))
+        {
+            return Some(WeatherNow {
+                ok: true,
+                updated: Some(Instant::now()),
+                ..w
+            });
         }
     }
     // 失败：保留上次数据（ok 置 false 让界面标注离线）
@@ -909,15 +909,14 @@ fn spawn_system_poller(w: Weak<App>) {
                                 let name = js(n, "name");
                                 let rx = jf(n, "rx_bytes") as u64;
                                 let tx = jf(n, "tx_bytes") as u64;
-                                if ip == "--" {
-                                    if let Some(v4) = n
+                                if ip == "--"
+                                    && let Some(v4) = n
                                         .get("ip_addresses")
                                         .and_then(|v| v.as_array())
                                         .and_then(|a| a.iter().find(|i| !i.as_str().unwrap_or("").contains(':')))
                                         .and_then(|i| i.as_str())
-                                    {
-                                        ip = v4.to_string();
-                                    }
+                                {
+                                    ip = v4.to_string();
                                 }
                                 if let Some(&(prx, ptx, pts)) = prev_net.get(&name) {
                                     let dt = (ts - pts) as f64;
@@ -953,7 +952,7 @@ fn spawn_system_poller(w: Weak<App>) {
                     }
                 }
 
-                if it % 2 == 0 {
+                if it.is_multiple_of(2) {
                     if let Ok(v) = fetch_json(&format!("{BASE}/hardware")) {
                         apply_hardware(&w, &v);
                     }
@@ -961,7 +960,7 @@ fn spawn_system_poller(w: Weak<App>) {
                         apply_process(&w, &v);
                     }
                 }
-                if it % 5 == 0 {
+                if it.is_multiple_of(5) {
                     if let Ok(v) = fetch_json(&format!("{BASE}/disk")) {
                         apply_disk(&w, &v);
                     }
@@ -969,7 +968,7 @@ fn spawn_system_poller(w: Weak<App>) {
                         apply_wifi(&w, &v);
                     }
                 }
-                if it % 15 == 0 {
+                if it.is_multiple_of(15) {
                     apply_services(&w);
                     if let Ok(v) = fetch_json(&format!("{BASE}/alerts")) {
                         apply_alerts(&w, &v);
