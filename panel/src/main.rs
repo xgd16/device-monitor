@@ -700,6 +700,7 @@ fn spawn_orientation_watch(portrait_now: bool, auto: bool) {
         return;
     }
     eprintln!("[panel] 加速度计（libssc）自动方向切换开启");
+    const ACCEL_FILE: &str = "/tmp/panel-accel.log";
     std::thread::Builder::new()
         .name("orientation-watch".into())
         .spawn(move || {
@@ -709,54 +710,73 @@ fn spawn_orientation_watch(portrait_now: bool, auto: bool) {
             let mut hits = 0u32;
             let cooldown = Instant::now();
             loop {
-                // 拉起一次 ssccli 流，读到会话结束；流内逐帧判定
-                if let Ok(mut child) = std::process::Command::new("ssccli")
-                    .arg("--sensor")
-                    .arg("accelerometer")
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                {
-                    if let Some(out) = child.stdout.take() {
-                        let mut reader = std::io::BufReader::new(out);
-                        loop {
-                            let mut line = String::new();
-                            match std::io::BufRead::read_line(&mut reader, &mut line) {
-                                Ok(0) | Err(_) => break, // 会话结束（SSC ~45s 自断）
-                                Ok(_) => {}
-                            }
-                            let Some((gx, gy, gz)) = parse_accel_frame(&line) else {
-                                continue;
-                            };
-                            if cooldown.elapsed() < Duration::from_secs(30) || gz.abs() > 7.0 {
-                                continue;
-                            }
-                            let p = gy.abs() > gx.abs() * 1.15;
-                            if p != cur {
-                                if want == Some(p) {
-                                    hits += 1;
-                                } else {
-                                    want = Some(p);
-                                    hits = 1;
-                                }
-                                if hits >= 3 {
-                                    let m = if p { "portrait" } else { "landscape" };
-                                    let _ = std::fs::write(ORIENT_MODE_FILE, format!("{m}\n"));
-                                    tracing_or_log(&format!(
-                                        "方向切换 → {m}（加速度计 g={gx:+.1}/{gy:+.1}/{gz:+.1}），重启面板生效"
-                                    ));
-                                    let _ = child.kill();
-                                    std::process::exit(0);
-                                }
+                // 不走管道：ssccli（glib）会话自断后疑似有孤儿进程持有管道写端，
+                // EOF 永不到来、读行阻塞。改为 20s 一轮写文件 + 增量读取解析。
+                let _ = std::fs::write(ACCEL_FILE, b"");
+                let spawned = std::fs::File::create(ACCEL_FILE).ok().and_then(|f| {
+                    std::process::Command::new("timeout")
+                        .args(["20", "ssccli", "--sensor", "accelerometer"])
+                        .stdout(std::process::Stdio::from(f))
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .ok()
+                });
+                if spawned.is_none() {
+                    std::thread::sleep(Duration::from_secs(5));
+                    continue;
+                }
+                let mut off: u64 = 0;
+                for _ in 0..44 {
+                    std::thread::sleep(Duration::from_millis(500));
+                    let Ok(meta) = std::fs::metadata(ACCEL_FILE) else {
+                        continue;
+                    };
+                    let len = meta.len();
+                    if len <= off {
+                        continue;
+                    }
+                    let Ok(mut f) = std::fs::OpenOptions::new().read(true).open(ACCEL_FILE) else {
+                        continue;
+                    };
+                    use std::io::{Read as _, Seek as _};
+                    if f.seek(std::io::SeekFrom::Start(off)).is_err() {
+                        continue;
+                    }
+                    let mut buf = String::new();
+                    if f.read_to_string(&mut buf).is_err() {
+                        continue;
+                    }
+                    off = len;
+                    for line in buf.lines() {
+                        let Some((gx, gy, gz)) = parse_accel_frame(line) else {
+                            continue;
+                        };
+                        if cooldown.elapsed() < Duration::from_secs(30) || gz.abs() > 7.0 {
+                            continue;
+                        }
+                        let p = gy.abs() > gx.abs() * 1.15;
+                        if p != cur {
+                            if want == Some(p) {
+                                hits += 1;
                             } else {
-                                want = None;
-                                hits = 0;
+                                want = Some(p);
+                                hits = 1;
                             }
+                            if hits >= 3 {
+                                let m = if p { "portrait" } else { "landscape" };
+                                let _ = std::fs::write(ORIENT_MODE_FILE, format!("{m}\n"));
+                                tracing_or_log(&format!(
+                                    "方向切换 → {m}（加速度计 g={gx:+.1}/{gy:+.1}/{gz:+.1}），重启面板生效"
+                                ));
+                                std::process::exit(0);
+                            }
+                        } else {
+                            want = None;
+                            hits = 0;
                         }
                     }
-                    let _ = child.wait();
                 }
-                std::thread::sleep(Duration::from_secs(2));
+                std::thread::sleep(Duration::from_millis(500));
             }
         })
         .ok();
