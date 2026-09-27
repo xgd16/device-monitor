@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 /// 硬件当前状态快照。
@@ -89,6 +89,27 @@ pub struct ChargingState {
     pub wireless_max_ua: u32,
     /// 充电模式：`normal` 正常充电，`power_only` 仅供电不充电
     pub charge_mode: String,
+    /// 充电器侧实测电压（µV，未接充电器为 0）
+    #[serde(default)]
+    pub charger_voltage_uv: u32,
+    /// 充电器侧实测电流（µA，未接充电器为 0）
+    #[serde(default)]
+    pub charger_current_ua: i32,
+    /// 电池侧电压（µV）
+    #[serde(default)]
+    pub battery_voltage_uv: u32,
+    /// 电池侧电流（µA，放电为负）
+    #[serde(default)]
+    pub battery_current_ua: i32,
+    /// 协商到的充电协议（usb_type 当前项）：SDP / DCP / CDP / Unknown
+    #[serde(default)]
+    pub usb_type_now: String,
+    /// HVDCP/QC 快充标识（QC 2.0 / QC 3.0），非快充为空
+    #[serde(default)]
+    pub qc_label: String,
+    /// 屏上直接可用的协议短标签：QC3.0 / DCP / SDP / CDP / 识别中 / 未连接
+    #[serde(default)]
+    pub protocol_label: String,
 }
 
 /// Mi Mix 3 有线最大充电功率（W）
@@ -187,6 +208,10 @@ static CHARGE_POWER_ONLY: AtomicBool = AtomicBool::new(false);
 static LAST_CHARGER_ONLINE: AtomicBool = AtomicBool::new(false);
 /// 最后一次用户请求的充电电流上限，和驱动当前实际限流分开展示。
 static TARGET_CHARGE_CURRENT_UA: AtomicU32 = AtomicU32::new(0);
+/// HVDCP/QC 认证结果（插入充电器时解析一次内核日志，形如 "QC 3.0"）。
+static QC_LABEL: OnceLock<Mutex<String>> = OnceLock::new();
+/// 本次插入充电器的时刻，用于决定 QC 认证日志的重试窗口。
+static PLUG_INSTANT: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
 /// 振动模式的后台线程句柄
 static VIBRATE_HANDLE: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(None);
 
@@ -472,7 +497,7 @@ fn apply_charge_mode_hw(power_only: bool) -> Result<(), String> {
     write_sysfs(CHARGER_STATUS, val)
 }
 
-fn maybe_reapply_charge_mode(charger_online: bool) {
+fn maybe_reapply_charge_mode(charger_online: bool) -> bool {
     let was_online = LAST_CHARGER_ONLINE.swap(charger_online, Ordering::Relaxed);
     if charger_online && !was_online {
         let power_only = CHARGE_POWER_ONLY.load(Ordering::Relaxed);
@@ -482,32 +507,168 @@ fn maybe_reapply_charge_mode(charger_online: bool) {
             let _ = write_sysfs(CHARGER_CURRENT_MAX, &target_ua.to_string());
         }
     }
+    was_online
+}
+
+/// 从 usb_type 文本取当前协商项，形如 `"[DCP] Unknown SDP CDP"` → `"DCP"`。
+fn parse_usb_type_now(raw: &str) -> String {
+    if let Some(start) = raw.find('[') {
+        if let Some(rel_end) = raw[start..].find(']') {
+            return raw[start + 1..start + rel_end].trim().to_string();
+        }
+    }
+    raw.split_whitespace().next().unwrap_or("").to_string()
+}
+
+fn qc_label_store() -> &'static Mutex<String> {
+    QC_LABEL.get_or_init(|| Mutex::new(String::new()))
+}
+
+fn plug_instant() -> &'static Mutex<Option<std::time::Instant>> {
+    PLUG_INSTANT.get_or_init(|| Mutex::new(None))
+}
+
+/// 解析内核日志里 qcom_smbx 的 HVDCP 认证结论：
+/// 成功 `... HVDCP 3.0 adapter detected, input current limit set to ...`，
+/// 失败 `... HVDCP: no quick charge adapter detected`。
+/// 取窗口内**最后一条** HVDCP 记录（成功/失败都算），这样拔出再插普通充电器
+/// 也会被"无快充"那条覆盖掉；窗口放宽到 15 分钟，服务重启后仍能恢复上次结论。
+fn refresh_qc_label() {
+    const WINDOW_S: f64 = 900.0;
+    let text = std::process::Command::new("dmesg")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let uptime: f64 = std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse().ok()))
+        .unwrap_or(0.0);
+
+    let mut last_ts = -1.0f64;
+    let mut decision: Option<String> = None;
+    for line in text.lines() {
+        if !line.contains("HVDCP") {
+            continue;
+        }
+        let (Some(open), Some(close)) = (line.find('['), line.find(']')) else {
+            continue;
+        };
+        let ts: f64 = line[open + 1..close].trim().parse().unwrap_or(-1.0);
+        if ts < 0.0 || uptime - ts > WINDOW_S || ts < last_ts {
+            continue;
+        }
+        last_ts = ts;
+        if line.contains("no quick charge adapter") {
+            decision = Some(String::new());
+        } else if let Some(idx) = line.find("HVDCP ") {
+            let ver = line[idx + "HVDCP ".len()..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("");
+            if ver == "2.0" || ver == "3.0" {
+                decision = Some(format!("QC {ver}"));
+            }
+        }
+    }
+    if let Some(label) = decision {
+        if let Ok(mut g) = qc_label_store().lock() {
+            *g = label;
+        }
+    }
+}
+
+/// 屏上用的协议短标签：QC 认证结论优先，其次按"电压抬升/限流抬升"推断快充，
+/// 最后退回 usb_type；未接充电器显示未连接。
+fn protocol_label(
+    usb_type_now: &str,
+    current_max_ua: u32,
+    charger_voltage_uv: u32,
+    online: bool,
+    qc: &str,
+) -> String {
+    if !online {
+        return "未连接".into();
+    }
+    if !qc.is_empty() {
+        return qc.to_string();
+    }
+    if current_max_ua >= 3_000_000 || charger_voltage_uv >= 6_500_000 {
+        return "QC 快充".into();
+    }
+    match usb_type_now {
+        "" | "Unknown" => "识别中".into(),
+        other => other.to_string(),
+    }
 }
 
 fn read_charging_state() -> ChargingState {
     let current_max_ua: u32 = read_sysfs(CHARGER_CURRENT_MAX).parse().unwrap_or(0);
     let charger_online = read_sysfs(CHARGER_ONLINE) == "1";
-    maybe_reapply_charge_mode(charger_online);
+    let was_online = maybe_reapply_charge_mode(charger_online);
+    if !charger_online {
+        // 拔掉后清空，避免下次插普通充电器时残留上一次的 QC 标签
+        if let Ok(mut g) = qc_label_store().lock() {
+            g.clear();
+        }
+        if let Ok(mut g) = plug_instant().lock() {
+            *g = None;
+        }
+    } else if !was_online {
+        if let Ok(mut g) = plug_instant().lock() {
+            *g = Some(std::time::Instant::now());
+        }
+        refresh_qc_label();
+    } else {
+        // HVDCP 握手要几秒才打日志：插上后 30s 内没拿到标签就每轮重试
+        let elapsed = plug_instant()
+            .lock()
+            .ok()
+            .and_then(|g| g.map(|t| t.elapsed().as_secs_f32()))
+            .unwrap_or(999.0);
+        let empty = qc_label_store()
+            .lock()
+            .map(|g| g.is_empty())
+            .unwrap_or(false);
+        if empty && elapsed < 30.0 {
+            refresh_qc_label();
+        }
+    }
     let usb_type = read_sysfs(CHARGER_USB_TYPE);
+    let usb_type_now = parse_usb_type_now(&usb_type);
     let charge_source = detect_charge_source(charger_online, &usb_type);
     let charge_mode = charge_mode_name(CHARGE_POWER_ONLY.load(Ordering::Relaxed));
 
-    let mut voltage_now_uv: u32 = read_sysfs(CHARGER_VOLTAGE_NOW).parse().unwrap_or(0);
-    let mut current_now_ua: i32 = read_sysfs(CHARGER_CURRENT_NOW).parse().unwrap_or(0);
+    // 充电器侧（PMI8998 SMB2 输入侧）
+    let charger_voltage_uv: u32 = read_sysfs(CHARGER_VOLTAGE_NOW).parse().unwrap_or(0);
+    let charger_current_ua: i32 = read_sysfs(CHARGER_CURRENT_NOW).parse().unwrap_or(0);
+    // 电池侧（qcom-battery / PMI8998 FG）
+    let battery_voltage_uv: u32 = read_supply_field(BATTERY_SUPPLY, "voltage_now")
+        .parse()
+        .unwrap_or(0);
+    let battery_current_ua: i32 = read_supply_field(BATTERY_SUPPLY, "current_now")
+        .parse()
+        .unwrap_or(0);
+
+    let mut voltage_now_uv = charger_voltage_uv;
+    let mut current_now_ua = charger_current_ua;
 
     if charger_online && (voltage_now_uv == 0 || current_now_ua <= 0) {
-        voltage_now_uv = read_supply_field(BATTERY_SUPPLY, "voltage_now")
-            .parse()
-            .unwrap_or(voltage_now_uv);
-        let battery_current: i32 = read_supply_field(BATTERY_SUPPLY, "current_now")
-            .parse()
-            .unwrap_or(0);
-        if battery_current > 0 {
-            current_now_ua = battery_current;
+        voltage_now_uv = if battery_voltage_uv > 0 {
+            battery_voltage_uv
+        } else {
+            voltage_now_uv
+        };
+        if battery_current_ua > 0 {
+            current_now_ua = battery_current_ua;
         }
     }
 
     let power_w = charge_power_w(voltage_now_uv, current_now_ua);
+    let qc_label = qc_label_store()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let protocol_label = protocol_label(&usb_type_now, current_max_ua, charger_voltage_uv, charger_online, &qc_label);
 
     ChargingState {
         current_max_ua,
@@ -521,6 +682,13 @@ fn read_charging_state() -> ChargingState {
         wired_max_ua: WIRED_MAX_UA,
         wireless_max_ua: WIRELESS_MAX_UA,
         charge_mode,
+        charger_voltage_uv,
+        charger_current_ua,
+        battery_voltage_uv,
+        battery_current_ua,
+        usb_type_now,
+        qc_label,
+        protocol_label,
     }
 }
 

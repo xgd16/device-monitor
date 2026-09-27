@@ -254,7 +254,7 @@ pub fn render(c: &mut Canvas, o: &SystemOverview, a: &Aux, h: &History) {
     card_process(c, &col2[2], o, a);
 
     // 第 3 列：电池 / 网络 / 服务与告警
-    let col3 = split_col(PAD + c1w + GAP + c2w + GAP, body_y, c3w, body_h, &[30, 32, 38]);
+    let col3 = split_col(PAD + c1w + GAP + c2w + GAP, body_y, c3w, body_h, &[34, 32, 34]);
     card_battery(c, &col3[0], o, a);
     card_network(c, &col3[1], o, a);
     card_service(c, &col3[2], a);
@@ -671,16 +671,36 @@ fn card_battery(c: &mut Canvas, p: &Pane, o: &SystemOverview, a: &Aux) {
     let (x, y) = (p.x + 22, p.y);
     title(c, p, "电池");
     let b = &o.battery;
+    let ch = &a.hw.charging;
 
-    let (label, color) = match b.status.as_str() {
+    let (status_label, status_color) = match b.status.as_str() {
         "Charging" => ("充电中", Palette::SUCCESS),
         "Full" => ("已充满", Palette::SUCCESS),
         "Discharging" => ("放电中", Palette::ACCENT),
         _ => (b.status.as_str(), Palette::FG_MUTED),
     };
-    c.pill(p.x + p.w - 160, y + 18, label, Type::TINY, color, Palette::BG_SURFACE_ALT);
+    // 状态胶囊：充电时把协商到的协议一起显示（QC 3.0 / DCP / SDP …）
+    let pill_label = if ch.charger_online && !ch.protocol_label.is_empty() {
+        format!("{status_label} · {}", ch.protocol_label)
+    } else {
+        status_label.to_string()
+    };
+    let pill_h = (Type::TINY * 2.0).round() as i32;
+    let pill_w = c.fonts.text_width(&pill_label, Type::TINY, Weight::Bold) + pill_h;
+    c.pill(
+        p.x + p.w - 22 - pill_w,
+        y + 18,
+        &pill_label,
+        Type::TINY,
+        status_color,
+        Palette::BG_SURFACE_ALT,
+    );
 
-    let pct = if b.display_capacity_pct > 0 { b.display_capacity_pct } else { b.capacity };
+    let pct = if b.display_capacity_pct > 0 {
+        b.display_capacity_pct
+    } else {
+        b.capacity
+    };
     let bcolor = if pct < 20 {
         Palette::ERROR
     } else if pct < 50 {
@@ -688,18 +708,18 @@ fn card_battery(c: &mut Canvas, p: &Pane, o: &SystemOverview, a: &Aux) {
     } else {
         Palette::SUCCESS
     };
-    c.text(x, y + 100, &format!("{pct}"), Type::VALUE_XL, Weight::Bold, bcolor);
+    c.text(x, y + 96, &format!("{pct}"), Type::VALUE_XL, Weight::Bold, bcolor);
     let nw = c.fonts.text_width(&format!("{pct}"), Type::VALUE_XL, Weight::Bold);
-    c.text(x + nw + 8, y + 100, "%", Type::VALUE_M, Weight::Regular, Palette::FG_MUTED);
+    c.text(x + nw + 8, y + 96, "%", Type::VALUE_M, Weight::Regular, Palette::FG_MUTED);
     c.text_right(
         p.x + p.w - 22,
-        y + 100,
+        y + 96,
         &format!("{:.1}V  {:.0}mA", b.voltage_v, b.current_ma),
         Type::BODY,
         Weight::Regular,
         Palette::FG_DEFAULT,
     );
-    c.bar(x, y + 118, p.w - 44, 16, pct as f64, bcolor);
+    c.bar(x, y + 112, p.w - 44, 16, pct as f64, bcolor);
 
     let cw = (p.w - 44) / 3;
     let remain = if b.time_left_min > 0 {
@@ -720,24 +740,70 @@ fn card_battery(c: &mut Canvas, p: &Pane, o: &SystemOverview, a: &Aux) {
     ];
     for (i, (k, v, vc)) in items.iter().enumerate() {
         let kx = x + i as i32 * cw;
-        c.text(kx, y + 168, k, Type::TINY, Weight::Regular, Palette::FG_MUTED);
-        c.text(kx, y + 196, v, Type::VALUE_M, Weight::Bold, *vc);
+        c.text(kx, y + 144, k, Type::TINY, Weight::Regular, Palette::FG_MUTED);
+        c.text(kx, y + 170, v, Type::VALUE_M, Weight::Bold, *vc);
     }
 
-    c.text(
-        x,
-        y + 226,
-        &format!(
-            "上限 {}% · 充电功率上限 {:.1}W · 背光 {}%{}",
+    // 充电器侧实时电压/电流 + 协议（放电/未接时降级为灰色 --）
+    let on = ch.charger_online;
+    let v_txt = if ch.charger_voltage_uv > 0 {
+        format!("{:.2} V", ch.charger_voltage_uv as f64 / 1_000_000.0)
+    } else {
+        "--".to_string()
+    };
+    let i_ua = ch.charger_current_ua.abs();
+    let i_txt = if i_ua <= 0 {
+        "--".to_string()
+    } else if i_ua >= 1_000_000 {
+        format!("{:.2} A", i_ua as f64 / 1_000_000.0)
+    } else {
+        format!("{} mA", i_ua / 1000)
+    };
+    let p_txt = if on { ch.protocol_label.clone() } else { "--".to_string() };
+    let p_color = if !on {
+        Palette::FG_MUTED
+    } else if !ch.qc_label.is_empty() {
+        Palette::WARNING
+    } else {
+        Palette::ACCENT
+    };
+    let (vc1, vc2) = if on {
+        (Palette::SUCCESS, Palette::SUCCESS)
+    } else {
+        (Palette::FG_MUTED, Palette::FG_MUTED)
+    };
+    let charge_items = [
+        ("充电电压", v_txt, vc1),
+        ("充电电流", i_txt, vc2),
+        ("充电协议", p_txt, p_color),
+    ];
+    for (i, (k, v, vc)) in charge_items.iter().enumerate() {
+        let kx = x + i as i32 * cw;
+        c.text(kx, y + 198, k, Type::TINY, Weight::Regular, Palette::FG_MUTED);
+        c.text(kx, y + 224, v, Type::VALUE_M, Weight::Bold, *vc);
+    }
+
+    let limit = if ch.current_max_ua >= 1_000_000 {
+        format!("{:.1}A", ch.current_max_ua as f64 / 1_000_000.0)
+    } else {
+        format!("{}mA", ch.current_max_ua / 1000)
+    };
+    let footer = if on {
+        format!(
+            "限流 {} · 上限 {}% · 背光 {}%",
+            limit,
             b.effective_max_pct,
-            a.hw.charging.power_w.max(0.0),
+            a.hw.brightness.percent
+        )
+    } else {
+        format!(
+            "上限 {}% · 背光 {}%{}",
+            b.effective_max_pct,
             a.hw.brightness.percent,
             if b.is_degraded { " · 容量已下降" } else { "" }
-        ),
-        Type::LABEL,
-        Weight::Regular,
-        Palette::FG_MUTED,
-    );
+        )
+    };
+    c.text(x, y + 252, &footer, Type::LABEL, Weight::Regular, Palette::FG_MUTED);
 }
 
 // ── 网络 ──
@@ -924,7 +990,17 @@ fn card_service(c: &mut Canvas, p: &Pane, a: &Aux) {
             if hw.charging.charge_mode == "power_only" {
                 "仅供电".to_string()
             } else if hw.charging.charger_online {
-                "在线".to_string()
+                let proto = if hw.charging.protocol_label.is_empty() {
+                    "在线"
+                } else {
+                    hw.charging.protocol_label.as_str()
+                };
+                format!(
+                    "{} {:.1}V/{:.0}mA",
+                    proto,
+                    hw.charging.charger_voltage_uv as f64 / 1_000_000.0,
+                    hw.charging.charger_current_ua.abs() as f64 / 1000.0
+                )
             } else {
                 "离线".to_string()
             },
