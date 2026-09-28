@@ -73,14 +73,15 @@ unbind_fbcon() {
 sync_touch_matrix() {
   case "${1:-90}" in
     270) _m="0 -1 1 1 0 0" ;; # x=1-ty, y=tx
-    0) _m="1 0 0 1 0 0" ;;    # 竖屏原生：px=tx, py=ty（由 rot90 基准推导）
-    180) _m="-1 0 1 -1 0 1" ;; # 竖屏倒置：px=1-tx, py=1-ty
+    0) _m="1 0 0 0 1 0" ;;    # 竖屏原生：px=tx, py=ty（由 rot90 基准推导）
+    180) _m="-1 0 1 0 -1 1" ;; # 竖屏倒置：px=1-tx, py=1-ty
     *) _m="0 1 0 -1 0 1" ;;   # x=ty, y=1-tx（实测校准基准）
   esac
   _rule=/etc/udev/rules.d/70-stmfts-rotation.rules
   _want='# stmfts 触摸校准矩阵 —— 由 device-monitor-launcher.sh 随屏幕朝向自动维护（矩阵行勿手改）
 # rot90 = 0 1 0 -1 0 1（基准，2026-09-27 实测）；rot270 = 0 -1 1 1 0 0（180° 对偶）
-# rot0 = 1 0 0 1 0 0（竖屏原生）；rot180 = -1 0 1 -1 0 1（竖屏倒置）
+# rot0 = 1 0 0 0 1 0（竖屏原生）；rot180 = -1 0 1 0 -1 1（竖屏倒置）
+# 注意六元组 = a b c / d e f：x'=a*x+b*y+c，y'=d*x+e*y+f（libinput 行主序）
 ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="stmfts", ENV{LIBINPUT_CALIBRATION_MATRIX}="'"$_m"'"
 '
   # stmfts 事件节点（下面的内容分支与存在性兜底都要用）
@@ -154,6 +155,15 @@ try_panel() {
     case "$rotate" in
       90) rotate=180 ;;
       *) rotate=0 ;;
+    esac
+  fi
+  # 屏幕反转（panel-flip.txt = 1）：在当前朝向上再翻 180°（0↔180 / 90↔270）
+  if [ -r "$DEPLOY_DIR/panel-flip.txt" ] && [ "$(tr -d ' \t\n' < "$DEPLOY_DIR/panel-flip.txt")" = "1" ]; then
+    case "$rotate" in
+      0) rotate=180 ;;
+      180) rotate=0 ;;
+      90) rotate=270 ;;
+      *) rotate=90 ;;
     esac
   fi
   # 触摸坐标修正必须与朝向一致，否则触摸整体反 180°（见函数注释）

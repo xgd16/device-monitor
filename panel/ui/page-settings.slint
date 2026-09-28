@@ -107,7 +107,7 @@ export component PageSettings inherits Rectangle {
             x: 14px;
             y: 30px;
             width: 530px;
-            text: "切换后面板自动重启（约 5 秒黑屏），触摸坐标随朝向自动校准；选择会记忆，重启后保持。";
+            text: "横/竖切换或屏幕反转都会让面板自动重启（约 5 秒黑屏），触摸坐标随朝向自动校准；选择会记忆，重启后保持。";
             font-size: 8.5px;
             color: Theme.muted;
             font-family: Theme.font-body;
@@ -116,19 +116,19 @@ export component PageSettings inherits Rectangle {
         OptBtn {
             x: 14px;
             y: 64px;
-            width: 259px;
+            width: 170px;
             height: 152px;
             label: "横屏";
-            sub: "1170 × 540 · 默认";
+            sub: "1170 × 540";
             sel: !Ui.portrait;
             pick => {
                 Ui.set-orientation(false);
             }
         }
         OptBtn {
-            x: 287px;
+            x: 192px;
             y: 64px;
-            width: 259px;
+            width: 170px;
             height: 152px;
             label: "竖屏";
             sub: "540 × 1170";
@@ -136,6 +136,19 @@ export component PageSettings inherits Rectangle {
             sel: Ui.portrait;
             pick => {
                 Ui.set-orientation(true);
+            }
+        }
+        OptBtn {
+            x: 370px;
+            y: 64px;
+            width: 170px;
+            height: 152px;
+            label: "反转";
+            sub: "翻转 180°";
+            tint: Theme.warning;
+            sel: Ui.flip;
+            pick => {
+                Ui.set-flip(!Ui.flip);
             }
         }
     }
@@ -261,7 +274,7 @@ export component PageSettingsP inherits Rectangle {
             x: 14px;
             y: 30px;
             width: 484px;
-            text: "切换后面板自动重启（约 5 秒黑屏），触摸坐标随朝向自动校准；选择会记忆，重启后保持。";
+            text: "横/竖切换或屏幕反转都会让面板自动重启（约 5 秒黑屏），触摸坐标随朝向自动校准；选择会记忆，重启后保持。";
             font-size: 8.5px;
             color: Theme.muted;
             font-family: Theme.font-body;
@@ -270,19 +283,19 @@ export component PageSettingsP inherits Rectangle {
         OptBtn {
             x: 14px;
             y: 70px;
-            width: 235px;
+            width: 154px;
             height: 190px;
             label: "横屏";
-            sub: "1170 × 540 · 默认";
+            sub: "1170 × 540";
             sel: !Ui.portrait;
             pick => {
                 Ui.set-orientation(false);
             }
         }
         OptBtn {
-            x: 263px;
+            x: 174px;
             y: 70px;
-            width: 235px;
+            width: 154px;
             height: 190px;
             label: "竖屏";
             sub: "540 × 1170";
@@ -290,6 +303,19 @@ export component PageSettingsP inherits Rectangle {
             sel: Ui.portrait;
             pick => {
                 Ui.set-orientation(true);
+            }
+        }
+        OptBtn {
+            x: 334px;
+            y: 70px;
+            width: 154px;
+            height: 190px;
+            label: "反转";
+            sub: "翻转 180°";
+            tint: Theme.warning;
+            sel: Ui.flip;
+            pick => {
+                Ui.set-flip(!Ui.flip);
             }
         }
     }

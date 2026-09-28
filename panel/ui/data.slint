@@ -262,6 +262,8 @@ export global Ui {
     in-out property <bool> screen-on: true;
     // 竖屏模式：窗口 540x1170 + 竖版布局（进程常量，切换 = 重启面板）
     in-out property <bool> portrait: false;
+    // 屏幕反转：在当前朝向上再翻 180°（panel-flip.txt，切换 = 重启面板）
+    in-out property <bool> flip: false;
     // 面板版本（设置页「关于」展示，Rust 启动时写入）
     in-out property <string> panel-version: "";
     // LiveDot 呼吸相位（Rust tick 每秒推进，同上）
@@ -286,4 +288,6 @@ export global Ui {
     // 设置页手动选方向（true=竖屏）：设备上写 panel-orientation.txt 后退出重启；
     // macOS 预览直接热切换布局
     callback set-orientation(bool);
+    // 设置页屏幕反转（true=翻转 180°）：写 panel-flip.txt 后退出重启
+    callback set-flip(bool);
 }

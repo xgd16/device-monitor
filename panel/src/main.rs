@@ -63,6 +63,32 @@ static SCREEN_ON: AtomicBool = AtomicBool::new(true);
 /// rotation.txt 沿用横屏朝向。
 const ORIENT_PREF_FILE: &str = "panel-orientation.txt";
 const ROTATION_FILE: &str = "rotation.txt";
+/// 屏幕反转偏好：panel-flip.txt = "1" 时在当前朝向上再翻 180°。
+const FLIP_FILE: &str = "panel-flip.txt";
+
+/// 有效旋转（与启动器 try_panel 完全同序）：横屏朝向(rotation.txt) → 竖屏映射
+/// (90→180 / 270→0) → 屏幕反转(+180)。返回 0/90/180/270。
+fn effective_rotation(portrait: bool, flip: bool) -> u32 {
+    let digits: String = std::fs::read_to_string(ROTATION_FILE)
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect();
+    let raw: u32 = digits.parse().unwrap_or(90); // 与启动器一致：缺省/无效 → 90
+    let base = match raw {
+        90 | 270 => raw,
+        _ => 90,
+    };
+    let mut rot = if portrait {
+        if base == 90 { 180 } else { 0 }
+    } else {
+        base
+    };
+    if flip {
+        rot = (rot + 180) % 360;
+    }
+    rot
+}
 
 // TPS 流限频：网关每 500ms 推一条 stats.throughput（2Hz），逐条刷 UI 会让
 // Slint 渲染循环停不下来（每条消息 = 一次全屏重绘）。样本照常进滑窗，
@@ -76,31 +102,19 @@ static TPS_SEQ_DONE: AtomicU64 = AtomicU64::new(0);
 /// 面板退出前预写目标方向的触摸矩阵 udev 规则并立即注入（复刻启动器
 /// sync_touch_matrix 的规则内容；若字节不一致启动器会自行重写，只是退回慢路径）。
 /// 异步执行、不阻塞退出：把 udev reload/trigger/settle（1~13 秒）挪出切换关键路径。
-fn preset_touch_matrix(target_portrait: bool) {
-    let digits: String = std::fs::read_to_string(ROTATION_FILE)
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect();
-    let base: u32 = digits.parse().unwrap_or(90); // 与启动器一致：缺省/无效 → 90
-    let rotate = if target_portrait {
-        if base == 90 { 180 } else { 0 }
-    } else {
-        match base {
-            90 | 270 => base,
-            _ => 90,
-        }
-    };
+fn preset_touch_matrix(portrait: bool, flip: bool) {
+    let rotate = effective_rotation(portrait, flip);
     let m = match rotate {
-        0 => "1 0 0 1 0 0",
-        180 => "-1 0 1 -1 0 1",
+        0 => "1 0 0 0 1 0",
+        180 => "-1 0 1 0 -1 1",
         270 => "0 -1 1 1 0 0",
         _ => "0 1 0 -1 0 1",
     };
     let want = format!(
         "# stmfts 触摸校准矩阵 —— 由 device-monitor-launcher.sh 随屏幕朝向自动维护（矩阵行勿手改）\n\
          # rot90 = 0 1 0 -1 0 1（基准，2026-09-27 实测）；rot270 = 0 -1 1 1 0 0（180° 对偶）\n\
-         # rot0 = 1 0 0 1 0 0（竖屏原生）；rot180 = -1 0 1 -1 0 1（竖屏倒置）\n\
+         # rot0 = 1 0 0 0 1 0（竖屏原生）；rot180 = -1 0 1 0 -1 1（竖屏倒置）\n\
+         # 六元组 = a b c / d e f：x'=a*x+b*y+c，y'=d*x+e*y+f（libinput 行主序，勿想当然写单位阵）\n\
          ACTION==\"add|change\", KERNEL==\"event*\", ATTRS{{name}}==\"stmfts\", ENV{{LIBINPUT_CALIBRATION_MATRIX}}=\"{m}\"\n"
     );
     // 面板退出前预写规则 + reload/trigger/settle + 轮询验证属性已进 udev 库
@@ -228,14 +242,20 @@ fn main() {
         })
         .unwrap_or_else(|| "landscape".into());
     let portrait = mode == "portrait";
-    if portrait {
-        let base = std::fs::read_to_string(ROTATION_FILE)
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "270".into());
-        let rot = if base == "90" { "180" } else { "0" };
-        // 后端在 app.run() 时才读该 env，此处覆盖启动器给的横屏值
-        unsafe { std::env::set_var("SLINT_KMS_ROTATION", rot) };
-        eprintln!("[panel] 竖屏模式（SLINT_KMS_ROTATION={rot}，来源 {mode}）");
+    // 屏幕反转：panel-flip.txt = "1" → 当前朝向再翻 180°（与启动器 try_panel 同序）
+    let flip = std::fs::read_to_string(FLIP_FILE)
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false);
+    {
+        // 后端在 app.run() 时才读该 env，此处覆盖启动器给的值（同一套文件同一套算法，结果一致）
+        let rot = effective_rotation(portrait, flip);
+        unsafe { std::env::set_var("SLINT_KMS_ROTATION", rot.to_string()) };
+        if portrait {
+            eprintln!("[panel] 竖屏模式（SLINT_KMS_ROTATION={rot}，来源 {mode}）");
+        }
+        if flip {
+            eprintln!("[panel] 屏幕反转开启（SLINT_KMS_ROTATION={rot}）");
+        }
     }
 
     // splash 交接（无 splash 时零开销）：必须在 App::new/后端打开 card0 之前
@@ -244,6 +264,7 @@ fn main() {
     let app = App::new().expect("无法创建 Slint 组件（检查字体/后端依赖）");
     let weak = app.as_weak();
     app.global::<Ui>().set_portrait(portrait);
+    app.global::<Ui>().set_flip(flip);
     app.global::<Ui>().set_panel_version(env!("CARGO_PKG_VERSION").into());
 
     // 字体与文字垂直居中补偿：.slint 里的默认值即设备值（Noto Sans CJK SC）；
@@ -308,7 +329,29 @@ fn main() {
             // ── B 档：先把目标方向的触摸矩阵预写好（异步），再拉起过渡 splash，
             //    然后才退出 —— splash 会在本进程退出瞬间接住 DRM 显示灰色画面。──
             spawn_transition_splash();
-            preset_touch_matrix(p);
+            preset_touch_matrix(p, flip);
+            std::process::exit(0);
+        });
+    }
+
+    // 设置页屏幕反转：写 panel-flip.txt 后退出（启动器按 90↔270 / 0↔180 重拉，
+    // KMS 旋转与触摸矩阵都会跟着翻 180°）；demo 预览无 DRM，仅热切换状态便于看 UI。
+    {
+        let w = weak.clone();
+        app.global::<Ui>().on_set_flip(move |f: bool| {
+            if demo {
+                if let Some(ui) = w.upgrade() {
+                    ui.global::<Ui>().set_flip(f);
+                }
+                return;
+            }
+            if f == flip {
+                return;
+            }
+            let _ = std::fs::write(FLIP_FILE, if f { "1\n" } else { "0\n" });
+            tracing_or_log(&format!("设置页切换屏幕反转 → {f}，退出由启动器按新方向拉起"));
+            spawn_transition_splash();
+            preset_touch_matrix(portrait, f);
             std::process::exit(0);
         });
     }
