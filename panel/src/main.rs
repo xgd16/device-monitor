@@ -72,6 +72,128 @@ static TPS_STREAMS: AtomicI32 = AtomicI32::new(0);
 static TPS_SEQ: AtomicU64 = AtomicU64::new(0);
 static TPS_SEQ_DONE: AtomicU64 = AtomicU64::new(0);
 
+// ── 横竖屏切换黑屏优化（B 档）────────────────────────────────────────────
+/// 面板退出前预写目标方向的触摸矩阵 udev 规则并立即注入（复刻启动器
+/// sync_touch_matrix 的规则内容；若字节不一致启动器会自行重写，只是退回慢路径）。
+/// 异步执行、不阻塞退出：把 udev reload/trigger/settle（1~13 秒）挪出切换关键路径。
+fn preset_touch_matrix(target_portrait: bool) {
+    let digits: String = std::fs::read_to_string(ROTATION_FILE)
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect();
+    let base: u32 = digits.parse().unwrap_or(90); // 与启动器一致：缺省/无效 → 90
+    let rotate = if target_portrait {
+        if base == 90 { 180 } else { 0 }
+    } else {
+        match base {
+            90 | 270 => base,
+            _ => 90,
+        }
+    };
+    let m = match rotate {
+        0 => "1 0 0 1 0 0",
+        180 => "-1 0 1 -1 0 1",
+        270 => "0 -1 1 1 0 0",
+        _ => "0 1 0 -1 0 1",
+    };
+    let want = format!(
+        "# stmfts 触摸校准矩阵 —— 由 device-monitor-launcher.sh 随屏幕朝向自动维护（矩阵行勿手改）\n\
+         # rot90 = 0 1 0 -1 0 1（基准，2026-09-27 实测）；rot270 = 0 -1 1 1 0 0（180° 对偶）\n\
+         # rot0 = 1 0 0 1 0 0（竖屏原生）；rot180 = -1 0 1 -1 0 1（竖屏倒置）\n\
+         ACTION==\"add|change\", KERNEL==\"event*\", ATTRS{{name}}==\"stmfts\", ENV{{LIBINPUT_CALIBRATION_MATRIX}}=\"{m}\"\n"
+    );
+    // 面板退出前预写规则 + reload/trigger/settle + 轮询验证属性已进 udev 库
+    //（至多 12×0.3s≈4s），让启动器的属性存在性检查首查即过——整段 udev
+    // 同步（实测 1~13 秒）从切换关键路径挪出。printf 走 $1/$2 占位避开引号地狱。
+    let script = format!(
+        "printf '%s' \"$1\" > /etc/udev/rules.d/70-stmfts-rotation.rules && \\\n\
+         udevadm control --reload-rules && \\\n\
+         udevadm trigger --action=change --subsystem-match=input && \\\n\
+         udevadm settle --timeout=5\n\
+         i=0\n\
+         while [ $i -lt 12 ]; do\n\
+           ev=''\n\
+           for p in /sys/class/input/event*; do\n\
+             [ \"$(cat \"$p/device/name\" 2>/dev/null)\" = stmfts ] && ev=$p && break\n\
+           done\n\
+           [ -n \"$ev\" ] && udevadm info \"$ev\" 2>/dev/null | grep -q \"$2\" && break\n\
+           [ -n \"$ev\" ] && udevadm trigger --action=change \"$ev\" >/dev/null 2>&1\n\
+           i=$((i+1))\n\
+           sleep 0.3\n\
+         done"
+    );
+    let _ = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .arg("preset-touch-matrix")
+        .arg(&want)
+        .arg(format!("LIBINPUT_CALIBRATION_MATRIX={m}"))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+/// 退出前拉起过渡 splash（同目录二进制）：它在本进程退出瞬间抢到 DRM master，
+/// 把灰色过渡画面上屏，等新面板打印交接信号后 DropMaster 让位。拉不起来就
+/// 静默降级为原来的纯黑切换。
+fn spawn_transition_splash() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(dir) = exe.parent() else { return };
+    let splash = dir.join("device-monitor-panel-splash");
+    if !splash.exists() {
+        return;
+    }
+    let logf = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("splash.log"));
+    let mut cmd = std::process::Command::new(&splash);
+    cmd.stdin(std::process::Stdio::null());
+    if let Ok(f) = &logf {
+        if let Ok(out) = f.try_clone() {
+            cmd.stdout(out);
+        }
+        if let Ok(err) = f.try_clone() {
+            cmd.stderr(err);
+        }
+    }
+    let _ = cmd.spawn();
+}
+
+/// 启动时与 splash 握手：启动器（上一切换轮的 splash 仍在）等本函数打印
+/// TOKEN 后 DropMaster，这里再等 /tmp/panel-splash.gone 落地才继续 ——
+/// 保证后端打开 card0 时无主可自动获主，灰色过渡帧无缝续到新面板首帧。
+/// 无 splash（冷启动/调试直跑）时 pidfile 不存在，零开销直接返回。
+fn wait_for_splash_handoff() {
+    use std::path::Path;
+    let pidf = Path::new("/tmp/panel-splash.pid");
+    if !pidf.exists() {
+        return;
+    }
+    eprintln!("[panel] splash handoff wait");
+    let gone = Path::new("/tmp/panel-splash.gone");
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(5) {
+        if gone.exists() {
+            eprintln!("[panel] splash 已 DropMaster，继续启动");
+            return;
+        }
+        let dead = std::fs::read_to_string(pidf)
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .map(|pid| !Path::new(&format!("/proc/{pid}")).exists())
+            .unwrap_or(true);
+        if dead {
+            eprintln!("[panel] splash 已退出（回退模式），继续启动");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    eprintln!("[panel] splash 交接超时，继续启动");
+}
+
 fn main() {
     // linuxkms 后端在初始化时读环境变量；edition 2024 中 set_var 是 unsafe，
     // 此处尚无其他线程，设置是安全的。
@@ -115,6 +237,9 @@ fn main() {
         unsafe { std::env::set_var("SLINT_KMS_ROTATION", rot) };
         eprintln!("[panel] 竖屏模式（SLINT_KMS_ROTATION={rot}，来源 {mode}）");
     }
+
+    // splash 交接（无 splash 时零开销）：必须在 App::new/后端打开 card0 之前
+    wait_for_splash_handoff();
 
     let app = App::new().expect("无法创建 Slint 组件（检查字体/后端依赖）");
     let weak = app.as_weak();
@@ -180,6 +305,10 @@ fn main() {
             let m = if p { "portrait" } else { "landscape" };
             let _ = std::fs::write(ORIENT_PREF_FILE, format!("{m}\n"));
             tracing_or_log(&format!("设置页手动切换方向 → {m}，退出由启动器按新方向拉起"));
+            // ── B 档：先把目标方向的触摸矩阵预写好（异步），再拉起过渡 splash，
+            //    然后才退出 —— splash 会在本进程退出瞬间接住 DRM 显示灰色画面。──
+            spawn_transition_splash();
+            preset_touch_matrix(p);
             std::process::exit(0);
         });
     }

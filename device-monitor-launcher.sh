@@ -83,28 +83,42 @@ sync_touch_matrix() {
 # rot0 = 1 0 0 1 0 0（竖屏原生）；rot180 = -1 0 1 -1 0 1（竖屏倒置）
 ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="stmfts", ENV{LIBINPUT_CALIBRATION_MATRIX}="'"$_m"'"
 '
+  # stmfts 事件节点（下面的内容分支与存在性兜底都要用）
+  _ev_sys=""
+  for _p in /sys/class/input/event*; do
+    [ "$(cat "$_p/device/name" 2>/dev/null)" = "stmfts" ] && _ev_sys="$_p" && break
+  done
   if [ "$(cat "$_rule" 2>/dev/null)" != "$(printf '%s' "$_want")" ]; then
     printf '%s' "$_want" > "$_rule"
     udevadm control --reload-rules >/dev/null 2>&1 || true
     udevadm trigger --action=change --subsystem-match=input >/dev/null 2>&1 || true
     udevadm settle --timeout=5 >/dev/null 2>&1 || true
     log "触摸校准矩阵已随朝向同步（rotate=$1 → $_m）"
+  else
+    # 内容一致 = 面板退出前的预写脚本已写好并触发过：先纯轮询等属性进
+    # udev 库（此时再 trigger 会让 udev 重新排队、属性反而更晚到）。
+    _w=0
+    while [ "$_w" -lt 8 ] && ! udevadm info "$_ev_sys" 2>/dev/null | grep -q "LIBINPUT_CALIBRATION_MATRIX=$_m"; do
+      _w=$((_w + 1))
+      sleep 0.3
+    done
   fi
 
   # 属性存在性兜底：模块重载/新节点时 udev 对 add 的处理可能滞后数秒甚至更久，
   # 面板一旦先打开设备就会读不到矩阵。这里在启动面板前确认当前实例已带上
   # 属性，缺了就重试注入（trigger 用 sysfs 路径，/dev 路径在此处无效）。
-  _ev_sys=""
-  for _p in /sys/class/input/event*; do
-    [ "$(cat "$_p/device/name" 2>/dev/null)" = "stmfts" ] && _ev_sys="$_p" && break
-  done
   if [ -n "$_ev_sys" ]; then
     _tries=0
     while [ "$_tries" -lt 10 ] && ! udevadm info "$_ev_sys" 2>/dev/null | grep -q "LIBINPUT_CALIBRATION_MATRIX=$_m"; do
       _tries=$((_tries + 1))
       udevadm trigger --action=change "$_ev_sys" >/dev/null 2>&1 || true
-      udevadm settle --timeout=3 >/dev/null 2>&1 || true
-      sleep 1
+      # 快轮询（0.3s×10）替代 settle(≤3s)+sleep(1s)：属性通常在 trigger 后
+      # 不到 1 秒进 udev 库；面板退出前的预写脚本此刻多半已把属性备好。
+      _w=0
+      while [ "$_w" -lt 10 ] && ! udevadm info "$_ev_sys" 2>/dev/null | grep -q "LIBINPUT_CALIBRATION_MATRIX=$_m"; do
+        _w=$((_w + 1))
+        sleep 0.3
+      done
     done
     if [ "$_tries" -ge 10 ]; then
       log "警告: 触摸矩阵属性注入失败（已重试 10 次），触摸映射可能不对"
@@ -165,6 +179,13 @@ try_panel() {
     fi
   done
   log "GPU panel running (pid=$panel_pid, rotate=$rotate)"
+  # 过渡 splash 使命完成（新面板已跑过 12s 健康窗口，首帧早已接管屏幕）：
+  # 击杀并清标记，灰色帧彼时已不被扫描，释放无闪烁。
+  if [ -f /tmp/panel-splash.pid ]; then
+    _sp=$(cat /tmp/panel-splash.pid 2>/dev/null)
+    [ -n "$_sp" ] && kill "$_sp" 2>/dev/null || true
+    rm -f /tmp/panel-splash.pid /tmp/panel-splash.gone
+  fi
   wait "$panel_pid"
   return $?
 }
@@ -176,10 +197,17 @@ if ! start_api; then
   exit 1
 fi
 
-# 2) Slint GPU 面板（唯一显示；退出则 5 秒后重新拉起，API 不中断）
+# 2) Slint GPU 面板（唯一显示；退出则按场景重拉，API 不中断）
+#    rc=0 = 设置页计划内切换：splash 已在位、矩阵已预同步，1 秒即可重拉；
+#    rc≠0 = 异常退出：保留 5 秒退避，避免崩溃快速循环。
 while : ; do
   try_panel
   _rc=$?
-  log "GPU panel 已退出（rc=$_rc），5 秒后重新拉起"
-  sleep 5
+  if [ "$_rc" -eq 0 ]; then
+    log "GPU panel 已退出（rc=0，计划内切换），1 秒后按新方向拉起"
+    sleep 1
+  else
+    log "GPU panel 已退出（rc=$_rc），5 秒后重新拉起"
+    sleep 5
+  fi
 done

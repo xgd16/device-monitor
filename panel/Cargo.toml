@@ -4,6 +4,15 @@ version = "0.1.0"
 edition = "2024"
 description = "GPU 加速物理屏仪表（Slint + femtovg），消费本机 device-monitor API"
 
+# 过渡 splash：横竖屏切换黑屏期占据 DRM 显示灰色画面（见 src/bin/splash.rs 头注释）
+[[bin]]
+name = "device-monitor-panel"
+path = "src/main.rs"
+
+[[bin]]
+name = "device-monitor-panel-splash"
+path = "src/bin/splash.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -32,6 +41,8 @@ slint = { version = "1.18.1", default-features = false, features = [
     "backend-linuxkms-libinput",
     "renderer-femtovg",
 ] }
+# splash 的 DRM master/dumb buffer/set_crtc（已随 linuxkms 后端进锁文件，无新下载）
+drm = "0.14"
 
 [build-dependencies]
 slint-build = "1.18.1"
