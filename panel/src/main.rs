@@ -1402,24 +1402,22 @@ fn apply_overview(
     } else {
         String::new()
     };
-    let limit_base = format!(
-        "{}上限 {}% · 背光 {}%{}",
-        health_s,
-        ji(&bat, "effective_max_pct"),
-        hw_brightness,
-        if jb(&bat, "is_degraded") {
-            " · 容量已下降"
-        } else if jb(&bat, "at_charge_limit") {
-            " · 已到充电上限"
-        } else {
-            ""
-        }
-    );
-    let bat_limit = if charger_online {
-        let g = HW_LATEST.lock().unwrap_or_else(|p| p.into_inner());
-        format!("限流 {} · {}", g.chg_vi, limit_base)
+    let bat_limit = format!("{}上限 {}%", health_s, ji(&bat, "effective_max_pct"));
+    let mut limit2 = if hw_brightness.is_empty() || hw_brightness == "--" {
+        String::new()
     } else {
-        limit_base
+        format!("背光 {}%", hw_brightness)
+    };
+    if jb(&bat, "is_degraded") {
+        limit2.push_str(if limit2.is_empty() { "容量已下降" } else { " · 容量已下降" });
+    } else if jb(&bat, "at_charge_limit") {
+        limit2.push_str(if limit2.is_empty() { "已到充电上限" } else { " · 已到充电上限" });
+    }
+    let bat_limit2 = if charger_online {
+        let g = HW_LATEST.lock().unwrap_or_else(|p| p.into_inner());
+        format!("限流 {}{}{}", g.chg_vi, if limit2.is_empty() { "" } else { " · " }, limit2)
+    } else {
+        limit2
     };
 
     let mihomo = ov.get("mihomo").cloned().unwrap_or(json!({}));
@@ -1473,12 +1471,13 @@ fn apply_overview(
         sys.set_bat_protocol(protocol.into());
         sys.set_bat_voltage(format!("{:.2}", jf(&bat, "voltage_v")).into());
         sys.set_bat_current(format!("{:.0}", jf(&bat, "current_ma").abs()).into());
-        sys.set_bat_power(format!("{:.1} W", jf(&bat, "power_w")).into());
+        sys.set_bat_power(format!("{:.1}", jf(&bat, "power_w")).into());
         let bt = jf(&bat, "temp_celsius");
         sys.set_bat_temp(bt as f32);
         sys.set_bat_temp_str(format!("{bt:.1} °C").into());
         sys.set_bat_remain(remain.into());
         sys.set_bat_limit(bat_limit.into());
+        sys.set_bat_limit2(bat_limit2.into());
         sys.set_bat_ring(ring_arc(bat_pct as f64).into());
 
         sys.set_rx(fmt_speed(rx).into());
@@ -2138,7 +2137,7 @@ fn spawn_demo(w: Weak<App>) {
                     "memory": {"usage_percent": 61.0 + 5.0 * (t * 0.3).sin(), "used_mb": 3780, "total_mb": 5888,
                                "available_mb": 1980, "swap_used_mb": 120, "swap_total_mb": 2048},
                     "thermal": thermal,
-                    "battery": {"capacity": 78, "display_capacity_pct": 78, "status": "Discharging",
+                    "battery": {"capacity": 43, "display_capacity_pct": 43, "status": "Discharging",
                                 "voltage_v": 3.92, "current_ma": -812.0, "power_w": 3.18,
                                 "temp_celsius": 31.5, "time_left_min": 386,
                                 "effective_max_pct": 99, "health_percent": 65.5,

@@ -287,7 +287,16 @@ export component PageClock inherits Rectangle {
             }
             Mono {
                 x: 136px;
-                y: 124px;
+                y: 113px;
+                width: 170px;
+                text: Sys.bat-limit2;
+                font-size: 8px;
+                color: Theme.muted;
+                overflow: elide;
+            }
+            Mono {
+                x: 136px;
+                y: 127px;
                 width: 170px;
                 text: Sys.bat-protocol == "" ? "" : "协议 " + Sys.bat-protocol;
                 font-size: 8.5px;
@@ -445,6 +454,8 @@ export component PageClock inherits Rectangle {
                 Path {
                     width: 420px;
                     height: 76px;
+                    // 坐标 1:1 渲染：太阳圆点由 Rust 按同一坐标计算，不能被 fit 缩放
+                    fit: ImageFit.preserve;
                     commands: Clk.sun-arc;
                     stroke: Theme.track;
                     stroke-width: 2px;
@@ -815,7 +826,16 @@ export component PageClockP inherits Rectangle {
         }
         Mono {
             x: 134px;
-            y: 124px;
+            y: 113px;
+            width: 106px;
+            text: Sys.bat-limit2;
+            font-size: 8px;
+            color: Theme.muted;
+            overflow: elide;
+        }
+        Mono {
+            x: 134px;
+            y: 127px;
             width: 106px;
             text: Sys.bat-protocol == "" ? "" : "协议 " + Sys.bat-protocol;
             font-size: 8.5px;
@@ -955,6 +975,8 @@ export component PageClockP inherits Rectangle {
                 x: 32px;
                 width: 420px;
                 height: 76px;
+                // 坐标 1:1 渲染：太阳圆点由 Rust 按同一坐标计算，不能被 fit 缩放
+                fit: ImageFit.preserve;
                 commands: Clk.sun-arc;
                 stroke: Theme.track;
                 stroke-width: 2px;

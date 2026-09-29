@@ -159,12 +159,15 @@ export component AreaChart inherits Rectangle {
     if root.area-pts != "": Path {
         width: 100%;
         height: 100%;
+        // 坐标 1:1 渲染：默认 contain 会按路径包围盒缩放居中，数据稀疏时图会漂移
+        fit: ImageFit.preserve;
         commands: root.area-pts;
         fill: @linear-gradient(180deg, root.tint.with-alpha(0.30) 0%, root.tint.with-alpha(0.02) 100%);
     }
     if root.line-pts != "": Path {
         width: 100%;
         height: 100%;
+        fit: ImageFit.preserve;
         commands: root.line-pts;
         stroke: root.tint;
         stroke-width: 2px;
@@ -182,6 +185,8 @@ export component RingGauge inherits Rectangle {
     Path {
         width: 100%;
         height: 100%;
+        // 坐标 1:1 渲染：默认 contain 按包围盒适配，值弧 <70% 时会脱离轨道（包围盒非正方形）
+        fit: ImageFit.preserve;
         commands: "M 60 7 A 53 53 0 1 1 59.9 7";
         stroke: Theme.track;
         stroke-width: 7px;
@@ -191,6 +196,7 @@ export component RingGauge inherits Rectangle {
     Path {
         width: 100%;
         height: 100%;
+        fit: ImageFit.preserve;
         commands: root.val-arc;
         stroke: root.tint;
         stroke-width: 7px;
