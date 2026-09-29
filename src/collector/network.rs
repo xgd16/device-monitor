@@ -2,9 +2,9 @@
 //!
 //! - 网卡列表：遍历 `/sys/class/net`，读取 operstate 和 statistics
 //! - WiFi：通过 `iw dev wlan0 link` 解析连接信息
-//! - 蓝牙：读取 `/sys/class/bluetooth/hci0` 基本信息
+//! - 蓝牙：bluetoothctl（BlueZ）读取适配器开关与设备列表，不可用时退回 hciconfig/sysfs
 
-use super::{NetworkInterface, WifiInfo, BluetoothInfo};
+use super::{NetworkInterface, WifiInfo, BluetoothDevice, BluetoothInfo};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -35,6 +35,34 @@ fn iw_cmd() -> String {
 
 fn nmcli_cmd() -> String {
     command_path(&["/usr/bin/nmcli", "/bin/nmcli", "nmcli"])
+}
+
+/// 执行 bluetoothctl 子命令，返回 stdout（不可用/超时返回空串）。
+/// bluetoothctl 依赖 D-Bus，BlueZ 异常时可能挂住，有 timeout 则包 3 秒上限。
+fn bluetoothctl(args: &[&str]) -> String {
+    let bt = command_path(&["/usr/bin/bluetoothctl", "/bin/bluetoothctl", "bluetoothctl"]);
+    let timeout = command_path(&["/usr/bin/timeout", "/bin/timeout"]);
+    let mut cmd = if timeout.is_empty() {
+        let mut c = std::process::Command::new(&bt);
+        c.args(args);
+        c
+    } else {
+        let mut c = std::process::Command::new(timeout);
+        c.arg("3").arg(&bt).args(args);
+        c
+    };
+    cmd.output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
+}
+
+/// 解析 `bluetoothctl devices` 输出行："Device AA:BB:CC:DD:EE:FF 名称"。
+fn parse_bluetooth_device(line: &str) -> Option<(String, String)> {
+    let rest = line.trim().strip_prefix("Device ")?;
+    let mut parts = rest.splitn(2, ' ');
+    let address = parts.next()?.to_string();
+    let name = parts.next().unwrap_or("").trim().to_string();
+    Some((address, name))
 }
 
 /// 采集所有非 loopback 网络接口的信息。
@@ -219,16 +247,77 @@ fn get_wifi_info_from_nmcli() -> Option<WifiInfo> {
     None
 }
 
-/// 获取蓝牙适配器基本信息（设备列表暂未实现）。
+/// 获取蓝牙适配器信息：优先 bluetoothctl（BlueZ 真实开关状态与设备列表），
+/// BlueZ 不可用时退回 hciconfig/sysfs。
 pub fn get_bluetooth_info() -> BluetoothInfo {
-    let powered = fs::read_to_string("/sys/class/bluetooth/hci0/power/runtime_status")
-        .map(|s| s.trim() == "active")
-        .unwrap_or(false);
+    let show = bluetoothctl(&["show"]);
+    if let Some(controller) = show.lines().find(|l| l.trim_start().starts_with("Controller ")) {
+        let powered = extract_field(&show, "Powered")
+            .is_some_and(|v| v.eq_ignore_ascii_case("yes"));
+        let name = extract_field(&show, "Name")
+            .or_else(|| extract_field(&show, "Alias"))
+            .unwrap_or_default();
+        let address = controller.split_whitespace().nth(1).unwrap_or("").to_string();
 
-    let address = fs::read_to_string("/sys/class/bluetooth/hci0/address")
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+        let mut devices: Vec<BluetoothDevice> = Vec::new();
+        for line in bluetoothctl(&["devices", "Paired"]).lines() {
+            if let Some((addr, dev_name)) = parse_bluetooth_device(line) {
+                devices.push(BluetoothDevice {
+                    address: addr,
+                    name: dev_name,
+                    paired: true,
+                    connected: false,
+                });
+            }
+        }
+        for line in bluetoothctl(&["devices", "Connected"]).lines() {
+            if let Some((addr, dev_name)) = parse_bluetooth_device(line) {
+                match devices.iter_mut().find(|d| d.address == addr) {
+                    Some(d) => d.connected = true,
+                    None => devices.push(BluetoothDevice {
+                        address: addr,
+                        name: dev_name,
+                        paired: false,
+                        connected: true,
+                    }),
+                }
+            }
+        }
+
+        return BluetoothInfo {
+            powered,
+            address,
+            name,
+            devices,
+        };
+    }
+    get_bluetooth_info_fallback()
+}
+
+/// 兜底：bluetoothctl（BlueZ）不可用时，用 hciconfig 判断适配器是否 UP，
+/// 地址从 hciconfig 或 sysfs 读取。
+fn get_bluetooth_info_fallback() -> BluetoothInfo {
+    let output = std::process::Command::new(command_path(&[
+        "/usr/bin/hciconfig",
+        "/bin/hciconfig",
+        "hciconfig",
+    ]))
+    .arg("hci0")
+    .output()
+    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    .unwrap_or_default();
+
+    let powered = output
+        .lines()
+        .any(|l| l.split_whitespace().next() == Some("UP"));
+    let address = extract_field(&output, "BD Address")
+        .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
+        .or_else(|| {
+            fs::read_to_string("/sys/class/bluetooth/hci0/address")
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_default();
 
     BluetoothInfo {
         powered,
