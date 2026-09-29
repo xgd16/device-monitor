@@ -1272,6 +1272,9 @@ fn spawn_system_poller(w: Weak<App>) {
                     if let Ok(v) = fetch_json(&format!("{BASE}/network/wifi")) {
                         apply_wifi(&w, &v);
                     }
+                    if let Ok(v) = fetch_json(&format!("{BASE}/network/bluetooth")) {
+                        apply_bluetooth(&w, &v);
+                    }
                 }
                 if it.is_multiple_of(15) {
                     apply_services(&w);
@@ -1641,6 +1644,27 @@ fn apply_wifi(w: &Weak<App>, v: &Value) {
         sys.set_wifi_signal(signal as i32);
         sys.set_wifi_signal_str(if connected { format!("{signal} dBm").into() } else { "--".into() });
         sys.set_wifi_detail(detail.into());
+    })
+    .ok();
+}
+
+fn apply_bluetooth(w: &Weak<App>, v: &Value) {
+    let powered = jb(v, "powered");
+    let mut connected = 0;
+    if let Some(devs) = v.get("devices").and_then(Value::as_array) {
+        connected = devs.iter().filter(|d| jb(d, "connected")).count();
+    }
+    let text = if powered {
+        if connected > 0 {
+            format!("蓝牙 开 · {connected} 台连接")
+        } else {
+            "蓝牙 开".to_string()
+        }
+    } else {
+        "蓝牙 关".to_string()
+    };
+    w.upgrade_in_event_loop(move |ui| {
+        ui.global::<Sys>().set_bt(text.into());
     })
     .ok();
 }
@@ -2170,6 +2194,9 @@ fn spawn_demo(w: Weak<App>) {
                                         "total_mb": 96_000, "fstype": "ext4", "inode_percent": 4.1}]));
                 apply_wifi(&w, &json!({"connected": true, "ssid": "Home-5G", "signal_dbm": -52,
                                        "band": "5GHz", "channel": 44, "bitrate": "866.7 Mbit/s"}));
+                apply_bluetooth(&w, &json!({"powered": true, "devices": [
+                    {"address": "AA:BB:CC:DD:EE:FF", "name": "小米手环", "paired": true, "connected": true},
+                ]}));
                 apply_process(&w, &json!([
                     {"pid": 812, "name": "xtokenhub", "cpu_usage": 23.4, "memory_mb": 412},
                     {"pid": 331, "name": "mihomo", "cpu_usage": 8.1, "memory_mb": 188},
