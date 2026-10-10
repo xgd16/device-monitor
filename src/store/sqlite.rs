@@ -5,8 +5,8 @@
 //! - `alerts`：告警引擎产生的告警记录
 
 use rusqlite::{Connection, params};
-use std::sync::Mutex;
 use serde_json::Value;
+use std::sync::Mutex;
 
 /// 线程安全的 SQLite 数据库封装（内部 Mutex 保护 Connection）。
 pub struct Database {
@@ -38,7 +38,7 @@ impl Database {
                 message TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(timestamp);
-            "
+            ",
         )?;
 
         Ok(Self { conn: Mutex::new(conn) })
@@ -68,20 +68,21 @@ impl Database {
     /// 查询最近 N 条告警，按 id 降序。
     pub fn get_alerts(&self, limit: usize) -> Result<Vec<Value>, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, timestamp, level, title, message FROM alerts ORDER BY id DESC LIMIT ?1"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, timestamp, level, title, message FROM alerts ORDER BY id DESC LIMIT ?1")?;
 
         let limit_i64 = limit as i64;
-        let rows = stmt.query_map(params![limit_i64], |row| {
-            Ok(serde_json::json!({
-                "id": row.get::<_, i64>(0)?,
-                "timestamp": row.get::<_, i64>(1)?,
-                "level": row.get::<_, String>(2)?,
-                "title": row.get::<_, String>(3)?,
-                "message": row.get::<_, String>(4)?,
-            }))
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let rows = stmt
+            .query_map(params![limit_i64], |row| {
+                Ok(serde_json::json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "timestamp": row.get::<_, i64>(1)?,
+                    "level": row.get::<_, String>(2)?,
+                    "title": row.get::<_, String>(3)?,
+                    "message": row.get::<_, String>(4)?,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(rows)
     }
@@ -92,43 +93,31 @@ impl Database {
     pub fn cleanup_old_data(&self, days: i64) -> Result<(usize, usize), rusqlite::Error> {
         let cutoff = chrono::Utc::now().timestamp() - (days * 24 * 3600);
         let conn = self.conn.lock().unwrap();
-        
-        let metrics_deleted = conn.execute(
-            "DELETE FROM metrics WHERE timestamp < ?1",
-            params![cutoff],
-        )?;
-        
-        let alerts_deleted = conn.execute(
-            "DELETE FROM alerts WHERE timestamp < ?1",
-            params![cutoff],
-        )?;
-        
+
+        let metrics_deleted = conn.execute("DELETE FROM metrics WHERE timestamp < ?1", params![cutoff])?;
+
+        let alerts_deleted = conn.execute("DELETE FROM alerts WHERE timestamp < ?1", params![cutoff])?;
+
         conn.execute_batch("VACUUM;")?;
         // VACUUM 在 WAL 模式下把整库重写进 WAL，再 checkpoint 一次让 -wal 回落。
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-        
+
         Ok((metrics_deleted, alerts_deleted))
     }
 
     /// 获取数据库统计信息（记录数、时间范围等）。
     pub fn get_stats(&self, retention_days: i64) -> Result<Value, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
-        
-        let metrics_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM metrics", [], |row| row.get(0)
-        )?;
-        
-        let alerts_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM alerts", [], |row| row.get(0)
-        )?;
-        
-        let oldest_metric: Option<i64> = conn.query_row(
-            "SELECT MIN(timestamp) FROM metrics", [], |row| row.get(0)
-        ).ok();
-        
-        let newest_metric: Option<i64> = conn.query_row(
-            "SELECT MAX(timestamp) FROM metrics", [], |row| row.get(0)
-        ).ok();
+
+        let metrics_count: i64 = conn.query_row("SELECT COUNT(*) FROM metrics", [], |row| row.get(0))?;
+
+        let alerts_count: i64 = conn.query_row("SELECT COUNT(*) FROM alerts", [], |row| row.get(0))?;
+
+        let oldest_metric: Option<i64> =
+            conn.query_row("SELECT MIN(timestamp) FROM metrics", [], |row| row.get(0)).ok();
+
+        let newest_metric: Option<i64> =
+            conn.query_row("SELECT MAX(timestamp) FROM metrics", [], |row| row.get(0)).ok();
 
         Ok(serde_json::json!({
             "metrics_count": metrics_count,
@@ -168,9 +157,7 @@ impl Database {
         )?;
 
         let rows: Vec<(i64, String)> = stmt
-            .query_map(params![from_ts, to_ts, bucket], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })?
+            .query_map(params![from_ts, to_ts, bucket], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(downsample_pairs(rows, max_points))
@@ -185,11 +172,7 @@ fn downsample_pairs(rows: Vec<(i64, String)>, max_points: usize) -> Vec<(i64, St
     let last = rows.len() - 1;
     let mut out = Vec::with_capacity(max_points);
     for i in 0..max_points {
-        let idx = if max_points == 1 {
-            0
-        } else {
-            (i as f64 * last as f64 / (max_points - 1) as f64).round() as usize
-        };
+        let idx = if max_points == 1 { 0 } else { (i as f64 * last as f64 / (max_points - 1) as f64).round() as usize };
         if out.last().map(|(ts, _)| *ts) != Some(rows[idx].0) {
             out.push(rows[idx].clone());
         }

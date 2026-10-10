@@ -5,11 +5,11 @@
 
 pub mod terminal;
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use crate::AppState;
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use crate::AppState;
 
 static WS_CLIENTS: AtomicUsize = AtomicUsize::new(0);
 

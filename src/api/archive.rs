@@ -3,7 +3,7 @@
 //! 支持 zip（纯 Rust）、7z（sevenz-rust）、rar（依赖系统 unrar/7z/rar 命令）。
 
 use std::fs::{self, File};
-use std::io::{copy, BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, copy};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -90,11 +90,7 @@ fn collect_files(base: &Path, root_name: &str, out: &mut Vec<(PathBuf, String)>)
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        let archive_name = if root_name.is_empty() {
-            name.clone()
-        } else {
-            format!("{root_name}/{name}")
-        };
+        let archive_name = if root_name.is_empty() { name.clone() } else { format!("{root_name}/{name}") };
         collect_files(&path, &archive_name, out)?;
     }
     Ok(())
@@ -124,26 +120,21 @@ pub fn compress(paths: &[PathBuf], output: &Path, format: ArchiveFormat) -> Resu
 }
 
 fn compress_zip(paths: &[PathBuf], output: &Path) -> Result<u64, String> {
-    use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
 
     let file = File::create(output).map_err(|e| e.to_string())?;
     let mut zip = ZipWriter::new(BufWriter::new(file));
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     let mut items: Vec<(PathBuf, String)> = Vec::new();
     for path in paths {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "item".into());
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "item".into());
         collect_files(path, &name, &mut items)?;
     }
 
     for (fs_path, archive_name) in &items {
-        zip.start_file(archive_name, options)
-            .map_err(|e| format!("zip start_file: {e}"))?;
+        zip.start_file(archive_name, options).map_err(|e| format!("zip start_file: {e}"))?;
         let mut f = File::open(fs_path).map_err(|e| e.to_string())?;
         copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
     }
@@ -159,21 +150,14 @@ fn compress_7z(paths: &[PathBuf], output: &Path) -> Result<u64, String> {
     let mut writer = SevenZWriter::new(file).map_err(|e| format!("7z writer: {e}"))?;
 
     for path in paths {
-        let entry_name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "item".into());
+        let entry_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "item".into());
 
         if path.is_dir() {
-            writer
-                .push_source_path_non_solid(path, |_| true)
-                .map_err(|e| format!("7z add dir: {e}"))?;
+            writer.push_source_path_non_solid(path, |_| true).map_err(|e| format!("7z add dir: {e}"))?;
         } else {
             let entry = SevenZArchiveEntry::from_path(path, entry_name);
             let src = File::open(path).map_err(|e| e.to_string())?;
-            writer
-                .push_archive_entry(entry, Some(src))
-                .map_err(|e| format!("7z add file: {e}"))?;
+            writer.push_archive_entry(entry, Some(src)).map_err(|e| format!("7z add file: {e}"))?;
         }
     }
 
@@ -328,11 +312,7 @@ fn find_command(candidates: &[&str]) -> Option<String> {
             if Path::new(name).is_file() {
                 return Some(name.to_string());
             }
-        } else if Command::new(name)
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        } else if Command::new(name).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
             || Command::new(name).output().is_ok()
         {
             return Some(name.to_string());

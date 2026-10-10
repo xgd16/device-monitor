@@ -21,10 +21,7 @@ pub fn collect() -> MemoryInfo {
     for line in info.lines() {
         let mut parts = line.split_whitespace();
         let Some(key) = parts.next() else { continue };
-        let value = parts
-            .next()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
+        let value = parts.next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
 
         match key {
             "MemTotal:" => total = value,

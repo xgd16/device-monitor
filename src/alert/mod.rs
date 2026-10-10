@@ -3,10 +3,10 @@
 //! 在每次系统采集后检查 CPU 温度、内存使用率、电池电量是否超过阈值，
 //! 触发告警写入 SQLite。同类告警有 300 秒冷却期，避免重复刷屏。
 
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use crate::collector::SystemOverview;
 use crate::store::Database;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// 告警阈值配置（可通过 API 读取/更新，当前更新尚未持久化）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,7 +78,10 @@ impl AlertEngine {
                 let _ = self.db.store_alert(
                     "warning",
                     "CPU 温度过高",
-                    &format!("当前最高温度: {:.1}°C (阈值: {:.1}°C)", max_temp, self.config.cpu_temp_threshold),
+                    &format!(
+                        "当前最高温度: {:.1}°C (阈值: {:.1}°C)",
+                        max_temp, self.config.cpu_temp_threshold
+                    ),
                 );
                 self.last_cpu_alert = now;
             }
@@ -89,7 +92,10 @@ impl AlertEngine {
             let _ = self.db.store_alert(
                 "warning",
                 "内存使用率过高",
-                &format!("当前使用: {:.1}% (阈值: {:.1}%)", data.memory.usage_percent, self.config.memory_threshold),
+                &format!(
+                    "当前使用: {:.1}% (阈值: {:.1}%)",
+                    data.memory.usage_percent, self.config.memory_threshold
+                ),
             );
             self.last_mem_alert = now;
         }
@@ -99,8 +105,7 @@ impl AlertEngine {
         // 旧写法是「低于阈值就每 300s 报一次」，实测在电量卡在 1% 的那一小时里
         // 连报了 13 条一字不差的信息（数据库里同类告警累计 91 条），纯噪音；
         // 而用户恰好是在手机已经撑不住的时候最不需要被刷屏。
-        let low = data.battery.capacity <= self.config.battery_low_threshold
-            && data.battery.status != "Charging";
+        let low = data.battery.capacity <= self.config.battery_low_threshold && data.battery.status != "Charging";
         if low {
             let first = self.last_bat_level == 0;
             let dropped = !first && data.battery.capacity + 5 <= self.last_bat_level;
@@ -124,9 +129,7 @@ impl AlertEngine {
         }
 
         // 电池温度过高（充电时发热最凶，与 CPU 温度分开看）
-        if data.battery.temp_celsius >= self.config.battery_temp_threshold
-            && now - self.last_bat_temp_alert > 300
-        {
+        if data.battery.temp_celsius >= self.config.battery_temp_threshold && now - self.last_bat_temp_alert > 300 {
             let _ = self.db.store_alert(
                 "warning",
                 "电池温度过高",
@@ -142,11 +145,7 @@ impl AlertEngine {
 
         // XTokenHub 不可用
         if !data.xtokenhub.available && now - self.last_xth_alert > 300 {
-            let _ = self.db.store_alert(
-                "warning",
-                "XTokenHub 不可用",
-                &format!("错误: {}", data.xtokenhub.error),
-            );
+            let _ = self.db.store_alert("warning", "XTokenHub 不可用", &format!("错误: {}", data.xtokenhub.error));
             self.last_xth_alert = now;
         }
     }

@@ -17,11 +17,7 @@ pub fn collect() -> Vec<ThermalZone> {
 
         if let (Ok(name), Ok(temp_str)) = (fs::read_to_string(&type_path), fs::read_to_string(&temp_path)) {
             if let Ok(temp_raw) = temp_str.trim().parse::<f64>() {
-                zones.push(ThermalZone {
-                    id: i,
-                    name: name.trim().to_string(),
-                    temp_celsius: temp_raw / 1000.0,
-                });
+                zones.push(ThermalZone { id: i, name: name.trim().to_string(), temp_celsius: temp_raw / 1000.0 });
             }
         }
     }

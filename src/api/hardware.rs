@@ -3,11 +3,11 @@
 //! 提供手电筒、屏幕亮度、背光、振动、内存清理等控制接口。
 //! 底层通过 collector::hardware 读写 sysfs 节点。
 
+use super::{error, success};
+use crate::collector;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::Value;
-use crate::collector;
-use super::{success, error};
 
 /// `GET /api/hardware` — 读取当前硬件状态。
 pub async fn hardware_state() -> Json<Value> {
@@ -220,12 +220,12 @@ pub async fn speaker_test() -> Json<Value> {
 /// 执行 sync + echo 3 > /proc/sys/vm/drop_caches，返回清理前后内存对比。
 pub async fn clear_memory() -> Json<Value> {
     let before = read_mem_info();
-    
+
     let sync_ok = std::process::Command::new("sync").status().map(|s| s.success()).unwrap_or(false);
     let drop_ok = std::fs::write("/proc/sys/vm/drop_caches", "3").is_ok();
-    
+
     let after = read_mem_info();
-    
+
     if sync_ok && drop_ok {
         success(serde_json::json!({
             "freed_mb": after.0.saturating_sub(before.0),

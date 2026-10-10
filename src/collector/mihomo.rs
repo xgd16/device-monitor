@@ -14,10 +14,7 @@ const DEFAULT_CONTROLLER: &str = "http://192.168.1.110:9090";
 const SUBSCRIPTION_LAST_UPDATE_PATH: &str = "/etc/mihomo/.last_subscription_update";
 
 pub fn subscription_last_update() -> i64 {
-    std::fs::read_to_string(SUBSCRIPTION_LAST_UPDATE_PATH)
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0)
+    std::fs::read_to_string(SUBSCRIPTION_LAST_UPDATE_PATH).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
 }
 
 pub fn collect() -> MihomoInfo {
@@ -32,12 +29,7 @@ pub fn collect() -> MihomoInfo {
             info.controller = controller;
             info
         }
-        Err(e) => MihomoInfo {
-            available: false,
-            controller,
-            error: e,
-            ..Default::default()
-        },
+        Err(e) => MihomoInfo { available: false, controller, error: e, ..Default::default() },
     }
 }
 
@@ -59,27 +51,13 @@ fn collect_inner(controller: &str) -> Result<MihomoInfo, String> {
         controller: controller.to_string(),
         version: str_field(&version, "version"),
         mode: str_field(&configs, "mode"),
-        tun_enabled: configs
-            .get("tun")
-            .and_then(|tun| tun.get("enable"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        tun_enabled: configs.get("tun").and_then(|tun| tun.get("enable")).and_then(Value::as_bool).unwrap_or(false),
         active_group,
         active_proxy,
         proxy_chain,
-        connection_count: connections
-            .get("connections")
-            .and_then(Value::as_array)
-            .map(Vec::len)
-            .unwrap_or(0),
-        upload_total: connections
-            .get("uploadTotal")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        download_total: connections
-            .get("downloadTotal")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        connection_count: connections.get("connections").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+        upload_total: connections.get("uploadTotal").and_then(Value::as_u64).unwrap_or(0),
+        download_total: connections.get("downloadTotal").and_then(Value::as_u64).unwrap_or(0),
         subscription_last_update: subscription_last_update(),
         error: String::new(),
     })
@@ -87,9 +65,10 @@ fn collect_inner(controller: &str) -> Result<MihomoInfo, String> {
 
 fn resolve_active_proxy(proxy_map: &serde_json::Map<String, Value>) -> (String, String, Vec<String>) {
     // 优先找实际流量经过的组（Proxy → 故障转移/Fallback → URLTest/Auto → GLOBAL）
-    let priority = ["故障转移", "Fallback", "Proxy", "自动选择", "Auto",
-                    "auto-select", "🚀 节点选择", "节点选择", "GLOBAL"];
-    let start = priority.iter()
+    let priority =
+        ["故障转移", "Fallback", "Proxy", "自动选择", "Auto", "auto-select", "🚀 节点选择", "节点选择", "GLOBAL"];
+    let start = priority
+        .iter()
         .find(|name| proxy_map.contains_key(**name))
         .map(|name| (*name).to_string())
         .or_else(|| proxy_map.keys().find(|name| is_selector(proxy_map.get(*name))).cloned())
@@ -126,32 +105,19 @@ fn resolve_active_proxy(proxy_map: &serde_json::Map<String, Value>) -> (String, 
 }
 
 fn is_selector(proxy: Option<&Value>) -> bool {
-    proxy
-        .and_then(|p| p.get("all"))
-        .and_then(Value::as_array)
-        .is_some()
+    proxy.and_then(|p| p.get("all")).and_then(Value::as_array).is_some()
 }
 
 fn str_field(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
+    value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
 }
 
 fn get_json(controller: &str, path: &str) -> Result<Value, String> {
     let (host, port, base_path) = parse_http_url(controller)?;
-    let full_path = if base_path == "/" {
-        path.to_string()
-    } else {
-        format!("{}{}", base_path, path)
-    };
+    let full_path = if base_path == "/" { path.to_string() } else { format!("{}{}", base_path, path) };
     let mut stream = TcpStream::connect((host.as_str(), port))
         .map_err(|e| format!("connect mihomo {}:{} failed: {}", host, port, e))?;
-    stream
-        .set_read_timeout(Some(Duration::from_millis(900)))
-        .map_err(|e| format!("set read timeout failed: {}", e))?;
+    stream.set_read_timeout(Some(Duration::from_millis(900))).map_err(|e| format!("set read timeout failed: {}", e))?;
     stream
         .set_write_timeout(Some(Duration::from_millis(900)))
         .map_err(|e| format!("set write timeout failed: {}", e))?;
@@ -160,18 +126,12 @@ fn get_json(controller: &str, path: &str) -> Result<Value, String> {
         "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
         full_path, host
     );
-    stream
-        .write_all(req.as_bytes())
-        .map_err(|e| format!("request mihomo {} failed: {}", path, e))?;
+    stream.write_all(req.as_bytes()).map_err(|e| format!("request mihomo {} failed: {}", path, e))?;
 
     let mut resp = String::new();
-    stream
-        .read_to_string(&mut resp)
-        .map_err(|e| format!("read mihomo {} failed: {}", path, e))?;
+    stream.read_to_string(&mut resp).map_err(|e| format!("read mihomo {} failed: {}", path, e))?;
 
-    let (head, body) = resp
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| format!("invalid mihomo response for {}", path))?;
+    let (head, body) = resp.split_once("\r\n\r\n").ok_or_else(|| format!("invalid mihomo response for {}", path))?;
     if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
         return Err(format!("mihomo {} returned {}", path, head.lines().next().unwrap_or("")));
     }
@@ -191,13 +151,11 @@ fn decode_chunked_body(body: &str) -> Result<String, String> {
     let mut decoded = Vec::new();
 
     loop {
-        let line_end = find_crlf(bytes, pos)
-            .ok_or_else(|| "invalid chunked mihomo response".to_string())?;
-        let size_line = std::str::from_utf8(&bytes[pos..line_end])
-            .map_err(|e| format!("invalid chunk size encoding: {}", e))?;
+        let line_end = find_crlf(bytes, pos).ok_or_else(|| "invalid chunked mihomo response".to_string())?;
+        let size_line =
+            std::str::from_utf8(&bytes[pos..line_end]).map_err(|e| format!("invalid chunk size encoding: {}", e))?;
         let size_hex = size_line.split(';').next().unwrap_or(size_line).trim();
-        let size = usize::from_str_radix(size_hex, 16)
-            .map_err(|_| format!("invalid chunk size: {}", size_hex))?;
+        let size = usize::from_str_radix(size_hex, 16).map_err(|_| format!("invalid chunk size: {}", size_hex))?;
         pos = line_end + 2;
 
         if size == 0 {
@@ -219,22 +177,14 @@ fn decode_chunked_body(body: &str) -> Result<String, String> {
 }
 
 fn find_crlf(bytes: &[u8], from: usize) -> Option<usize> {
-    bytes
-        .get(from..)?
-        .windows(2)
-        .position(|w| w == b"\r\n")
-        .map(|idx| from + idx)
+    bytes.get(from..)?.windows(2).position(|w| w == b"\r\n").map(|idx| from + idx)
 }
 
 fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or_else(|| "MIHOMO_CONTROLLER only supports http:// URLs".to_string())?;
+    let rest = url.strip_prefix("http://").ok_or_else(|| "MIHOMO_CONTROLLER only supports http:// URLs".to_string())?;
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
     let (host, port) = if let Some((host, port)) = authority.split_once(':') {
-        let port = port
-            .parse::<u16>()
-            .map_err(|_| format!("invalid mihomo port: {}", port))?;
+        let port = port.parse::<u16>().map_err(|_| format!("invalid mihomo port: {}", port))?;
         (host.to_string(), port)
     } else {
         (authority.to_string(), 80)

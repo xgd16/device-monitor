@@ -4,10 +4,10 @@
 //!
 //! 数据来源：`df -B1 -T`、/proc/diskstats、/sys/block/*/device。
 
-use axum::Json;
-use serde_json::{json, Value};
-use crate::collector::disk;
 use super::success;
+use crate::collector::disk;
+use axum::Json;
+use serde_json::{Value, json};
 
 pub async fn disk_info() -> Json<Value> {
     let mut disks = Vec::new();
@@ -16,7 +16,9 @@ pub async fn disk_info() -> Json<Value> {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines().skip(1) {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 7 { continue; }
+            if parts.len() < 7 {
+                continue;
+            }
             let device = parts[0];
             let fstype = parts[1];
             let total: u64 = parts[2].parse().unwrap_or(0);
@@ -24,7 +26,9 @@ pub async fn disk_info() -> Json<Value> {
             let available: u64 = parts[4].parse().unwrap_or(0);
             let mount = parts[6];
 
-            if !device.starts_with("/dev/") { continue; }
+            if !device.starts_with("/dev/") {
+                continue;
+            }
 
             let usage = if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 };
 

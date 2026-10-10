@@ -3,12 +3,12 @@
 //! - `GET /api/database/stats` — 数据库统计信息
 //! - `POST /api/database/cleanup` — 手动触发历史数据清理
 
-use axum::extract::State;
-use axum::Json;
-use serde_json::{json, Value};
-use crate::store;
+use super::{error, success};
 use crate::AppState;
-use super::{success, error};
+use crate::store;
+use axum::Json;
+use axum::extract::State;
+use serde_json::{Value, json};
 
 /// 获取 metrics/alerts 记录数及时间范围。
 pub async fn get_stats(State(state): State<AppState>) -> Json<Value> {
@@ -22,14 +22,12 @@ pub async fn get_stats(State(state): State<AppState>) -> Json<Value> {
 pub async fn cleanup(State(state): State<AppState>) -> Json<Value> {
     let days = store::retention_days();
     match state.db.cleanup_old_data(days) {
-        Ok((metrics_deleted, alerts_deleted)) => {
-            success(json!({
-                "metrics_deleted": metrics_deleted,
-                "alerts_deleted": alerts_deleted,
-                "retention_days": days,
-                "message": format!("清理完成: 删除了 {} 条指标记录, {} 条告警记录", metrics_deleted, alerts_deleted)
-            }))
-        }
+        Ok((metrics_deleted, alerts_deleted)) => success(json!({
+            "metrics_deleted": metrics_deleted,
+            "alerts_deleted": alerts_deleted,
+            "retention_days": days,
+            "message": format!("清理完成: 删除了 {} 条指标记录, {} 条告警记录", metrics_deleted, alerts_deleted)
+        })),
         Err(e) => error(&format!("数据清理失败: {}", e)),
     }
 }

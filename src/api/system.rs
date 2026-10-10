@@ -6,13 +6,13 @@
 //! - `GET/POST /api/system/rotation` — DRM 屏横向朝向（面板竖装，横放有两个朝向），
 //!   真机上也可以双击音量上加翻转
 
+use super::{error, success};
+use crate::AppState;
+use crate::store;
 use axum::Json;
 use axum::extract::State;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
-use crate::store;
-use crate::AppState;
-use super::{success, error};
 
 /// 返回后台采集任务维护的最新系统概览，避免每次 HTTP 请求重复采集。
 pub async fn overview(State(state): State<AppState>) -> Json<Value> {

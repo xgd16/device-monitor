@@ -113,12 +113,10 @@ pub fn start_listener() {
             let mut file = file;
 
             // 同步初始屏幕状态
-            let bl_power: u32 = std::fs::read_to_string(
-                "/sys/class/backlight/ae94000.dsi.0/bl_power",
-            )
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
+            let bl_power: u32 = std::fs::read_to_string("/sys/class/backlight/ae94000.dsi.0/bl_power")
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0);
             SCREEN_ON.store(bl_power == 0, Ordering::Relaxed);
 
             // 双击检测状态
@@ -139,10 +137,7 @@ pub fn start_listener() {
                 match file.read_exact(&mut buf) {
                     Ok(()) => {
                         let ev: InputEvent = unsafe { mem::transmute(buf) };
-                        if ev.ev_type == EV_KEY
-                            && ev.ev_code == KEY_POWER
-                            && ev.ev_value == 1
-                        {
+                        if ev.ev_type == EV_KEY && ev.ev_code == KEY_POWER && ev.ev_value == 1 {
                             // 电源键按下
                             let now = Instant::now();
 

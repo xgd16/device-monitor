@@ -7,13 +7,13 @@
 //! - `POST /api/cpu/low-power` — 设置低频省电模式。
 //! - `POST /api/cpu/normal` — 恢复正常模式。
 
+use super::{error, success};
+use crate::AppState;
+use crate::collector;
 use axum::Json;
 use axum::extract::State;
 use serde::Deserialize;
 use serde_json::Value;
-use crate::AppState;
-use crate::collector;
-use super::{success, error};
 
 /// GET /api/cpu
 ///
@@ -74,7 +74,7 @@ pub async fn set_low_power_mode(Json(req): Json<SetFrequencyRequest>) -> Json<Va
     } else {
         collector::cpu::set_low_power_mode()
     };
-    
+
     match result {
         Ok(governor) => success(serde_json::json!({
             "message": "已切换到低频省电模式",

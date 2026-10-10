@@ -65,18 +65,10 @@ pub fn collect() -> CpuInfo {
             online_total += d_total;
         }
         let usage = calc_core_usage(&mut state, idx, idle, total);
-        cores.push(CpuCore {
-            id: idx,
-            usage,
-            frequency_mhz: freq,
-        });
+        cores.push(CpuCore { id: idx, usage, frequency_mhz: freq });
     }
 
-    let online_usage = if online_total > 0 {
-        (online_busy as f32 / online_total as f32) * 100.0
-    } else {
-        0.0
-    };
+    let online_usage = if online_total > 0 { (online_busy as f32 / online_total as f32) * 100.0 } else { 0.0 };
 
     // 等效繁忙核心数：把「在线核心的平均使用率」还原成绝对负载，
     // 与在线核数无关。大核上线后分母从 4 变 8，使用率会腰斩，
@@ -89,25 +81,14 @@ pub fn collect() -> CpuInfo {
         0.0
     };
 
-    CpuInfo {
-        overall_usage,
-        online_usage,
-        online_cores: n_online,
-        busy_cores,
-        cores,
-    }
+    CpuInfo { overall_usage, online_usage, online_cores: n_online, busy_cores, cores }
 }
 
 /// 解析 `/proc/stat` 一行，返回 (idle+jiffies, total_jiffies)。
 fn parse_cpu_line(line: &str) -> (u64, u64) {
     let mut idle = 0;
     let mut total = 0;
-    for (idx, value) in line
-        .split_whitespace()
-        .skip(1)
-        .filter_map(|s| s.parse::<u64>().ok())
-        .enumerate()
-    {
+    for (idx, value) in line.split_whitespace().skip(1).filter_map(|s| s.parse::<u64>().ok()).enumerate() {
         if idx == 3 || idx == 4 {
             idle += value;
         }
@@ -145,10 +126,7 @@ fn read_frequencies() -> Vec<u64> {
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             let idx = name.strip_prefix("cpu")?.parse::<usize>().ok()?;
-            let path = format!(
-                "/sys/devices/system/cpu/{}/cpufreq/scaling_cur_freq",
-                name
-            );
+            let path = format!("/sys/devices/system/cpu/{}/cpufreq/scaling_cur_freq", name);
             fs::read_to_string(&path)
                 .ok()
                 .and_then(|s| s.trim().parse::<u64>().ok())
@@ -195,39 +173,28 @@ pub fn get_governor() -> CpuGovernor {
         .to_string();
 
     // 读取可用的 governor
-    let available_str = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors")
-        .unwrap_or_default();
-    let available: Vec<String> = available_str
-        .trim()
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect();
+    let available_str =
+        fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors").unwrap_or_default();
+    let available: Vec<String> = available_str.trim().split_whitespace().map(|s| s.to_string()).collect();
 
     // 读取各核心的 governor
     let mut per_core = Vec::new();
     for i in 0..8 {
         let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_governor", i);
         if let Ok(gov) = fs::read_to_string(&path) {
-            per_core.push(CoreGovernor {
-                core_id: i,
-                governor: gov.trim().to_string(),
-            });
+            per_core.push(CoreGovernor { core_id: i, governor: gov.trim().to_string() });
         }
     }
 
-    CpuGovernor {
-        current,
-        available,
-        per_core,
-    }
+    CpuGovernor { current, available, per_core }
 }
 
 /// 设置 CPU governor
 /// 对所有核心设置相同的 governor
 pub fn set_governor(governor: &str) -> Result<(), String> {
     // 先验证 governor 是否可用
-    let available_str = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors")
-        .unwrap_or_default();
+    let available_str =
+        fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors").unwrap_or_default();
     let available: Vec<&str> = available_str.trim().split_whitespace().collect();
 
     if !available.contains(&governor) {
@@ -245,11 +212,7 @@ pub fn set_governor(governor: &str) -> Result<(), String> {
         }
     }
 
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("部分核心设置失败: {}", errors.join(", ")))
-    }
+    if errors.is_empty() { Ok(()) } else { Err(format!("部分核心设置失败: {}", errors.join(", "))) }
 }
 
 /// CPU 频率信息
@@ -274,54 +237,40 @@ pub fn get_frequency() -> CpuFrequency {
         .trim()
         .parse::<u64>()
         .unwrap_or(0);
-    
+
     let max_freq = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq")
         .unwrap_or_default()
         .trim()
         .parse::<u64>()
         .unwrap_or(0);
-    
+
     let hw_min_freq = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")
         .unwrap_or_default()
         .trim()
         .parse::<u64>()
         .unwrap_or(0);
-    
+
     let hw_max_freq = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
         .unwrap_or_default()
         .trim()
         .parse::<u64>()
         .unwrap_or(0);
-    
-    let freqs_str = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies")
-        .unwrap_or_default();
-    let available_freqs: Vec<u64> = freqs_str
-        .trim()
-        .split_whitespace()
-        .filter_map(|s| s.parse().ok())
-        .collect();
 
-    CpuFrequency {
-        min_freq,
-        max_freq,
-        hw_min_freq,
-        hw_max_freq,
-        available_freqs,
-    }
+    let freqs_str =
+        fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies").unwrap_or_default();
+    let available_freqs: Vec<u64> = freqs_str.trim().split_whitespace().filter_map(|s| s.parse().ok()).collect();
+
+    CpuFrequency { min_freq, max_freq, hw_min_freq, hw_max_freq, available_freqs }
 }
 
 /// 设置 CPU 最大频率限制
 /// 通过 userspace governor + 设置频率实现低频模式
 pub fn set_max_frequency_limit(max_freq_khz: u64) -> Result<CpuGovernor, String> {
     // 验证频率是否可用
-    let freqs_str = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies")
-        .unwrap_or_default();
-    let available_freqs: Vec<u64> = freqs_str
-        .trim()
-        .split_whitespace()
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    
+    let freqs_str =
+        fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies").unwrap_or_default();
+    let available_freqs: Vec<u64> = freqs_str.trim().split_whitespace().filter_map(|s| s.parse().ok()).collect();
+
     if !available_freqs.contains(&max_freq_khz) {
         return Err(format!("频率 {} kHz 不可用。可用频率: {:?}", max_freq_khz, available_freqs));
     }

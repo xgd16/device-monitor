@@ -4,12 +4,12 @@
 //! - `GET /api/process/{pid}` — 进程详情
 //! - `POST /api/process/{pid}/kill` — 发送信号终止进程
 
+use super::{error, success};
+use crate::collector;
 use axum::Json;
 use axum::extract::Path;
 use serde::Deserialize;
 use serde_json::Value;
-use crate::collector;
-use super::{success, error};
 
 pub async fn process_list() -> Json<Value> {
     let data = collector::process::list_processes();
@@ -29,10 +29,7 @@ pub struct KillParams {
     pub signal: Option<String>,
 }
 
-pub async fn process_kill(
-    Path(pid): Path<i32>,
-    Json(params): Json<KillParams>,
-) -> Json<Value> {
+pub async fn process_kill(Path(pid): Path<i32>, Json(params): Json<KillParams>) -> Json<Value> {
     let sig = params.signal.as_deref().unwrap_or("TERM");
     let signal_arg = match sig {
         "TERM" => "-TERM",
@@ -45,11 +42,7 @@ pub async fn process_kill(
         _ => return error("Unsupported signal"),
     };
 
-    match std::process::Command::new("kill")
-        .arg(signal_arg)
-        .arg(pid.to_string())
-        .output()
-    {
+    match std::process::Command::new("kill").arg(signal_arg).arg(pid.to_string()).output() {
         Ok(output) => {
             if output.status.success() {
                 success(serde_json::json!({

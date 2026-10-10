@@ -4,7 +4,7 @@
 //! - WiFi：通过 `iw dev wlan0 link` 解析连接信息
 //! - 蓝牙：bluetoothctl（BlueZ）读取适配器开关与设备列表，不可用时退回 hciconfig/sysfs
 
-use super::{NetworkInterface, WifiInfo, BluetoothDevice, BluetoothInfo};
+use super::{BluetoothDevice, BluetoothInfo, NetworkInterface, WifiInfo};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -51,9 +51,7 @@ fn bluetoothctl(args: &[&str]) -> String {
         c.arg("3").arg(&bt).args(args);
         c
     };
-    cmd.output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default()
+    cmd.output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
 }
 
 /// 解析 `bluetoothctl devices` 输出行："Device AA:BB:CC:DD:EE:FF 名称"。
@@ -73,14 +71,13 @@ pub fn collect_interfaces() -> Vec<NetworkInterface> {
     if let Ok(entries) = fs::read_dir(net_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name == "lo" { continue; }
+            if name == "lo" {
+                continue;
+            }
 
             let base = format!("{}/{}", net_dir, name);
 
-            let operstate = fs::read_to_string(format!("{}/operstate", base))
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+            let operstate = fs::read_to_string(format!("{}/operstate", base)).unwrap_or_default().trim().to_string();
             let is_up = operstate == "up";
 
             let rx_bytes = read_stat(&base, "rx_bytes");
@@ -90,15 +87,7 @@ pub fn collect_interfaces() -> Vec<NetworkInterface> {
 
             let ip_addresses = get_ips(&name);
 
-            interfaces.push(NetworkInterface {
-                name,
-                is_up,
-                ip_addresses,
-                rx_bytes,
-                tx_bytes,
-                rx_packets,
-                tx_packets,
-            });
+            interfaces.push(NetworkInterface { name, is_up, ip_addresses, rx_bytes, tx_bytes, rx_packets, tx_packets });
         }
     }
 
@@ -107,23 +96,14 @@ pub fn collect_interfaces() -> Vec<NetworkInterface> {
 
 /// 读取网卡 statistics 下的累计计数器。
 fn read_stat(base: &str, field: &str) -> u64 {
-    fs::read_to_string(format!("{}/statistics/{}", base, field))
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0)
+    fs::read_to_string(format!("{}/statistics/{}", base, field)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
 }
 
 /// 通过 `ip addr` 获取 IPv4 和 IPv6 地址。
 fn get_ips(iface: &str) -> Vec<String> {
     if let Some(cached) = {
         let cache = IP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        cache.get(iface).and_then(|(ts, ips)| {
-            if ts.elapsed() <= IP_CACHE_TTL {
-                Some(ips.clone())
-            } else {
-                None
-            }
-        })
+        cache.get(iface).and_then(|(ts, ips)| if ts.elapsed() <= IP_CACHE_TTL { Some(ips.clone()) } else { None })
     } {
         return cached;
     }
@@ -131,10 +111,7 @@ fn get_ips(iface: &str) -> Vec<String> {
     let mut ips = Vec::new();
 
     let ip = ip_cmd();
-    if let Ok(output) = std::process::Command::new(&ip)
-        .args(["-f", "inet", "addr", "show", "dev", iface])
-        .output()
-    {
+    if let Ok(output) = std::process::Command::new(&ip).args(["-f", "inet", "addr", "show", "dev", iface]).output() {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
             if line.contains("inet ") {
@@ -145,9 +122,8 @@ fn get_ips(iface: &str) -> Vec<String> {
         }
     }
 
-    if let Ok(output) = std::process::Command::new(&ip)
-        .args(["-f", "inet6", "addr", "show", "dev", iface, "scope", "global"])
-        .output()
+    if let Ok(output) =
+        std::process::Command::new(&ip).args(["-f", "inet6", "addr", "show", "dev", iface, "scope", "global"]).output()
     {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
@@ -179,19 +155,16 @@ pub fn get_wifi_info() -> WifiInfo {
         }
     }
     let ssid = extract_field(&output, "SSID").unwrap_or_default();
-    let signal = extract_field(&output, "signal")
-        .and_then(|s| s.split_whitespace().next()?.parse::<i32>().ok())
-        .unwrap_or(0);
-    let freq = extract_field(&output, "freq")
-        .and_then(|s| s.split('.').next()?.parse::<u64>().ok())
-        .unwrap_or(0);
+    let signal =
+        extract_field(&output, "signal").and_then(|s| s.split_whitespace().next()?.parse::<i32>().ok()).unwrap_or(0);
+    let freq = extract_field(&output, "freq").and_then(|s| s.split('.').next()?.parse::<u64>().ok()).unwrap_or(0);
 
     let (channel, band) = freq_to_channel_band(freq);
 
-    let bitrate = extract_field(&output, "rx bitrate")
-        .or_else(|| extract_field(&output, "tx bitrate"))
-        .unwrap_or_default();
-    let bssid = output.lines()
+    let bitrate =
+        extract_field(&output, "rx bitrate").or_else(|| extract_field(&output, "tx bitrate")).unwrap_or_default();
+    let bssid = output
+        .lines()
         .find(|l| l.contains("Connected to"))
         .and_then(|l| l.split_whitespace().nth(2))
         .unwrap_or("")
@@ -226,11 +199,8 @@ fn get_wifi_info_from_nmcli() -> Option<WifiInfo> {
         let ssid = fields.get(1).copied().unwrap_or("").to_string();
         let bssid = fields.get(2).copied().unwrap_or("").to_string();
         let channel = fields.get(3).and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-        let freq = fields
-            .get(4)
-            .and_then(|v| v.split_whitespace().next())
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
+        let freq =
+            fields.get(4).and_then(|v| v.split_whitespace().next()).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
         let signal = fields.get(6).and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
         let (_, band) = freq_to_channel_band(freq);
         return Some(WifiInfo {
@@ -252,44 +222,28 @@ fn get_wifi_info_from_nmcli() -> Option<WifiInfo> {
 pub fn get_bluetooth_info() -> BluetoothInfo {
     let show = bluetoothctl(&["show"]);
     if let Some(controller) = show.lines().find(|l| l.trim_start().starts_with("Controller ")) {
-        let powered = extract_field(&show, "Powered")
-            .is_some_and(|v| v.eq_ignore_ascii_case("yes"));
-        let name = extract_field(&show, "Name")
-            .or_else(|| extract_field(&show, "Alias"))
-            .unwrap_or_default();
+        let powered = extract_field(&show, "Powered").is_some_and(|v| v.eq_ignore_ascii_case("yes"));
+        let name = extract_field(&show, "Name").or_else(|| extract_field(&show, "Alias")).unwrap_or_default();
         let address = controller.split_whitespace().nth(1).unwrap_or("").to_string();
 
         let mut devices: Vec<BluetoothDevice> = Vec::new();
         for line in bluetoothctl(&["devices", "Paired"]).lines() {
             if let Some((addr, dev_name)) = parse_bluetooth_device(line) {
-                devices.push(BluetoothDevice {
-                    address: addr,
-                    name: dev_name,
-                    paired: true,
-                    connected: false,
-                });
+                devices.push(BluetoothDevice { address: addr, name: dev_name, paired: true, connected: false });
             }
         }
         for line in bluetoothctl(&["devices", "Connected"]).lines() {
             if let Some((addr, dev_name)) = parse_bluetooth_device(line) {
                 match devices.iter_mut().find(|d| d.address == addr) {
                     Some(d) => d.connected = true,
-                    None => devices.push(BluetoothDevice {
-                        address: addr,
-                        name: dev_name,
-                        paired: false,
-                        connected: true,
-                    }),
+                    None => {
+                        devices.push(BluetoothDevice { address: addr, name: dev_name, paired: false, connected: true })
+                    }
                 }
             }
         }
 
-        return BluetoothInfo {
-            powered,
-            address,
-            name,
-            devices,
-        };
+        return BluetoothInfo { powered, address, name, devices };
     }
     get_bluetooth_info_fallback()
 }
@@ -297,34 +251,19 @@ pub fn get_bluetooth_info() -> BluetoothInfo {
 /// 兜底：bluetoothctl（BlueZ）不可用时，用 hciconfig 判断适配器是否 UP，
 /// 地址从 hciconfig 或 sysfs 读取。
 fn get_bluetooth_info_fallback() -> BluetoothInfo {
-    let output = std::process::Command::new(command_path(&[
-        "/usr/bin/hciconfig",
-        "/bin/hciconfig",
-        "hciconfig",
-    ]))
-    .arg("hci0")
-    .output()
-    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-    .unwrap_or_default();
-
-    let powered = output
-        .lines()
-        .any(|l| l.split_whitespace().next() == Some("UP"));
-    let address = extract_field(&output, "BD Address")
-        .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
-        .or_else(|| {
-            fs::read_to_string("/sys/class/bluetooth/hci0/address")
-                .ok()
-                .map(|s| s.trim().to_string())
-        })
+    let output = std::process::Command::new(command_path(&["/usr/bin/hciconfig", "/bin/hciconfig", "hciconfig"]))
+        .arg("hci0")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
 
-    BluetoothInfo {
-        powered,
-        address,
-        name: String::new(),
-        devices: Vec::new(),
-    }
+    let powered = output.lines().any(|l| l.split_whitespace().next() == Some("UP"));
+    let address = extract_field(&output, "BD Address")
+        .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
+        .or_else(|| fs::read_to_string("/sys/class/bluetooth/hci0/address").ok().map(|s| s.trim().to_string()))
+        .unwrap_or_default();
+
+    BluetoothInfo { powered, address, name: String::new(), devices: Vec::new() }
 }
 
 /// 从 iw 输出中按关键字提取冒号后的值。

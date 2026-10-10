@@ -16,8 +16,7 @@ struct PrevCpu {
 }
 
 /// 全局 PID → 上次采样 映射，跨调用持久化。
-static PREV_CPU: LazyLock<Mutex<HashMap<i32, PrevCpu>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static PREV_CPU: LazyLock<Mutex<HashMap<i32, PrevCpu>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 static NUM_CPUS: OnceLock<u64> = OnceLock::new();
 
@@ -25,10 +24,7 @@ static NUM_CPUS: OnceLock<u64> = OnceLock::new();
 pub fn count_processes() -> usize {
     fs::read_dir("/proc")
         .map(|entries| {
-            entries
-                .flatten()
-                .filter(|e| e.file_name().to_string_lossy().chars().all(|c| c.is_ascii_digit()))
-                .count()
+            entries.flatten().filter(|e| e.file_name().to_string_lossy().chars().all(|c| c.is_ascii_digit())).count()
         })
         .unwrap_or(0)
 }
@@ -103,29 +99,19 @@ pub fn list_processes() -> Vec<ProcessInfo> {
             let base = format!("/proc/{}", pid);
 
             let status_content = fs::read_to_string(format!("{}/status", base)).unwrap_or_default();
-            let cmdline = fs::read_to_string(format!("{}/cmdline", base))
-                .unwrap_or_default()
-                .replace('\0', " ");
+            let cmdline = fs::read_to_string(format!("{}/cmdline", base)).unwrap_or_default().replace('\0', " ");
 
             let proc_name = get_field(&status_content, "Name").unwrap_or_else(|| {
                 if cmdline.is_empty() {
                     "unknown".to_string()
                 } else {
-                    cmdline
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or("unknown")
-                        .to_string()
+                    cmdline.split_whitespace().next().unwrap_or("unknown").to_string()
                 }
             });
 
             let status = get_field(&status_content, "State").unwrap_or_else(|| "unknown".to_string());
-            let ppid = get_field(&status_content, "PPid")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
-            let threads = get_field(&status_content, "Threads")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1);
+            let ppid = get_field(&status_content, "PPid").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let threads = get_field(&status_content, "Threads").and_then(|v| v.parse().ok()).unwrap_or(1);
             let vmrss = get_field(&status_content, "VmRSS")
                 .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
                 .unwrap_or(0);
@@ -159,18 +145,10 @@ pub fn list_processes() -> Vec<ProcessInfo> {
 pub fn get_process_detail(pid: i32) -> Option<serde_json::Value> {
     let base = format!("/proc/{}", pid);
     let status = fs::read_to_string(format!("{}/status", base)).ok()?;
-    let cmdline = fs::read_to_string(format!("{}/cmdline", base))
-        .unwrap_or_default()
-        .replace('\0', " ");
-    let environ = fs::read_to_string(format!("{}/environ", base))
-        .unwrap_or_default()
-        .replace('\0', "\n");
-    let cwd = fs::read_link(format!("{}/cwd", base))
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let exe = fs::read_link(format!("{}/exe", base))
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let cmdline = fs::read_to_string(format!("{}/cmdline", base)).unwrap_or_default().replace('\0', " ");
+    let environ = fs::read_to_string(format!("{}/environ", base)).unwrap_or_default().replace('\0', "\n");
+    let cwd = fs::read_link(format!("{}/cwd", base)).map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let exe = fs::read_link(format!("{}/exe", base)).map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
     Some(serde_json::json!({
         "pid": pid,

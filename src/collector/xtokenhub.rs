@@ -17,10 +17,6 @@ pub fn collect() -> XTokenHubInfo {
     XTokenHubInfo {
         available: running,
         status,
-        error: if running {
-            String::new()
-        } else {
-            "xtokenhub service not running".to_string()
-        },
+        error: if running { String::new() } else { "xtokenhub service not running".to_string() },
     }
 }

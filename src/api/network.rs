@@ -4,10 +4,10 @@
 //! - `GET /api/network/wifi` — WiFi 连接详情
 //! - `GET /api/network/bluetooth` — 蓝牙适配器信息
 
+use super::success;
+use crate::collector;
 use axum::Json;
 use serde_json::Value;
-use crate::collector;
-use super::success;
 
 pub async fn network_info() -> Json<Value> {
     let data = collector::network::collect_interfaces();

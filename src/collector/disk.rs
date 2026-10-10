@@ -6,9 +6,7 @@ use std::fs;
 
 /// 通过 `df -i` 获取指定挂载点的 inode 使用情况。
 pub fn get_inode_info(mount: &str) -> (u64, u64, u64, f64) {
-    let output = std::process::Command::new("df")
-        .args(["-i", mount])
-        .output();
+    let output = std::process::Command::new("df").args(["-i", mount]).output();
     match output {
         Ok(o) => {
             let text = String::from_utf8_lossy(&o.stdout);
@@ -61,37 +59,27 @@ pub fn get_io_stats(block_dev: &str) -> (u64, u64, u64) {
 
 /// 判断磁盘类型：读取 vendor/model 或 rotational 属性。
 pub fn get_disk_type(block_dev: &str) -> String {
-    let vendor = fs::read_to_string(format!("/sys/block/{}/device/vendor", block_dev))
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    let model = fs::read_to_string(format!("/sys/block/{}/device/model", block_dev))
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let vendor =
+        fs::read_to_string(format!("/sys/block/{}/device/vendor", block_dev)).unwrap_or_default().trim().to_string();
+    let model =
+        fs::read_to_string(format!("/sys/block/{}/device/model", block_dev)).unwrap_or_default().trim().to_string();
     if !vendor.is_empty() || !model.is_empty() {
         return format!("{} {}", vendor, model).trim().to_string();
     }
     if block_dev.starts_with("loop") {
         for sd in &["sda", "sdb", "mmcblk0"] {
-            let v = fs::read_to_string(format!("/sys/block/{}/device/vendor", sd))
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let m = fs::read_to_string(format!("/sys/block/{}/device/model", sd))
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+            let v =
+                fs::read_to_string(format!("/sys/block/{}/device/vendor", sd)).unwrap_or_default().trim().to_string();
+            let m =
+                fs::read_to_string(format!("/sys/block/{}/device/model", sd)).unwrap_or_default().trim().to_string();
             if !v.is_empty() || !m.is_empty() {
                 return format!("{} {}", v, m).trim().to_string();
             }
         }
         return "Flash".to_string();
     }
-    let rotational = fs::read_to_string(format!("/sys/block/{}/queue/rotational", block_dev))
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let rotational =
+        fs::read_to_string(format!("/sys/block/{}/queue/rotational", block_dev)).unwrap_or_default().trim().to_string();
     match rotational.as_str() {
         "0" => "Flash".to_string(),
         "1" => "HDD".to_string(),

@@ -4,11 +4,11 @@
 //! - `GET /api/alerts/config` — 告警阈值配置
 //! - `PUT /api/alerts/config` — 更新配置（尚未持久化到数据库）
 
-use axum::Json;
-use serde_json::Value;
-use crate::AppState;
-use axum::extract::State;
 use super::success;
+use crate::AppState;
+use axum::Json;
+use axum::extract::State;
+use serde_json::Value;
 
 pub async fn get_alerts(State(state): State<AppState>) -> Json<Value> {
     let alerts = state.db.get_alerts(50).unwrap_or_default();

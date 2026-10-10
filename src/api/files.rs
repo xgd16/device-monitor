@@ -3,16 +3,16 @@
 //! 提供目录浏览、读写、上传下载、创建/删除/移动/复制等操作。
 //! 路径经 canonicalize 规范化，防止 `../` 穿越攻击。
 
+use super::{error, success};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Multipart, Query};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use super::{error, success};
 
 const DEFAULT_READ_LIMIT: usize = 256 * 1024;
 const MAX_READ_LIMIT: usize = 1024 * 1024;
@@ -96,13 +96,8 @@ fn resolve_path_for_create(raw: &str) -> Result<PathBuf, String> {
     if joined.exists() {
         return fs::canonicalize(&joined).map_err(|e| e.to_string());
     }
-    let file_name = joined
-        .file_name()
-        .ok_or_else(|| "Invalid path".to_string())?
-        .to_owned();
-    let parent = joined
-        .parent()
-        .ok_or_else(|| "Invalid path".to_string())?;
+    let file_name = joined.file_name().ok_or_else(|| "Invalid path".to_string())?.to_owned();
+    let parent = joined.parent().ok_or_else(|| "Invalid path".to_string())?;
     let parent_canon = if parent.as_os_str().is_empty() {
         PathBuf::from("/")
     } else {
@@ -122,11 +117,7 @@ fn validate_raw_path(raw: &str) -> Result<(), String> {
 }
 
 fn normalize_path(raw: &str) -> PathBuf {
-    let path = if raw.starts_with('/') {
-        PathBuf::from(raw)
-    } else {
-        PathBuf::from("/").join(raw)
-    };
+    let path = if raw.starts_with('/') { PathBuf::from(raw) } else { PathBuf::from("/").join(raw) };
     let mut out = PathBuf::new();
     for comp in path.components() {
         match comp {
@@ -212,10 +203,7 @@ fn entry_from_path(path: &Path) -> Result<FileEntry, String> {
     };
     let (owner, group) = owner_group(&meta);
     Ok(FileEntry {
-        name: path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string()),
+        name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string()),
         path: path.display().to_string(),
         is_dir,
         size,
@@ -229,11 +217,7 @@ fn entry_from_path(path: &Path) -> Result<FileEntry, String> {
 
 fn parent_path(path: &Path) -> Option<String> {
     path.parent().map(|p| {
-        if p.as_os_str().is_empty() || p == Path::new("/") {
-            "/".to_string()
-        } else {
-            p.display().to_string()
-        }
+        if p.as_os_str().is_empty() || p == Path::new("/") { "/".to_string() } else { p.display().to_string() }
     })
 }
 
@@ -264,12 +248,10 @@ pub async fn list_files(Query(q): Query<PathQuery>) -> Json<Value> {
         }
     }
 
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     success(serde_json::json!({
@@ -314,18 +296,10 @@ pub async fn read_file(Query(q): Query<ReadQuery>) -> Json<Value> {
     };
 
     let total = data.len();
-    let slice = if offset >= total {
-        &[]
-    } else {
-        &data[offset..total.min(offset + limit)]
-    };
+    let slice = if offset >= total { &[] } else { &data[offset..total.min(offset + limit)] };
 
     let is_binary = slice.iter().take(8192).any(|&b| b == 0);
-    let content = if is_binary {
-        None
-    } else {
-        Some(String::from_utf8_lossy(slice).into_owned())
-    };
+    let content = if is_binary { None } else { Some(String::from_utf8_lossy(slice).into_owned()) };
 
     success(serde_json::json!({
         "path": path.display().to_string(),
@@ -437,17 +411,10 @@ pub async fn download_file(Query(q): Query<PathQuery>) -> Response {
         return (StatusCode::BAD_REQUEST, error("Cannot download a directory")).into_response();
     }
 
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "download".into());
+    let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "download".into());
 
     let inline = q.inline.unwrap_or(false);
-    let content_type = if inline {
-        mime_type_for_path(&path)
-    } else {
-        "application/octet-stream"
-    };
+    let content_type = if inline { mime_type_for_path(&path) } else { "application/octet-stream" };
     let disposition = if inline {
         format!("inline; filename=\"{}\"", file_name)
     } else {
@@ -461,21 +428,12 @@ pub async fn download_file(Query(q): Query<PathQuery>) -> Response {
             .header(header::CONTENT_DISPOSITION, disposition)
             .body(Body::from(data))
             .unwrap(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error(&format!("Failed to read file: {}", e)),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, error(&format!("Failed to read file: {}", e))).into_response(),
     }
 }
 
 fn mime_type_for_path(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .as_deref()
-    {
+    match path.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()).as_deref() {
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("png") => "image/png",
         Some("gif") => "image/gif",
@@ -569,11 +527,7 @@ pub async fn delete_file(Query(q): Query<DeleteQuery>) -> Json<Value> {
     tracing::info!(path = %path.display(), recursive, "files: delete");
 
     let result = if path.is_dir() {
-        if recursive {
-            fs::remove_dir_all(&path)
-        } else {
-            fs::remove_dir(&path)
-        }
+        if recursive { fs::remove_dir_all(&path) } else { fs::remove_dir(&path) }
     } else {
         fs::remove_file(&path)
     };

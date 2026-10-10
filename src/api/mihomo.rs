@@ -1,14 +1,14 @@
 //! Mihomo 订阅更新 API
 
 use axum::Json;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::api::{error, success};
 use crate::collector;
 
 pub async fn update_subscription() -> Json<Value> {
-    let script = std::env::var("MIHOMO_FETCH_SUB_SCRIPT")
-        .unwrap_or_else(|_| "/home/user/code/fetch_sub.py".to_string());
+    let script =
+        std::env::var("MIHOMO_FETCH_SUB_SCRIPT").unwrap_or_else(|_| "/home/user/code/fetch_sub.py".to_string());
 
     let output = std::process::Command::new("python3").arg(&script).output();
 

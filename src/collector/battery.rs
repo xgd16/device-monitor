@@ -30,10 +30,7 @@ const SESSION_DONE_FILE: &str = "battery_session_done.txt";
 /// 读取指定 power_supply 节点的字符串值。
 fn read_supply(supply: &str, field: &str) -> String {
     let path = format!("/sys/class/power_supply/{supply}/{field}");
-    fs::read_to_string(&path)
-        .unwrap_or_default()
-        .trim()
-        .to_string()
+    fs::read_to_string(&path).unwrap_or_default().trim().to_string()
 }
 
 /// 读取 qcom-battery 节点的字符串值。
@@ -100,10 +97,7 @@ fn normalize_status(raw_status: &str, current_ua: f64, usb_online: bool) -> Stri
 }
 
 fn load_u8(filename: &str) -> u8 {
-    fs::read_to_string(filename)
-        .ok()
-        .and_then(|s| s.trim().parse::<u8>().ok())
-        .unwrap_or(0)
+    fs::read_to_string(filename).ok().and_then(|s| s.trim().parse::<u8>().ok()).unwrap_or(0)
 }
 
 fn save_u8(filename: &str, value: u8) {
@@ -118,11 +112,7 @@ fn save_u8(filename: &str, value: u8) {
 /// 还会被 `is_degraded` 误判成老化电池。缩放只在「确实学到过更低的上限」时
 /// 才允许发生，默认状态必须是透明的。
 fn effective_max_from_file(raw: u8) -> u8 {
-    if raw == 0 {
-        100
-    } else {
-        raw.clamp(50, 100)
-    }
+    if raw == 0 { 100 } else { raw.clamp(50, 100) }
 }
 
 fn load_effective_max_pct() -> u8 {
@@ -283,10 +273,7 @@ const CAPACITY_SANITY: (f64, f64) = (800.0, 6000.0);
 const CAPACITY_BLEND: f64 = 0.3;
 
 fn load_f64(filename: &str) -> f64 {
-    fs::read_to_string(filename)
-        .ok()
-        .and_then(|s| s.trim().parse::<f64>().ok())
-        .unwrap_or(0.0)
+    fs::read_to_string(filename).ok().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0)
 }
 
 fn save_f64(filename: &str, value: f64) {
@@ -310,11 +297,7 @@ fn capacity_from_discharge(accum_mah: f64, span_pct: u32) -> Option<f64> {
 /// 新旧容量融合：首次直接采纳，之后小幅修正。
 /// 一条放电段会给出很多次估值，全量采纳等于让最近一次负载波动决定显示值。
 fn blend_capacity(old: f64, est: f64) -> f64 {
-    if old <= 0.0 {
-        est
-    } else {
-        old * (1.0 - CAPACITY_BLEND) + est * CAPACITY_BLEND
-    }
+    if old <= 0.0 { est } else { old * (1.0 - CAPACITY_BLEND) + est * CAPACITY_BLEND }
 }
 
 fn load_discharge() -> (u8, f64, i64, bool) {
@@ -359,9 +342,7 @@ fn learn_capacity(capacity: u8, current_ua: f64, status: &str) {
     if !measured && discharge_is_measurable(span, capacity) {
         if let Some(est) = capacity_from_discharge(accum, span) {
             save_f64(CAPACITY_MAH_FILE, blend_capacity(load_f64(CAPACITY_MAH_FILE), est));
-            tracing::info!(
-                "电池实际容量估计 {est:.0} mAh（从 {soc0}% 掉到 {capacity}%，累计放出 {accum:.0} mAh）"
-            );
+            tracing::info!("电池实际容量估计 {est:.0} mAh（从 {soc0}% 掉到 {capacity}%，累计放出 {accum:.0} mAh）");
             // 本段已量过：重新起一段，避免同一段被反复测量反复融合
             save_discharge(capacity, 0.0, now, true);
             return;
@@ -374,15 +355,11 @@ fn display_capacity_pct(capacity: u8, effective_max_pct: u8) -> u8 {
     if effective_max_pct >= 100 || effective_max_pct == 0 {
         return capacity;
     }
-    ((capacity as f64 / effective_max_pct as f64) * 100.0)
-        .clamp(0.0, 100.0)
-        .round() as u8
+    ((capacity as f64 / effective_max_pct as f64) * 100.0).clamp(0.0, 100.0).round() as u8
 }
 
 fn at_charge_limit(capacity: u8, effective_max_pct: u8, usb_online: bool, current_ua: f64) -> bool {
-    usb_online
-        && capacity >= effective_max_pct
-        && current_ua.abs() < CHARGE_CURRENT_UA
+    usb_online && capacity >= effective_max_pct && current_ua.abs() < CHARGE_CURRENT_UA
 }
 
 /// 估算剩余 / 充满时间（分钟）。
@@ -436,8 +413,7 @@ pub fn collect() -> BatteryInfo {
     // 注意用**学习前**的上限来判断，否则与 learn 内部读到的上限不一致
     let max_before = load_effective_max_pct();
     let charge_done = usb_online
-        && (raw_status == "Full"
-            || (current_ua.abs() < CHARGE_CURRENT_UA && capacity.saturating_add(2) >= max_before));
+        && (raw_status == "Full" || (current_ua.abs() < CHARGE_CURRENT_UA && capacity.saturating_add(2) >= max_before));
 
     let effective_max_pct = learn_effective_max_pct(capacity, usb_online, charge_done);
     let is_degraded = effective_max_pct < DEGRADED_MAX_THRESHOLD;
@@ -458,11 +434,7 @@ pub fn collect() -> BatteryInfo {
     // 单位统一到 sysfs 原样（μAh / μA）：**mAh 与 μA 混用会差 1000 倍**，
     // 曾经因此把「还要充 20 分钟」算成 0。
     let learned_capacity_mah = load_f64(CAPACITY_MAH_FILE);
-    let usable_uah = if learned_capacity_mah > 0.0 {
-        learned_capacity_mah * 1000.0
-    } else {
-        charge_full_design
-    };
+    let usable_uah = if learned_capacity_mah > 0.0 { learned_capacity_mah * 1000.0 } else { charge_full_design };
     let health_percent = if learned_capacity_mah > 0.0 && charge_full_design > 0.0 {
         let design_mah = charge_full_design / 1000.0;
         (learned_capacity_mah / design_mah * 100.0).clamp(1.0, 150.0)
@@ -470,14 +442,7 @@ pub fn collect() -> BatteryInfo {
         0.0
     };
 
-    let time_left_min = estimate_time_min(
-        capacity,
-        &status,
-        current_ua,
-        usable_uah,
-        effective_max_pct,
-        at_limit,
-    );
+    let time_left_min = estimate_time_min(capacity, &status, current_ua, usable_uah, effective_max_pct, at_limit);
 
     BatteryInfo {
         capacity,
@@ -502,18 +467,12 @@ mod tests {
 
     #[test]
     fn unplugged_charging_status_becomes_discharging() {
-        assert_eq!(
-            normalize_status("Charging", 245_000.0, false),
-            "Discharging"
-        );
+        assert_eq!(normalize_status("Charging", 245_000.0, false), "Discharging");
     }
 
     #[test]
     fn plugged_low_current_is_not_charging() {
-        assert_eq!(
-            normalize_status("Charging", 50_000.0, true),
-            "Not charging"
-        );
+        assert_eq!(normalize_status("Charging", 50_000.0, true), "Not charging");
     }
 
     /// 回归：内核 status 与实际电流方向矛盾时，**以电流为准**。
@@ -535,10 +494,7 @@ mod tests {
 
     #[test]
     fn plugged_high_current_is_charging() {
-        assert_eq!(
-            normalize_status("Charging", 500_000.0, true),
-            "Charging"
-        );
+        assert_eq!(normalize_status("Charging", 500_000.0, true), "Charging");
     }
 
     #[test]
@@ -570,12 +526,21 @@ mod tests {
     /// 之后电量被按比例放大（真实 45% 显示 100%）且再也回不去。
     #[test]
     fn 中途拔掉不算衰减证据() {
-        assert_eq!(session_outcome(50, 99, false), SessionOutcome::Inconclusive,
-                   "充电器没走完 → 只是用户拔早了");
-        assert_eq!(session_outcome(50, 99, true), SessionOutcome::Degraded,
-                   "充电器走完却只到 50% → 真衰减");
-        assert_eq!(session_outcome(99, 99, false), SessionOutcome::ReachedFull,
-                   "充到接近上限 → 健康（无论是否拔掉）");
+        assert_eq!(
+            session_outcome(50, 99, false),
+            SessionOutcome::Inconclusive,
+            "充电器没走完 → 只是用户拔早了"
+        );
+        assert_eq!(
+            session_outcome(50, 99, true),
+            SessionOutcome::Degraded,
+            "充电器走完却只到 50% → 真衰减"
+        );
+        assert_eq!(
+            session_outcome(99, 99, false),
+            SessionOutcome::ReachedFull,
+            "充到接近上限 → 健康（无论是否拔掉）"
+        );
         assert_eq!(session_outcome(98, 99, true), SessionOutcome::ReachedFull);
         assert_eq!(session_outcome(97, 99, true), SessionOutcome::ReachedFull, "2% 容差边界");
         assert_eq!(session_outcome(96, 99, true), SessionOutcome::Degraded);

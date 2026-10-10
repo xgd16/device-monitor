@@ -3,17 +3,17 @@
 //! 从 Linux `/proc`、`/sys` 等接口读取 CPU、内存、温度、电池、网络等数据，
 //! 聚合为 `SystemOverview` 供 API、WebSocket、TUI 和告警引擎使用。
 
-pub mod cpu;
-pub mod memory;
-pub mod thermal;
 pub mod battery;
-pub mod network;
-pub mod process;
+pub mod cpu;
+pub mod disk;
 pub mod hardware;
 pub mod hotkeys;
-pub mod power_key;
-pub mod disk;
+pub mod memory;
 pub mod mihomo;
+pub mod network;
+pub mod power_key;
+pub mod process;
+pub mod thermal;
 pub mod xtokenhub;
 
 use serde::{Deserialize, Serialize};

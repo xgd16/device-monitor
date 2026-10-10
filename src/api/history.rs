@@ -2,13 +2,13 @@
 //!
 //! `GET /api/history/metrics` — 查询 SQLite 中持久化的指标时间序列，供报表图表使用。
 
-use axum::extract::{Query, State};
+use super::{error, success};
+use crate::AppState;
+use crate::collector::SystemOverview;
 use axum::Json;
+use axum::extract::{Query, State};
 use serde::Deserialize;
 use serde_json::json;
-use crate::collector::SystemOverview;
-use crate::AppState;
-use super::{success, error};
 
 #[derive(Deserialize)]
 pub struct HistoryQuery {
@@ -27,10 +27,7 @@ fn range_to_secs(range: &str) -> i64 {
     }
 }
 
-pub async fn metrics_history(
-    State(state): State<AppState>,
-    Query(q): Query<HistoryQuery>,
-) -> Json<serde_json::Value> {
+pub async fn metrics_history(State(state): State<AppState>, Query(q): Query<HistoryQuery>) -> Json<serde_json::Value> {
     let range = q.range.as_deref().unwrap_or("1h");
     let max_points = q.max_points.unwrap_or(500).clamp(50, 2000);
     let now = chrono::Utc::now().timestamp();
@@ -84,11 +81,7 @@ pub async fn metrics_history(
         prev_tx = Some(total_tx);
         prev_ts = Some(*ts);
 
-        let max_temp = overview
-            .thermal
-            .iter()
-            .map(|t| t.temp_celsius)
-            .fold(0.0_f64, f64::max);
+        let max_temp = overview.thermal.iter().map(|t| t.temp_celsius).fold(0.0_f64, f64::max);
 
         timestamps.push(*ts);
         cpu_usage.push(overview.cpu.overall_usage as f64);

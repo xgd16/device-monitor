@@ -28,9 +28,5 @@ pub fn persist_interval_secs() -> u64 {
 
 /// 读取正整数环境变量，缺失或非法时回落默认值。
 fn env_secs_or(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(default)
+    std::env::var(key).ok().and_then(|v| v.trim().parse::<u64>().ok()).filter(|v| *v > 0).unwrap_or(default)
 }

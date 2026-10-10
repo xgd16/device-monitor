@@ -43,9 +43,9 @@ fn run() -> Result<(), String> {
     use std::path::Path;
     use std::time::{Duration, Instant};
 
-    use drm::buffer::DrmFourcc;
-    use drm::control::{connector, Device as ControlDevice};
     use drm::Device as DrmDevice;
+    use drm::buffer::DrmFourcc;
+    use drm::control::{Device as ControlDevice, connector};
 
     // ── 单实例：接管旧残留（计划内切换间隔极短时旧 splash 可能还活着；
     //    它已 DropMaster 且其帧未被扫描，或它正持有灰色帧——杀掉后本实例
@@ -114,9 +114,7 @@ fn run() -> Result<(), String> {
         .create_dumb_buffer((u32::from(w), u32::from(h)), DrmFourcc::Xrgb8888, 32)
         .map_err(|e| format!("dumb buffer: {e}"))?;
     {
-        let mut map = card
-            .map_dumb_buffer(&mut db)
-            .map_err(|e| format!("map dumb: {e}"))?;
+        let mut map = card.map_dumb_buffer(&mut db).map_err(|e| format!("map dumb: {e}"))?;
         // XRGB8888 小端内存序 = [B,G,R,X]；灰色 0x2E（含 pitch 填充区，无害）
         for px in map.as_mut().chunks_mut(4) {
             if px.len() == 4 {
@@ -127,15 +125,10 @@ fn run() -> Result<(), String> {
             }
         }
     }
-    let fb = card
-        .add_framebuffer(&db, 24, 32)
-        .map_err(|e| format!("add_framebuffer: {e}"))?;
+    let fb = card.add_framebuffer(&db, 24, 32).map_err(|e| format!("add_framebuffer: {e}"))?;
     let mut posted = false;
     for &ch in res.crtcs() {
-        if card
-            .set_crtc(ch, Some(fb), (0, 0), &[con.handle()], Some(mode))
-            .is_ok()
-        {
+        if card.set_crtc(ch, Some(fb), (0, 0), &[con.handle()], Some(mode)).is_ok() {
             posted = true;
             break;
         }

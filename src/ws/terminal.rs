@@ -4,19 +4,19 @@
 //! 协议：客户端 Binary → PTY 输入；Text JSON resize → 调整终端尺寸；
 //! 服务端 Binary ← PTY 输出；Text JSON exit ← 进程退出通知。
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::ConnectInfo;
-use axum::response::{IntoResponse, Response};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt, StreamExt};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{MissedTickBehavior, interval};
 
 const MAX_SESSIONS_PER_IP: usize = 3;
 
@@ -51,21 +51,14 @@ fn try_acquire_session(ip: &str) -> Result<SessionGuard, Response> {
     let mut counts = SESSION_COUNTS.lock().unwrap();
     let n = counts.entry(ip.to_string()).or_insert(0);
     if *n >= MAX_SESSIONS_PER_IP {
-        return Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            "Too many terminal sessions for this client",
-        )
-            .into_response());
+        return Err((StatusCode::TOO_MANY_REQUESTS, "Too many terminal sessions for this client").into_response());
     }
     *n += 1;
     Ok(SessionGuard { ip: ip.to_string() })
 }
 
 /// WebSocket 握手入口。
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-) -> impl IntoResponse {
+pub async fn ws_handler(ws: WebSocketUpgrade, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> impl IntoResponse {
     let ip = addr.ip().to_string();
     match try_acquire_session(&ip) {
         Ok(guard) => ws.on_upgrade(move |socket| handle_terminal(socket, guard)),
@@ -77,12 +70,7 @@ async fn handle_terminal(socket: WebSocket, _guard: SessionGuard) {
     tracing::info!("Terminal WebSocket connected");
 
     let pty_system = native_pty_system();
-    let pair = match pty_system.openpty(PtySize {
-        rows: 24,
-        cols: 80,
-        pixel_width: 0,
-        pixel_height: 0,
-    }) {
+    let pair = match pty_system.openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }) {
         Ok(p) => p,
         Err(e) => {
             tracing::error!("Failed to open PTY: {}", e);
