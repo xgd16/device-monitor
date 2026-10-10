@@ -5,20 +5,24 @@
 //! - WebSocket（`/ws/realtime`）推送实时系统快照
 //! - 后台定时采集、SQLite 持久化、告警检测
 
+mod alert;
 mod api;
 mod collector;
+mod nfc;
 mod store;
 mod ws;
-mod alert;
 
-use axum::{Router, routing::{get, post, put, delete}};
-use tower_http::cors::{CorsLayer, Any};
-use tower_http::services::ServeDir;
+use axum::{
+    Router,
+    routing::{delete, get, post, put},
+};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{RwLock, watch};
-use tracing_subscriber::{fmt, EnvFilter};
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
+use tracing_subscriber::{EnvFilter, fmt};
 
 /// 全局应用状态，通过 Axum `State` 注入到各 API 处理器。
 #[derive(Clone)]
@@ -62,9 +66,7 @@ async fn main() {
     collector::hotkeys::start_listener();
     // 朝向状态与落盘对齐：Web 端 /api/system/rotation 展示与双击翻转都依赖它；
     // 不初始化会出现「展示 rot90 而实际 rot270」以及第一次双击写回原值的假失灵。
-    crate::collector::hotkeys::set_rot270(
-        store::settings::load_rotation().as_deref() == Some("rot270"),
-    );
+    crate::collector::hotkeys::set_rot270(store::settings::load_rotation().as_deref() == Some("rot270"));
 
     // ── 后台采集任务 ──
     let db_bg = db.clone();
@@ -96,9 +98,8 @@ async fn main() {
         let mut slice = tokio::time::interval(std::time::Duration::from_secs(2));
         let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
         // 采集与落库解耦：实时刷新按 refresh_secs，落库按 persist_interval 节流。
-        let mut last_persist = std::time::Instant::now()
-            .checked_sub(persist_interval)
-            .unwrap_or_else(std::time::Instant::now);
+        let mut last_persist =
+            std::time::Instant::now().checked_sub(persist_interval).unwrap_or_else(std::time::Instant::now);
         let mut last_collect: Option<std::time::Instant> = None;
         let mut prev_screen_on = true;
         loop {
@@ -165,7 +166,10 @@ async fn main() {
     let api_routes = Router::new()
         .route("/system/overview", get(api::system::overview))
         .route("/system/refresh", get(api::system::get_refresh).post(api::system::set_refresh))
-        .route("/system/rotation", get(crate::api::system::get_rotation).post(crate::api::system::set_rotation))
+        .route(
+            "/system/rotation",
+            get(crate::api::system::get_rotation).post(crate::api::system::set_rotation),
+        )
         .route("/cpu", get(api::cpu::cpu_info))
         .route("/cpu/governor", get(api::cpu::get_governor).post(api::cpu::set_governor))
         .route("/cpu/frequency", get(api::cpu::get_frequency))
@@ -193,7 +197,10 @@ async fn main() {
         .route("/hardware/vibrate/pattern", post(api::hardware::vibrate_pattern))
         .route("/hardware/vibrate/stop", post(api::hardware::vibrate_stop))
         .route("/hardware/status-led", post(api::hardware::status_led_control))
-        .route("/hardware/cpu-status-led-link", post(api::hardware::cpu_status_led_link_control))
+        .route(
+            "/hardware/cpu-status-led-link",
+            post(api::hardware::cpu_status_led_link_control),
+        )
         .route("/hardware/charge-current", post(api::hardware::charge_current_control))
         .route("/hardware/charge-mode", post(api::hardware::charge_mode_control))
         .route("/hardware/gpu-max-freq", post(api::hardware::gpu_max_freq_control))
@@ -202,6 +209,17 @@ async fn main() {
         .route("/hardware/speaker/mute", post(api::hardware::speaker_mute_control))
         .route("/hardware/speaker/test", post(api::hardware::speaker_test))
         .route("/hardware/clear-memory", post(api::hardware::clear_memory))
+        // NFC：状态/轮询读卡/读写 NDEF/原始帧/NFC-DEP 监听
+        .route("/nfc/status", get(api::nfc::status))
+        .route("/nfc/tags", get(api::nfc::tags))
+        .route("/nfc/events", get(api::nfc::events))
+        .route("/nfc/power", post(api::nfc::power))
+        .route("/nfc/poll", post(api::nfc::poll))
+        .route("/nfc/listen", post(api::nfc::listen))
+        .route("/nfc/read", post(api::nfc::read))
+        .route("/nfc/write", post(api::nfc::write))
+        .route("/nfc/raw", post(api::nfc::raw))
+        .route("/nfc/emulate", get(api::nfc::emulate_status).post(api::nfc::emulate))
         .route("/mihomo/subscription/update", post(api::mihomo::update_subscription))
         .route("/database/stats", get(api::database::get_stats))
         .route("/database/cleanup", post(api::database::cleanup))
@@ -225,7 +243,7 @@ async fn main() {
         .nest("/api", api_routes)
         .route("/ws/realtime", get(ws::ws_handler))
         .route("/ws/terminal", get(ws::terminal::ws_handler))
-        .fallback_service(ServeDir::new("static"))  // device-monitor-web 构建产物
+        .fallback_service(ServeDir::new("static")) // device-monitor-web 构建产物
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
         .with_state(state);
 
@@ -233,10 +251,5 @@ async fn main() {
     tracing::info!("Server running on http://{}", bind);
 
     let listener = tokio::net::TcpListener::bind(bind).await.unwrap();
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
-    .unwrap();
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }

@@ -9,6 +9,13 @@ import type {
   DatabaseStats,
   FileListResponse,
   FileReadResponse,
+  NfcStatus,
+  NfcTag,
+  NfcReadResult,
+  NfcWriteResult,
+  NfcRawResult,
+  NfcEvent,
+  NfcEmulStatus,
 } from '../types';
 
 const api = axios.create({
@@ -152,3 +159,61 @@ export const compressFiles = (paths: string[], output: string, format: ArchiveFo
 
 export const extractFiles = (path: string, dest: string, overwrite = false) =>
   api.post('/files/extract', { path, dest, overwrite }, { timeout: 300000 }).then((r) => r.data);
+
+// ── NFC ──
+
+export const fetchNfcStatus = () => api.get('/nfc/status').then((r) => r.data.data as NfcStatus);
+
+export const setNfcPower = (up: boolean) =>
+  api.post('/nfc/power', { up }).then((r) => r.data.data as { powered: boolean });
+
+/** action=start 时 protocols 缺省表示全选 */
+export const setNfcPoll = (action: 'start' | 'stop', protocols?: string[]) =>
+  api
+    .post('/nfc/poll', { action, protocols })
+    .then((r) => r.data.data as { polling: boolean; protocols: string[] });
+
+export const setNfcListen = (action: 'start' | 'stop') =>
+  api.post('/nfc/listen', { action }).then((r) => r.data.data as { listening: boolean });
+
+export const fetchNfcTags = () => api.get('/nfc/tags').then((r) => r.data.data as NfcTag[]);
+
+export const readNfcTag = (params: {
+  target_index: number;
+  protocol: string;
+  mode: 'ndef' | 'pages';
+  start_page?: number;
+  page_count?: number;
+}) => api.post('/nfc/read', params, { timeout: 30000 }).then((r) => r.data.data as NfcReadResult);
+
+export const writeNfcTag = (params: {
+  target_index: number;
+  protocol: string;
+  kind: 'text' | 'uri' | 'raw';
+  value: string;
+  lang?: string;
+  raw_hex?: string;
+}) => api.post('/nfc/write', params, { timeout: 60000 }).then((r) => r.data.data as NfcWriteResult);
+
+export const rawNfcExchange = (params: {
+  target_index: number;
+  protocol: string;
+  tx_hex: string;
+  timeout_ms?: number;
+}) => api.post('/nfc/raw', params, { timeout: 30000 }).then((r) => r.data.data as NfcRawResult);
+
+export const fetchNfcEvents = (limit = 50) =>
+  api.get('/nfc/events', { params: { limit } }).then((r) => r.data.data as NfcEvent[]);
+
+export const fetchNfcEmulate = () =>
+  api.get('/nfc/emulate').then((r) => r.data.data as NfcEmulStatus);
+
+export const setNfcEmulate = (params: {
+  action: 'start' | 'stop';
+  uid?: string;
+  kind?: string;
+  value?: string;
+  lang?: string;
+  raw_hex?: string;
+}) =>
+  api.post('/nfc/emulate', params, { timeout: 15000 }).then((r) => r.data.data as NfcEmulStatus);

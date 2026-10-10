@@ -1,12 +1,13 @@
 import { Chip } from '@heroui/react';
 import { fmtUptime } from './utils';
 
-export type AppPage = 'monitor' | 'terminal' | 'files';
+export type AppPage = 'monitor' | 'terminal' | 'files' | 'nfc';
 
 const PAGE_LABELS: Record<AppPage, string> = {
   monitor: '监控',
   terminal: '终端',
   files: '文件',
+  nfc: 'NFC',
 };
 
 interface StatusBarProps {
@@ -115,7 +116,7 @@ export function StatusBar({
         {/* 中：页面切换（严格居中） */}
         <NavGroup
           value={page}
-          options={['monitor', 'terminal', 'files'] as const}
+          options={['monitor', 'terminal', 'files', 'nfc'] as const}
           labels={PAGE_LABELS}
           onChange={onPageChange}
           ariaLabel="页面切换"

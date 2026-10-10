@@ -30,6 +30,7 @@ import { SystemStatusCard } from './components/SystemStatusCard';
 import { ReportsPanel } from './components/ReportsPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import { FileManager } from './components/FileManager';
+import { NfcPanel } from './components/NfcPanel';
 
 export default function App() {
   const data = useDeviceStore((s) => s.data);
@@ -39,7 +40,9 @@ export default function App() {
 
   const [page, setPage] = useState<AppPage>(() => {
     const saved = localStorage.getItem('dm-page');
-    if (saved === 'monitor' || saved === 'terminal' || saved === 'files') return saved;
+    if (saved === 'monitor' || saved === 'terminal' || saved === 'files' || saved === 'nfc') {
+      return saved;
+    }
     return 'monitor';
   });
 
@@ -133,7 +136,8 @@ export default function App() {
   const memHistory = useMemo(() => history.map((h) => h.memory.usage_percent), [history]);
   const historyTimestamps = useMemo(() => history.map((h) => h.timestamp), [history]);
 
-  if (!data) {
+  // NFC 页不依赖设备监控数据流，后端未启动时也能进入并自行降级提示
+  if (!data && page !== 'nfc') {
     return (
       <div className="flex items-center justify-center h-dvh">
         <div className="text-center flex flex-col items-center gap-4">
@@ -146,13 +150,11 @@ export default function App() {
     );
   }
 
-  const { cpu, memory, network } = data;
-
   return (
     <div className="h-dvh flex flex-col overflow-hidden">
       <StatusBar
         connected={connected}
-        uptime={data.uptime}
+        uptime={data?.uptime ?? 0}
         theme={theme}
         page={page}
         onThemeChange={setTheme}
@@ -173,7 +175,13 @@ export default function App() {
         </div>
       )}
 
-      {page === 'monitor' && (
+      {page === 'nfc' && (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <NfcPanel />
+        </div>
+      )}
+
+      {page === 'monitor' && data && (
         <>
           {/* Mobile: Tab navigation (< md) */}
           <div className="flex-1 min-h-0 overflow-y-auto md:hidden">
@@ -189,12 +197,16 @@ export default function App() {
 
               <Tabs.Panel id="overview" className="p-3 flex flex-col gap-3">
                 <CpuCard
-                  cpu={cpu}
+                  cpu={data.cpu}
                   history={cpuHistory}
                   timestamps={historyTimestamps}
                   loadAvg={data.load_avg}
                 />
-                <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
+                <MemoryCard
+                  memory={data.memory}
+                  history={memHistory}
+                  timestamps={historyTimestamps}
+                />
                 <BatteryCard battery={data.battery} />
                 <MetricsBar data={data} processes={processes} />
                 <AlertsCard alerts={alerts} />
@@ -202,8 +214,8 @@ export default function App() {
 
               <Tabs.Panel id="cpu" className="p-3 flex flex-col gap-3">
                 <CoreBars
-                  cores={cpu.cores}
-                  overallUsage={cpu.overall_usage}
+                  cores={data.cpu.cores}
+                  overallUsage={data.cpu.overall_usage}
                   loadAvg={data.load_avg}
                   thermal={data.thermal}
                 />
@@ -211,7 +223,7 @@ export default function App() {
               </Tabs.Panel>
 
               <Tabs.Panel id="net" className="p-3 flex flex-col gap-3">
-                <NetworkCard network={network} netSpeed={netSpeed} />
+                <NetworkCard network={data.network} netSpeed={netSpeed} />
                 <WirelessCard wifi={wifi} bluetooth={bluetooth} />
               </Tabs.Panel>
 
@@ -243,12 +255,16 @@ export default function App() {
               {/* 1 · 核心指标 —— 2 等分 */}
               <Band index={1} title="核心指标" cols={2}>
                 <CpuCard
-                  cpu={cpu}
+                  cpu={data.cpu}
                   history={cpuHistory}
                   timestamps={historyTimestamps}
                   loadAvg={data.load_avg}
                 />
-                <MemoryCard memory={memory} history={memHistory} timestamps={historyTimestamps} />
+                <MemoryCard
+                  memory={data.memory}
+                  history={memHistory}
+                  timestamps={historyTimestamps}
+                />
               </Band>
 
               {/* 2 · 实时体征 —— 4 等分 */}
@@ -260,8 +276,8 @@ export default function App() {
               {/* 3 · 深度诊断 —— 2 等分 */}
               <Band index={3} title="深度诊断" cols={2}>
                 <CoreBars
-                  cores={cpu.cores}
-                  overallUsage={cpu.overall_usage}
+                  cores={data.cpu.cores}
+                  overallUsage={data.cpu.overall_usage}
                   loadAvg={data.load_avg}
                   thermal={data.thermal}
                 />
@@ -270,7 +286,7 @@ export default function App() {
 
               {/* 4 · 连接状态 —— 2 等分 */}
               <Band index={4} title="连接状态" cols={2}>
-                <NetworkCard network={network} netSpeed={netSpeed} />
+                <NetworkCard network={data.network} netSpeed={netSpeed} />
                 <WirelessCard wifi={wifi} bluetooth={bluetooth} />
               </Band>
 

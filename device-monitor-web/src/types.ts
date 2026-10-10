@@ -184,3 +184,134 @@ export interface FileReadResponse {
   content: string | null;
   encoding: string;
 }
+
+// ── NFC ──
+
+/** 协议名与后端字符串一一对应 */
+export type NfcProtocol =
+  'jewel' | 'mifare' | 'felica' | 'iso14443a' | 'nfc_dep' | 'iso14443b' | 'iso15693';
+
+/** 单项能力的可用性与不可用原因 */
+export interface NfcCapability {
+  ok: boolean;
+  reason: string;
+}
+
+export interface NfcDevice {
+  index: number;
+  name: string;
+  protocols_mask: number;
+  protocols: string[];
+  powered: boolean;
+  rfkill_soft_blocked: boolean;
+  rfkill_hard_blocked: boolean;
+}
+
+export interface NfcSecureElement {
+  index: number;
+  se_type: number;
+}
+
+export interface NfcCapabilities {
+  discover: NfcCapability;
+  read: NfcCapability;
+  write: NfcCapability;
+  emulate: NfcCapability;
+  emulate_uid: NfcCapability;
+}
+
+export interface NfcStatus {
+  available: boolean;
+  platform: string;
+  message: string;
+  device: NfcDevice | null;
+  polling: boolean;
+  listening: boolean;
+  listen_protocols: string[];
+  target_count: number;
+  secure_elements: NfcSecureElement[];
+  capabilities: NfcCapabilities;
+  last_error: string | null;
+  last_op: string | null;
+}
+
+export interface NfcTag {
+  index: number;
+  protocol: string;
+  protocols: string[];
+  uid: string;
+  atqa: string;
+  sak: number | null;
+  ats: string | null;
+  technology: string;
+  best_protocol: string;
+  seen_at: string;
+  lost: boolean;
+}
+
+export interface NfcNdefRecord {
+  tnf: number;
+  type: string;
+  kind: 'text' | 'uri' | 'raw';
+  text: string | null;
+  uri: string | null;
+  payload_hex: string;
+}
+
+export interface NfcNdef {
+  records: NfcNdefRecord[];
+  raw_hex: string;
+  size: number;
+}
+
+export interface NfcPage {
+  page: number;
+  hex: string;
+  ascii: string;
+}
+
+export interface NfcExchange {
+  tx: string;
+  rx: string;
+}
+
+export interface NfcReadResult {
+  uid: string;
+  technology: string;
+  ndef: NfcNdef | null;
+  pages: NfcPage[] | null;
+  raw_exchanges: NfcExchange[];
+  note: string;
+}
+
+export interface NfcWriteResult {
+  wrote_bytes: number;
+  template: string;
+  verify: { raw_hex: string; records: number } | null;
+}
+
+export interface NfcRawResult {
+  tx: string;
+  rx: string;
+  elapsed_ms: number;
+  error: string | null;
+}
+
+export interface NfcEvent {
+  at: string;
+  kind: string;
+  text: string;
+  detail: unknown;
+}
+
+/** UID 卡模拟（用户态直驱芯片）状态 */
+export interface NfcEmulStatus {
+  running: boolean;
+  active: boolean;
+  uid: string;
+  ndef_hex: string;
+  started_at: string | null;
+  last_error: string | null;
+  events?: NfcEvent[];
+  note?: string;
+}
