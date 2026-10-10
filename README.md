@@ -57,9 +57,26 @@
 | 释放内存 | `sync` + `/proc/sys/vm/drop_caches`（需 root） |
 | mihomo 订阅更新 | 执行 `MIHOMO_FETCH_SUB_SCRIPT`（默认 `/home/user/code/fetch_sub.py`） |
 
+### NFC（Web「NFC」页）
+
+Web 端新增 **NFC** 页（顶栏导航），调用设备上的 NFC 控制器（Mi Mix 3 = NXP PN80T，i2c `3-0028`）：
+
+| 能力 | 实现方式 | 状态 |
+|------|----------|------|
+| 控制器状态 / 上电下电 | 内核 NFC generic netlink（`/sys/class/nfc/nfc0`，`NFC_CMD_GET_DEVICE` / `DEV_UP` / `DEV_DOWN`） | ✅ |
+| 轮询发现卡片 | `NFC_CMD_START_POLL` + `events` 多播（`TARGETS_FOUND` / `TARGET_LOST`），`NFC_CMD_GET_TARGET` 取 UID/ATQA/SAK/ATS | ✅ |
+| 读卡（NDEF / 原始页） | `AF_NFC` 原始帧 socket（`connect` 到目标后 `send`/`recv`）；Type 2（NTAG/Ultralight）按 CC+TLV 解析，Type 4（ISO-DEP）走 APDU | ✅ |
+| 写卡（NDEF） | Type 2：`WRITE(0xA2)` 写页 4 起；Type 4：`UPDATE BINARY` + 回写 NLEN | ✅ |
+| 原始帧控制台 | 任意 hex 帧收发，用于 MIFARE Classic 等需要密钥的高级操作 | ✅ |
+| 模仿（监听） | `NFC_CMD_START_POLL` 带 `TM_PROTOCOLS=NFC_DEP` → 目标模式监听 | ⚠️ 仅 NFC-DEP 点对点 |
+| 卡模拟（UID） | 用户态直驱芯片：解绑 `nxp-nci_i2c` 后经 `/dev/i2c-3` 直说 NCI，`CORE_SET_CONFIG` 配 `LA_NFCID1(0x33)` 自定义 UID，`RF_SET_LISTEN_MODE_ROUTING` 把 ISO-DEP 路由到主机后 Listen-A 应答 T4T APDU（模拟 T4T NDEF 卡，手机实测可读） | ✅ |
+| 模拟发现过的卡片 | 发现列表一键「模拟此卡」带入 UID；读取过 NDEF 的卡片可一键克隆整条 NDEF 消息（`kind=message` 逐字节复制，不重组记录） | ✅ |
+
+已知限制：**MIFARE Classic**（门禁/公交卡常见）的扇区数据需要 CRYPTO1 密钥认证，本页不实现，只做免认证块读取探测；其余操作请用原始帧控制台。卡模拟期间内核 `nfc0` 临时下线（读写/轮询暂不可用），停止后自动重新绑定驱动并恢复上电。模拟发现过的卡片时：MIFARE Classic 只能克隆 UID（CRYPTO1 未实现），ATQA/SAK 与协议族由 ISO-DEP 监听决定，非逐位复刻。
+
 ### 物理屏与按键
 
-- **GPU 物理屏仪表**（唯一显示）：`panel/` crate（Slint 1.18 + femtovg，直驱 KMS/GLES），三页卡片布局（系统监控 / Token 用量 / 时钟），触摸操作（切页 / 滑动 / 底栏主题）。由 `device-monitor-launcher.sh` 拉起，与 API 服务组合为 `device-monitor.service`；面板异常退出自动重拉。
+- **GPU 物理屏仪表**（唯一显示）：`panel/` crate（Slint 1.18 + femtovg，直驱 KMS/GLES），四页卡片布局（系统监控 / Token 用量 / 时钟 / 设置；设置页含显示方向 / 屏幕反转 / 外观主题 / 屏幕亮度滑块），触摸操作（切页 / 滑动 / 底栏主题）。由 `device-monitor-launcher.sh` 拉起，与 API 服务组合为 `device-monitor.service`；面板异常退出自动重拉。
 - **按键**：电源键单击 = 屏幕熄灭/点亮（熄屏时面板暂停渲染，采集与 WS 继续）、双击 = 切换白光/黄光手电筒；音量上双击 = 翻转屏幕横向朝向（落盘 `rotation.txt`，面板重启后生效）
 - 旧 DRM/KMS 直绘（`--screen`）与 kmscon/ASCII 字符 TUI（`--tui`）渲染器及其回退链已于 2026-09-27 移除
 
@@ -147,10 +164,11 @@ device-monitor/
 │   │   └── disk.rs / memory.rs / network.rs / process.rs / thermal.rs
 │   ├── store/                  # SQLite 持久化
 │   ├── alert/                  # 告警引擎
+│   ├── nfc/                    # NFC：netlink 控制 / 原始帧收发 / NDEF 编解码 / 常驻服务 / 用户态卡模拟（emulate）
 │   └── ws/                     # WebSocket 推送 + PTY 终端
 ├── device-monitor-web/         # React 前端源码
 │   └── src/
-│       ├── components/         # 仪表盘卡片组件
+│       ├── components/         # 仪表盘卡片组件（含 NfcPanel 页）
 │       ├── hooks/              # useWebSocket、useTerminal
 │       ├── stores/             # Zustand 状态
 │       └── api/                # Axios API 封装
@@ -165,7 +183,7 @@ device-monitor/
 └── test_vibrate.rs             # 振动马达 ioctl 测试工具（rustc 直接编译）
 ```
 
-运行时生成、不纳入版本管理的文件：`device_monitor.db*`、`static/`、`target/`、`node_modules/`、`battery_effective_max.txt`、`battery_low_streak.txt`、`battery_session_peak.txt`、`refresh_secs.txt`、`rotation.txt`、`panel-theme.txt`、`panel.log`、`api.log`。
+运行时生成、不纳入版本管理的文件：`device_monitor.db*`、`static/`、`target/`、`node_modules/`、`battery_effective_max.txt`、`battery_low_streak.txt`、`battery_session_peak.txt`、`refresh_secs.txt`、`rotation.txt`、`panel-theme.txt`、`panel-brightness.txt`、`panel.log`、`api.log`。
 
 ---
 
@@ -256,8 +274,16 @@ pnpm dev
 
 物理屏显示由独立进程 `panel/` 承担（Slint + femtovg，直驱 KMS），经本机 REST + WebSocket 从服务端取数，触摸交互（切页 / 滑动 / 底栏主题）：
 
+设置页（第 4 页）提供的控制：
+
+| 控件 | 行为 |
+|------|------|
+| 显示方向（横屏 / 竖屏 / 反转） | 落盘 `panel-orientation.txt` / `panel-flip.txt`，面板退出由启动器按新朝向重拉（约 5 秒黑屏过渡） |
+| 外观主题（深色 / 浅色） | 立即生效，落盘 `panel-theme.txt`（与底栏主题开关同源） |
+| 屏幕亮度滑块 | 下限 2%（防止拖到全黑后触摸找不回），经 `POST /api/hardware/brightness` 写背光节点；滑块拖动期间的密集回调由面板侧工作线程按 50ms 归并后下发，成功后落盘 `panel-brightness.txt`，下次启动补下发 |
+
 ```bash
-# 构建面板（workspace 成员，随 cargo build --release 一起编）
+# 构建服务端 + 面板（两个 crate 都在 workspace 默认成员里，一条命令编完）
 cargo build --release
 
 # 设备上运行（由 device-monitor-launcher.sh 自动拉起，一般不需要手工执行）
@@ -423,6 +449,24 @@ journalctl -u device-monitor -f      # 面板日志见 panel.log，服务日志�
 | POST | `/api/hardware/speaker/mute` | `{ "muted": true }` | 静音 / 取消静音 |
 | POST | `/api/hardware/speaker/test` | — | 播放测试音 |
 | POST | `/api/hardware/clear-memory` | — | 释放页缓存（需 root） |
+
+### NFC
+
+| 方法 | 路径 | 请求体 / 参数 | 说明 |
+|------|------|---------------|------|
+| GET | `/api/nfc/status` | — | 控制器状态、轮询/监听状态、安全单元、能力矩阵（含各项不可用原因） |
+| GET | `/api/nfc/tags` | — | 已发现卡片列表（UID 冒号分隔、协议、ATQA/SAK/ATS、技术类型、是否已离开） |
+| GET | `/api/nfc/events` | `?limit=50` | 最近事件（发现卡片 / 卡片离开 / 监听激活 / 原始帧 / 错误） |
+| POST | `/api/nfc/power` | `{ "up": true }` | 控制器上电 / 下电 |
+| POST | `/api/nfc/poll` | `{ "action": "start", "protocols": ["iso14443a","mifare","nfc_dep"] }` | 开始/停止轮询（`protocols` 省略 = 全选） |
+| POST | `/api/nfc/listen` | `{ "action": "start" }` | 开启/关闭 NFC-DEP 监听（点对点目标模式，非卡模拟） |
+| POST | `/api/nfc/read` | `{ "target_index": 1, "protocol": "mifare", "mode": "ndef" }` | 读取 NDEF；`mode: "pages"` 时按 `start_page`/`page_count` 转储原始页 |
+| POST | `/api/nfc/write` | `{ "target_index": 1, "kind": "text", "value": "你好", "lang": "zh" }` | 写入 NDEF（`kind`: `text` / `uri` / `raw`） |
+| POST | `/api/nfc/raw` | `{ "target_index": 1, "protocol": "mifare", "tx_hex": "3000", "timeout_ms": 800 }` | 原始帧收发（返回 tx/rx/耗时/错误） |
+| GET | `/api/nfc/emulate` | — | 卡模拟状态与事件（running / active / uid / ndef_hex / 最近事件） |
+| POST | `/api/nfc/emulate` | `{ "action": "start", "uid": "db4c1b5a", "kind": "text", "value": "你好", "lang": "zh" }` | 开始/停止 UID 卡模拟（`kind`: `text` / `uri` / `raw` / `message`，`message` = `raw_hex` 整条 NDEF 消息逐字节克隆）；模拟期间其它 NFC 接口返回互斥错误 |
+
+协议名取值：`jewel` / `mifare` / `felica` / `iso14443a` / `nfc_dep` / `iso14443b` / `iso15693`。
 
 ### 代理
 
