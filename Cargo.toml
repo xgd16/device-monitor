@@ -27,3 +27,8 @@ path = "src/main.rs"
 # GPU 物理屏面板（Slint + femtovg）：独立 crate，macOS 上用 winit 预览
 [workspace]
 members = ["panel"]
+# root 也是 package 时，cargo 的默认成员只有 root——面板会被漏掉（实测
+# `cargo build --release` 不会生成 target/release/device-monitor-panel）。
+# 显式把两个成员都设为默认，AGENTS.md / build.sh 里的
+# `cargo build --release` 才是「服务端 + 面板」一起编。
+default-members = [".", "panel"]
