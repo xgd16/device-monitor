@@ -57,3 +57,4 @@ battery_session_peak.txt
 # Panel
 panel/target/
 panel-theme.txt
+panel-brightness.txt

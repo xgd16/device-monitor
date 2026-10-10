@@ -254,9 +254,7 @@ fn run_command(name: &str, args: &[&str], env: Option<(&str, &str)>) -> Result<S
     if let Some((key, val)) = env {
         cmd.env(key, val);
     }
-    let output = cmd
-        .output()
-        .map_err(|e| format!("{name} failed: {e}"))?;
+    let output = cmd.output().map_err(|e| format!("{name} failed: {e}"))?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
@@ -272,9 +270,7 @@ fn run_pactl(args: &[&str]) -> Result<String, String> {
 }
 
 fn run_amixer_cset(control: &str, value: &str) {
-    let _ = std::process::Command::new(amixer_cmd())
-        .args(["-c", "0", "cset", control, value])
-        .output();
+    let _ = std::process::Command::new(amixer_cmd()).args(["-c", "0", "cset", control, value]).output();
 }
 
 /// 确保外放 mixer 路由已打开（MultiMedia3 / QUAT_MI2S_RX）。
@@ -317,10 +313,7 @@ fn parse_pactl_volume_percent(text: &str) -> Option<u32> {
 }
 
 fn parse_pactl_mute(text: &str) -> bool {
-    text.lines()
-        .find(|line| line.starts_with("Mute:"))
-        .map(|line| line.contains("yes"))
-        .unwrap_or(false)
+    text.lines().find(|line| line.starts_with("Mute:")).map(|line| line.contains("yes")).unwrap_or(false)
 }
 
 fn pulse_sink_available() -> bool {
@@ -340,10 +333,7 @@ fn read_speaker_state() -> SpeakerState {
             .ok()
             .and_then(|out| parse_pactl_volume_percent(&out))
             .unwrap_or(0);
-        let muted = run_pactl(&["get-sink-mute", SPEAKER_SINK])
-            .ok()
-            .map(|out| parse_pactl_mute(&out))
-            .unwrap_or(false);
+        let muted = run_pactl(&["get-sink-mute", SPEAKER_SINK]).ok().map(|out| parse_pactl_mute(&out)).unwrap_or(false);
         return SpeakerState {
             available: true,
             muted,
@@ -381,13 +371,11 @@ fn run_vibrate(duration_ms: u32) -> Result<(), String> {
         .arg(duration_ms.to_string())
         .output()
         .map_err(|e| format!("vibrate failed: {}", e))
-        .and_then(|o| {
-            if o.status.success() {
-                Ok(())
-            } else {
-                Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
-            }
-        })
+        .and_then(
+            |o| {
+                if o.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().to_string()) }
+            },
+        )
 }
 
 /// 读取当前硬件状态（LED、亮度、屏幕、振动）。
@@ -398,7 +386,10 @@ pub fn get_state() -> HardwareState {
 
     let brightness: u32 = read_sysfs(&format!("{}/brightness", BACKLIGHT)).parse().unwrap_or(0);
     let brightness_max: u32 = read_sysfs(&format!("{}/max_brightness", BACKLIGHT)).parse().unwrap_or(2047);
-    let brightness_pct = if brightness_max > 0 { (brightness as f64 / brightness_max as f64 * 100.0) as u32 } else { 0 };
+    // 四舍五入取整：截断会让「设置 25% → 511/2047=24.96%」读回 24%，
+    // 面板滑块（以及 Web 端）会看到自己刚设的值跳一格
+    let brightness_pct =
+        if brightness_max > 0 { (brightness as f64 / brightness_max as f64 * 100.0).round() as u32 } else { 0 };
 
     // bl_power: 0=开, 4=关
     let bl_power: u32 = read_sysfs(&format!("{}/bl_power", BACKLIGHT)).parse().unwrap_or(0);
@@ -406,11 +397,7 @@ pub fn get_state() -> HardwareState {
 
     let status_b: u32 = read_sysfs(STATUS_LED).parse().unwrap_or(0);
     let status_max: u32 = read_sysfs(STATUS_LED_MAX).parse().unwrap_or(511);
-    let status_pct = if status_max > 0 {
-        (status_b as f64 / status_max as f64 * 100.0) as u32
-    } else {
-        0
-    };
+    let status_pct = if status_max > 0 { (status_b as f64 / status_max as f64 * 100.0) as u32 } else { 0 };
 
     HardwareState {
         flashlight: FlashlightState {
@@ -427,11 +414,7 @@ pub fn get_state() -> HardwareState {
             percent: status_pct,
         },
         cpu_status_led_link: read_cpu_status_led_link_state(),
-        brightness: BrightnessState {
-            current: brightness,
-            max: brightness_max,
-            percent: brightness_pct,
-        },
+        brightness: BrightnessState { current: brightness, max: brightness_max, percent: brightness_pct },
         screen_on,
         vibrating: VIBRATING.load(Ordering::Relaxed),
         charging: read_charging_state(),
@@ -484,11 +467,7 @@ fn charge_power_w(voltage_uv: u32, current_ua: i32) -> f64 {
 }
 
 fn charge_mode_name(power_only: bool) -> String {
-    if power_only {
-        "power_only".into()
-    } else {
-        "normal".into()
-    }
+    if power_only { "power_only".into() } else { "normal".into() }
 }
 
 /// 向 qcom_smbx 写入充电挂起：0 = 仅供电，1 = 恢复充电。
@@ -561,10 +540,7 @@ fn refresh_qc_label() {
         if line.contains("no quick charge adapter") {
             decision = Some(String::new());
         } else if let Some(idx) = line.find("HVDCP ") {
-            let ver = line[idx + "HVDCP ".len()..]
-                .split_whitespace()
-                .next()
-                .unwrap_or("");
+            let ver = line[idx + "HVDCP ".len()..].split_whitespace().next().unwrap_or("");
             if ver == "2.0" || ver == "3.0" {
                 decision = Some(format!("QC {ver}"));
             }
@@ -579,13 +555,7 @@ fn refresh_qc_label() {
 
 /// 屏上用的协议短标签：QC 认证结论优先，其次按"电压抬升/限流抬升"推断快充，
 /// 最后退回 usb_type；未接充电器显示未连接。
-fn protocol_label(
-    usb_type_now: &str,
-    current_max_ua: u32,
-    charger_voltage_uv: u32,
-    online: bool,
-    qc: &str,
-) -> String {
+fn protocol_label(usb_type_now: &str, current_max_ua: u32, charger_voltage_uv: u32, online: bool, qc: &str) -> String {
     if !online {
         return "未连接".into();
     }
@@ -620,15 +590,8 @@ fn read_charging_state() -> ChargingState {
         refresh_qc_label();
     } else {
         // HVDCP 握手要几秒才打日志：插上后 30s 内没拿到标签就每轮重试
-        let elapsed = plug_instant()
-            .lock()
-            .ok()
-            .and_then(|g| g.map(|t| t.elapsed().as_secs_f32()))
-            .unwrap_or(999.0);
-        let empty = qc_label_store()
-            .lock()
-            .map(|g| g.is_empty())
-            .unwrap_or(false);
+        let elapsed = plug_instant().lock().ok().and_then(|g| g.map(|t| t.elapsed().as_secs_f32())).unwrap_or(999.0);
+        let empty = qc_label_store().lock().map(|g| g.is_empty()).unwrap_or(false);
         if empty && elapsed < 30.0 {
             refresh_qc_label();
         }
@@ -642,32 +605,21 @@ fn read_charging_state() -> ChargingState {
     let charger_voltage_uv: u32 = read_sysfs(CHARGER_VOLTAGE_NOW).parse().unwrap_or(0);
     let charger_current_ua: i32 = read_sysfs(CHARGER_CURRENT_NOW).parse().unwrap_or(0);
     // 电池侧（qcom-battery / PMI8998 FG）
-    let battery_voltage_uv: u32 = read_supply_field(BATTERY_SUPPLY, "voltage_now")
-        .parse()
-        .unwrap_or(0);
-    let battery_current_ua: i32 = read_supply_field(BATTERY_SUPPLY, "current_now")
-        .parse()
-        .unwrap_or(0);
+    let battery_voltage_uv: u32 = read_supply_field(BATTERY_SUPPLY, "voltage_now").parse().unwrap_or(0);
+    let battery_current_ua: i32 = read_supply_field(BATTERY_SUPPLY, "current_now").parse().unwrap_or(0);
 
     let mut voltage_now_uv = charger_voltage_uv;
     let mut current_now_ua = charger_current_ua;
 
     if charger_online && (voltage_now_uv == 0 || current_now_ua <= 0) {
-        voltage_now_uv = if battery_voltage_uv > 0 {
-            battery_voltage_uv
-        } else {
-            voltage_now_uv
-        };
+        voltage_now_uv = if battery_voltage_uv > 0 { battery_voltage_uv } else { voltage_now_uv };
         if battery_current_ua > 0 {
             current_now_ua = battery_current_ua;
         }
     }
 
     let power_w = charge_power_w(voltage_now_uv, current_now_ua);
-    let qc_label = qc_label_store()
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
+    let qc_label = qc_label_store().lock().map(|g| g.clone()).unwrap_or_default();
     let protocol_label = protocol_label(&usb_type_now, current_max_ua, charger_voltage_uv, charger_online, &qc_label);
 
     ChargingState {
@@ -705,22 +657,14 @@ fn cap_charge_current(microamps: u32, charge_source: &str) -> Result<u32, String
             "超过{}充电上限 {}（约 {}W）",
             if charge_source == "wireless" { "无线" } else { "有线" },
             fmt_ua_label(type_max),
-            if charge_source == "wireless" {
-                WIRELESS_MAX_POWER_W
-            } else {
-                WIRED_MAX_POWER_W
-            }
+            if charge_source == "wireless" { WIRELESS_MAX_POWER_W } else { WIRED_MAX_POWER_W }
         ));
     }
     Ok(microamps.min(DRIVER_MAX_UA))
 }
 
 fn fmt_ua_label(ua: u32) -> String {
-    if ua >= 1_000_000 {
-        format!("{:.1}A", ua as f64 / 1_000_000.0)
-    } else {
-        format!("{}mA", ua / 1000)
-    }
+    if ua >= 1_000_000 { format!("{:.1}A", ua as f64 / 1_000_000.0) } else { format!("{}mA", ua / 1000) }
 }
 
 fn hz_to_mhz(hz: u64) -> u32 {
@@ -728,15 +672,9 @@ fn hz_to_mhz(hz: u64) -> u32 {
 }
 
 fn read_gpu_state() -> GpuState {
-    let cur = read_sysfs(&format!("{}/cur_freq", GPU_DEVFREQ))
-        .parse::<u64>()
-        .unwrap_or(0);
-    let min = read_sysfs(&format!("{}/min_freq", GPU_DEVFREQ))
-        .parse::<u64>()
-        .unwrap_or(0);
-    let max = read_sysfs(&format!("{}/max_freq", GPU_DEVFREQ))
-        .parse::<u64>()
-        .unwrap_or(0);
+    let cur = read_sysfs(&format!("{}/cur_freq", GPU_DEVFREQ)).parse::<u64>().unwrap_or(0);
+    let min = read_sysfs(&format!("{}/min_freq", GPU_DEVFREQ)).parse::<u64>().unwrap_or(0);
+    let max = read_sysfs(&format!("{}/max_freq", GPU_DEVFREQ)).parse::<u64>().unwrap_or(0);
     let governor = read_sysfs(&format!("{}/governor", GPU_DEVFREQ));
     let available_freqs_mhz = read_sysfs(&format!("{}/available_frequencies", GPU_DEVFREQ))
         .split_whitespace()
@@ -758,19 +696,11 @@ fn read_gpu_state() -> GpuState {
 }
 
 fn read_wifi_power_save() -> WifiPowerSaveState {
-    let enabled = match std::process::Command::new(iw_cmd())
-        .args(["dev", WIFI_IFACE, "get", "power_save"])
-        .output()
-    {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).to_lowercase().contains("on")
-        }
+    let enabled = match std::process::Command::new(iw_cmd()).args(["dev", WIFI_IFACE, "get", "power_save"]).output() {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_lowercase().contains("on"),
         _ => false,
     };
-    WifiPowerSaveState {
-        enabled,
-        iface: WIFI_IFACE.to_string(),
-    }
+    WifiPowerSaveState { enabled, iface: WIFI_IFACE.to_string() }
 }
 
 /// 开关手电筒 LED（"white" 或 "yellow"）。
@@ -780,18 +710,14 @@ pub fn set_flashlight(led: &str, on: bool) -> Result<(), String> {
         "yellow" => "/sys/class/leds/yellow:flash/brightness",
         _ => return Err("invalid LED".to_string()),
     };
-    let max: u32 = read_sysfs(&format!("/sys/class/leds/{}:flash/max_brightness", led))
-        .parse()
-        .unwrap_or(255);
+    let max: u32 = read_sysfs(&format!("/sys/class/leds/{}:flash/max_brightness", led)).parse().unwrap_or(255);
     let val = if on { max.to_string() } else { "0".to_string() };
     write_sysfs(path, &val)
 }
 
 /// 设置屏幕亮度（0-100%）。
 pub fn set_brightness(percent: u32) -> Result<(), String> {
-    let max: u32 = read_sysfs(&format!("{}/max_brightness", BACKLIGHT))
-        .parse()
-        .unwrap_or(2047);
+    let max: u32 = read_sysfs(&format!("{}/max_brightness", BACKLIGHT)).parse().unwrap_or(2047);
     let val = ((percent.min(100) as f64 / 100.0) * max as f64) as u32;
     write_sysfs(&format!("{}/brightness", BACKLIGHT), &val.to_string())
 }
@@ -814,9 +740,7 @@ pub fn vibrate_once(duration_ms: u32) -> Result<u32, String> {
 pub fn start_pattern(pattern: &VibePattern) -> Result<bool, String> {
     stop_vibrate();
 
-    let segments: Vec<u32> = pattern.segments.iter()
-        .map(|s| s.duration_ms.max(50).min(3000))
-        .collect();
+    let segments: Vec<u32> = pattern.segments.iter().map(|s| s.duration_ms.max(50).min(3000)).collect();
     let repeat = pattern.repeat;
 
     VIBRATING.store(true, Ordering::Relaxed);
@@ -879,16 +803,12 @@ fn read_cpu_status_led_link_state() -> CpuStatusLedLinkState {
         enabled: CPU_STATUS_LED_LINK.load(Ordering::Relaxed),
         threshold_pct: CPU_LINK_THRESHOLD as u32,
         link_brightness_pct: CPU_LINK_CURRENT_BRIGHTNESS.load(Ordering::Relaxed),
-        smoothed_cpu_pct: *CPU_LINK_SMOOTHED
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()),
+        smoothed_cpu_pct: *CPU_LINK_SMOOTHED.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
 fn reset_cpu_link_smoothing() {
-    *CPU_LINK_SMOOTHED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = 0.0;
+    *CPU_LINK_SMOOTHED.lock().unwrap_or_else(|e| e.into_inner()) = 0.0;
     CPU_LINK_LAST_WRITTEN.store(0, Ordering::Relaxed);
     CPU_LINK_CURRENT_BRIGHTNESS.store(0, Ordering::Relaxed);
 }
@@ -932,9 +852,7 @@ pub fn apply_cpu_status_led_link(cpu_usage: f64) -> Result<Option<u32>, String> 
         return Ok(None);
     }
     let cpu = cpu_usage.clamp(0.0, 100.0);
-    let mut smoothed = CPU_LINK_SMOOTHED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut smoothed = CPU_LINK_SMOOTHED.lock().unwrap_or_else(|e| e.into_inner());
     *smoothed = CPU_LINK_SMOOTH_ALPHA * cpu + (1.0 - CPU_LINK_SMOOTH_ALPHA) * *smoothed;
 
     let target = map_cpu_to_link_brightness(*smoothed);
@@ -959,11 +877,7 @@ pub fn set_charge_current_max(microamps: u32) -> Result<u32, String> {
     TARGET_CHARGE_CURRENT_UA.store(capped, Ordering::Relaxed);
     let actual: u32 = read_sysfs(CHARGER_CURRENT_MAX).parse().unwrap_or(0);
     // 未接入充电器时驱动可能读回 0，返回写入值供前端展示
-    Ok(if actual == 0 && capped > 0 {
-        capped
-    } else {
-        actual
-    })
+    Ok(if actual == 0 && capped > 0 { capped } else { actual })
 }
 
 /// 设置充电模式：`power_only` = 仅供电不充电，`normal` = 正常充电。
@@ -992,10 +906,7 @@ pub fn set_gpu_max_freq_mhz(max_mhz: u32) -> Result<u32, String> {
         .or_else(|| available.iter().copied().min())
         .ok_or_else(|| "no GPU frequency".to_string())?;
 
-    write_sysfs(
-        &format!("{}/max_freq", GPU_DEVFREQ),
-        &chosen.to_string(),
-    )?;
+    write_sysfs(&format!("{}/max_freq", GPU_DEVFREQ), &chosen.to_string())?;
     Ok(hz_to_mhz(chosen))
 }
 
@@ -1022,11 +933,7 @@ pub fn set_speaker_volume(percent: u32) -> Result<u32, String> {
     run_amixer_cset("name=RX8 Digital Volume", &alsa_val.to_string());
 
     if pulse_sink_available() {
-        run_pactl(&[
-            "set-sink-volume",
-            SPEAKER_SINK,
-            &format!("{percent}%"),
-        ])?;
+        run_pactl(&["set-sink-volume", SPEAKER_SINK, &format!("{percent}%")])?;
         if percent > 0 {
             run_pactl(&["set-sink-mute", SPEAKER_SINK, "0"])?;
         }
@@ -1040,11 +947,7 @@ pub fn set_speaker_mute(muted: bool) -> Result<bool, String> {
     apply_speaker_alsa_route();
 
     if pulse_sink_available() {
-        run_pactl(&[
-            "set-sink-mute",
-            SPEAKER_SINK,
-            if muted { "1" } else { "0" },
-        ])?;
+        run_pactl(&["set-sink-mute", SPEAKER_SINK, if muted { "1" } else { "0" }])?;
     }
 
     if muted {

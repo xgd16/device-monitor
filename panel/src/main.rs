@@ -19,7 +19,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Timelike};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use slint::{ModelRc, VecModel, Weak};
 
 slint::include_modules!();
@@ -65,25 +65,23 @@ const ORIENT_PREF_FILE: &str = "panel-orientation.txt";
 const ROTATION_FILE: &str = "rotation.txt";
 /// 屏幕反转偏好：panel-flip.txt = "1" 时在当前朝向上再翻 180°。
 const FLIP_FILE: &str = "panel-flip.txt";
+/// 亮度记忆：panel-brightness.txt = 设置页滑块最后一次下发成功的百分比。
+/// 背光驱动重启后回到默认值（本机 511/2047 ≈ 25%），启动时按这个文件补下发。
+const BRIGHT_FILE: &str = "panel-brightness.txt";
+/// 亮度下限（%）：2% ≈ 41/2047，仍可见；再低在强光下等于黑屏，且触摸再也调不回来。
+const MIN_BRIGHTNESS: u32 = 2;
 
 /// 有效旋转（与启动器 try_panel 完全同序）：横屏朝向(rotation.txt) → 竖屏映射
 /// (90→180 / 270→0) → 屏幕反转(+180)。返回 0/90/180/270。
 fn effective_rotation(portrait: bool, flip: bool) -> u32 {
-    let digits: String = std::fs::read_to_string(ROTATION_FILE)
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect();
+    let digits: String =
+        std::fs::read_to_string(ROTATION_FILE).unwrap_or_default().chars().filter(|c| c.is_ascii_digit()).collect();
     let raw: u32 = digits.parse().unwrap_or(90); // 与启动器一致：缺省/无效 → 90
     let base = match raw {
         90 | 270 => raw,
         _ => 90,
     };
-    let mut rot = if portrait {
-        if base == 90 { 180 } else { 0 }
-    } else {
-        base
-    };
+    let mut rot = if portrait { if base == 90 { 180 } else { 0 } } else { base };
     if flip {
         rot = (rot + 180) % 360;
     }
@@ -159,10 +157,7 @@ fn spawn_transition_splash() {
     if !splash.exists() {
         return;
     }
-    let logf = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("splash.log"));
+    let logf = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("splash.log"));
     let mut cmd = std::process::Command::new(&splash);
     cmd.stdin(std::process::Stdio::null());
     if let Ok(f) = &logf {
@@ -243,9 +238,7 @@ fn main() {
         .unwrap_or_else(|| "landscape".into());
     let portrait = mode == "portrait";
     // 屏幕反转：panel-flip.txt = "1" → 当前朝向再翻 180°（与启动器 try_panel 同序）
-    let flip = std::fs::read_to_string(FLIP_FILE)
-        .map(|s| s.trim() == "1")
-        .unwrap_or(false);
+    let flip = std::fs::read_to_string(FLIP_FILE).map(|s| s.trim() == "1").unwrap_or(false);
     {
         // 后端在 app.run() 时才读该 env，此处覆盖启动器给的值（同一套文件同一套算法，结果一致）
         let rot = effective_rotation(portrait, flip);
@@ -289,9 +282,7 @@ fn main() {
     }
 
     // 主题持久化（panel-theme.txt，与旧屏 theme.txt 互不干扰）
-    let dark = std::fs::read_to_string("panel-theme.txt")
-        .map(|s| s.trim() != "light")
-        .unwrap_or(true);
+    let dark = std::fs::read_to_string("panel-theme.txt").map(|s| s.trim() != "light").unwrap_or(true);
     app.global::<Theme>().set_dark(dark);
     app.global::<Ui>().set_page(page_arg.clamp(0, 3));
     {
@@ -356,6 +347,39 @@ fn main() {
         });
     }
 
+    // 设置页亮度滑块：拖动期间只改 UI（滑块立即跟手），数值交给 brightness 线程
+    // 归并后 POST；demo 预览没有 API，不建线程也不落盘。
+    {
+        let tx = if demo { None } else { Some(spawn_brightness_worker()) };
+        // 亮度记忆：背光驱动重启后回到默认值，把上次下发成功的值补回去；
+        // 同时用它当滑块初值，免得启动后到 4s 轮询首次回填之间有 2 秒占位值。
+        let saved = std::fs::read_to_string(BRIGHT_FILE)
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .map(|v| v.clamp(MIN_BRIGHTNESS, 100));
+        if let (Some(tx), Some(v)) = (&tx, saved) {
+            let _ = tx.send(v);
+        }
+        if let Some(v) = saved {
+            let ui = app.global::<Ui>();
+            ui.set_brightness(v as f32);
+            ui.set_brightness_text(format!("{v}%").into());
+        }
+        let w = weak.clone();
+        app.global::<Ui>().on_set_brightness(move |p: f32| {
+            let pct = p.clamp(MIN_BRIGHTNESS as f32, 100.0);
+            if let Some(ui) = w.upgrade() {
+                let ui = ui.global::<Ui>();
+                // 回写一次：把下限钳位反映到滑块位置（拖到 1% 会弹回 2%）
+                ui.set_brightness(pct);
+                ui.set_brightness_text(format!("{}%", pct.round() as u32).into());
+            }
+            if let Some(tx) = &tx {
+                let _ = tx.send(pct.round() as u32);
+            }
+        });
+    }
+
     // 秒级时钟 + 时间进度 + 日出相位 + 世界时钟（子进程 30s 缓存）
     let timer = slint::Timer::default();
     {
@@ -409,10 +433,7 @@ fn jb(v: &Value, k: &str) -> bool {
 
 /// 统一响应包装 `{code, data}`；XTokenHub 与 device-monitor 同构。
 fn fetch_json(url: &str) -> Result<Value, String> {
-    let resp = ureq::get(url)
-        .timeout(Duration::from_secs(4))
-        .call()
-        .map_err(|e| format!("{url}: {e}"))?;
+    let resp = ureq::get(url).timeout(Duration::from_secs(4)).call().map_err(|e| format!("{url}: {e}"))?;
     let text = resp.into_string().map_err(|e| format!("读取 {url}: {e}"))?;
     let v: Value = serde_json::from_str(&text).map_err(|e| format!("解析 {url}: {e}"))?;
     if v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1) != 0 {
@@ -423,6 +444,50 @@ fn fetch_json(url: &str) -> Result<Value, String> {
 
 fn model<T: 'static + Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(rows))
+}
+
+/// 下发亮度：POST /api/hardware/brightness，服务端换算成背光节点的绝对值写入。
+/// 沿用 fetch_json 的 `{code,data}` 信封校验，失败把服务器原文带回来便于排障。
+fn post_brightness(percent: u32) -> Result<(), String> {
+    let url = format!("{BASE}/hardware/brightness");
+    let body = format!("{{\"percent\":{}}}", percent.clamp(MIN_BRIGHTNESS, 100));
+    let resp = ureq::post(&url)
+        .timeout(Duration::from_secs(4))
+        .set("Content-Type", "application/json")
+        .send_string(&body)
+        .map_err(|e| format!("{url}: {e}"))?;
+    let text = resp.into_string().map_err(|e| format!("读取 {url}: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("解析 {url}: {e}"))?;
+    if v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1) != 0 {
+        return Err(format!("{url} code!=0（{text}）"));
+    }
+    Ok(())
+}
+
+/// 亮度下发线程：滑块拖动期间回调密集（每秒几十次），这里用 recv_timeout 归并——
+/// 50ms 窗口内的连续值只发最后一个，且**最后一个值一定会发**（不是丢尾值的节流），
+/// 下发成功才落盘 panel-brightness.txt，避免拖动过程反复写 flash。
+fn spawn_brightness_worker() -> std::sync::mpsc::Sender<u32> {
+    let (tx, rx) = std::sync::mpsc::channel::<u32>();
+    std::thread::Builder::new()
+        .name("brightness".into())
+        .spawn(move || {
+            while let Ok(first) = rx.recv() {
+                let mut pct = first;
+                while let Ok(v) = rx.recv_timeout(Duration::from_millis(50)) {
+                    pct = v;
+                }
+                match post_brightness(pct) {
+                    Ok(()) => {
+                        let _ = std::fs::write(BRIGHT_FILE, format!("{pct}\n"));
+                        tracing_or_log(&format!("设置页亮度 → {pct}%"));
+                    }
+                    Err(e) => tracing_or_log(&format!("亮度 {pct}% 下发失败：{e}")),
+                }
+            }
+        })
+        .expect("brightness 线程启动失败");
+    tx
 }
 
 // ────────────────────────── 格式化 ──────────────────────────
@@ -452,11 +517,7 @@ fn fmt_tokens(n: i64) -> String {
 }
 
 fn fmt_mb(mb: i64) -> String {
-    if mb >= 1024 {
-        format!("{:.1} GB", mb as f64 / 1024.0)
-    } else {
-        format!("{mb} MB")
-    }
+    if mb >= 1024 { format!("{:.1} GB", mb as f64 / 1024.0) } else { format!("{mb} MB") }
 }
 
 fn fmt_uptime(secs: i64) -> String {
@@ -515,11 +576,7 @@ fn polyline(vals: &[f32], w: f32, h: f32, col: &str) -> (String, String) {
     for (i, v) in vals.iter().enumerate() {
         let x = 3.0 + i as f32 * step;
         let y = h - 2.0 - (v.max(0.0) / max).clamp(0.0, 1.0) * (h - 6.0);
-        pts.push_str(&if i == 0 {
-            format!("M {x:.1} {y:.1} ")
-        } else {
-            format!("L {x:.1} {y:.1} ")
-        });
+        pts.push_str(&if i == 0 { format!("M {x:.1} {y:.1} ") } else { format!("L {x:.1} {y:.1} ") });
     }
     let line = pts.trim().to_string();
     let area = format!("{line} L {:.1} {:.1} L 3.0 {:.1} Z", w - 3.0, h - 1.0, h - 1.0);
@@ -598,8 +655,7 @@ fn solar_noon(date: NaiveDate) -> Option<f64> {
         let m = (357.5291 + 0.985_600_28 * j_star).rem_euclid(360.0);
         let c = 1.9148 * (m * DEG).sin() + 0.0200 * (2.0 * m * DEG).sin() + 0.0003 * (3.0 * m * DEG).sin();
         let lambda = (m + c + 180.0 + 102.9372).rem_euclid(360.0);
-        let j_transit = 2_451_545.0 + j_star + 0.0053 * (m * DEG).sin()
-            - 0.0069 * (2.0 * lambda * DEG).sin();
+        let j_transit = 2_451_545.0 + j_star + 0.0053 * (m * DEG).sin() - 0.0069 * (2.0 * lambda * DEG).sin();
         let tz = Local::now().offset().local_minus_utc() as f64 / 3600.0;
         ((j_transit + 0.5 + tz / 24.0).rem_euclid(1.0)) * 24.0
     })
@@ -628,8 +684,7 @@ fn days_in_year(y: i32) -> i64 {
 
 fn month_days(y: i32, m: u32) -> i64 {
     let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-    (NaiveDate::from_ymd_opt(ny, nm, 1).unwrap() - NaiveDate::from_ymd_opt(y, m, 1).unwrap())
-        .num_days()
+    (NaiveDate::from_ymd_opt(ny, nm, 1).unwrap() - NaiveDate::from_ymd_opt(y, m, 1).unwrap()).num_days()
 }
 
 fn short_span(secs: f64) -> String {
@@ -702,14 +757,10 @@ fn tick_now(ui: &App) {
         }
     }
 
-    let wd = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-        [now.weekday().num_days_from_monday() as usize];
-    clk.set_date_line(
-        format!("{}月{}日  {wd}", now.month(), now.day()).into(),
-    );
+    let wd = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][now.weekday().num_days_from_monday() as usize];
+    clk.set_date_line(format!("{}月{}日  {wd}", now.month(), now.day()).into());
 
-    let left_sec = 86400.0
-        - (now.hour() as f64 * 3600.0 + now.minute() as f64 * 60.0 + now.second() as f64);
+    let left_sec = 86400.0 - (now.hour() as f64 * 3600.0 + now.minute() as f64 * 60.0 + now.second() as f64);
     let ls = left_sec as i64;
     clk.set_meta1(
         format!(
@@ -742,9 +793,21 @@ fn tick_now(ui: &App) {
     let diy = days_in_year(now.year()) as f64;
     let rows = vec![
         ("今日", sec_day / 86400.0 * 100.0, short_span(86400.0 - sec_day)),
-        ("本周", (wd_f * 86400.0 + sec_day) / (7.0 * 86400.0) * 100.0, short_span(7.0 * 86400.0 - wd_f * 86400.0 - sec_day)),
-        ("本月", ((now.day() as f64 - 1.0) * 86400.0 + sec_day) / (dim * 86400.0) * 100.0, short_span((dim - now.day() as f64) * 86400.0 + left_sec)),
-        ("本年", ((doy - 1.0) * 86400.0 + sec_day) / (diy * 86400.0) * 100.0, short_span((diy - doy) * 86400.0 + left_sec)),
+        (
+            "本周",
+            (wd_f * 86400.0 + sec_day) / (7.0 * 86400.0) * 100.0,
+            short_span(7.0 * 86400.0 - wd_f * 86400.0 - sec_day),
+        ),
+        (
+            "本月",
+            ((now.day() as f64 - 1.0) * 86400.0 + sec_day) / (dim * 86400.0) * 100.0,
+            short_span((dim - now.day() as f64) * 86400.0 + left_sec),
+        ),
+        (
+            "本年",
+            ((doy - 1.0) * 86400.0 + sec_day) / (diy * 86400.0) * 100.0,
+            short_span((diy - doy) * 86400.0 + left_sec),
+        ),
     ];
     let prog: Vec<crate::ProgRow> = rows
         .into_iter()
@@ -767,12 +830,7 @@ fn tick_now(ui: &App) {
         if let Some((_, rows)) = g.as_ref() {
             let cities: Vec<crate::CityRow> = rows
                 .iter()
-                .map(|(n, m, o, t)| crate::CityRow {
-                    name: n.into(),
-                    mark: m.into(),
-                    offset: o.into(),
-                    time: t.into(),
-                })
+                .map(|(n, m, o, t)| crate::CityRow { name: n.into(), mark: m.into(), offset: o.into(), time: t.into() })
                 .collect();
             clk.set_world(model(cities));
         }
@@ -857,9 +915,7 @@ type SunPair = Option<(f64, f64)>;
 
 /// 读背光 DPMS 状态（msm 把 bl_power=4 当熄屏）；读失败视为亮屏（fail-open）。
 fn read_screen_on() -> bool {
-    std::fs::read_to_string("/sys/class/backlight/ae94000.dsi.0/bl_power")
-        .map(|s| s.trim() != "4")
-        .unwrap_or(true)
+    std::fs::read_to_string("/sys/class/backlight/ae94000.dsi.0/bl_power").map(|s| s.trim() != "4").unwrap_or(true)
 }
 
 /// 熄屏降负载监视：poll bl_power（灭 1s / 亮 3s），连续 2 次读到新状态才切换。
@@ -977,11 +1033,7 @@ fn fetch_world() -> Vec<CityRowSigned> {
                 let time = it.next().unwrap_or("--:--").to_string();
                 let raw = it.next().unwrap_or("?");
                 // +0900 → +09:00（%z 两侧平台都支持）
-                let offset = if raw.len() == 5 {
-                    format!("{}:{}", &raw[..3], &raw[3..])
-                } else {
-                    raw.to_string()
-                };
+                let offset = if raw.len() == 5 { format!("{}:{}", &raw[..3], &raw[3..]) } else { raw.to_string() };
                 let mark = it
                     .next()
                     .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
@@ -1003,58 +1055,53 @@ fn fetch_world() -> Vec<CityRowSigned> {
 fn spawn_weather_feed(w: Weak<App>) {
     std::thread::Builder::new()
         .name("weather-feed".into())
-        .spawn(move || loop {
-            if let Some(wv) = fetch_weather() {
-                let ok = wv.ok;
-                let note = if ok {
-                    "西安 · Open-Meteo".to_string()
-                } else {
-                    "离线 · 显示上次数据".to_string()
-                };
-                let (temp_s, desc, wet) = if ok {
-                    (
-                        format!("{:.0}", wv.temp_c),
-                        code_desc(wv.code).to_string(),
-                        is_wet(wv.code),
-                    )
-                } else {
-                    ("--".into(), "--".into(), false)
-                };
-                let feels = format!("体感 {:.0}°", wv.feels_c);
-                let wind = format!("{} {:.1} m/s", wind_dir_cn(wv.wind_dir), wv.wind_ms);
-                let range = format!(
-                    "今日 {:.0}~{:.0}°C · 降水概率 {:.0}%",
-                    wv.t_min, wv.t_max, wv.precip_prob
-                );
-                let extra = format!(
-                    "湿度 {:.0}% · 降水 {:.1}mm · 日出 {} · 日落 {}",
-                    wv.humidity,
-                    wv.precip_mm,
-                    wv.sunrise.clone().unwrap_or_else(|| "--:--".into()),
-                    wv.sunset.clone().unwrap_or_else(|| "--:--".into()),
-                );
-                {
-                    let mut g = weather_cell().lock().unwrap_or_else(|p| p.into_inner());
-                    if ok {
-                        *g = wv.clone();
+        .spawn(move || {
+            loop {
+                if let Some(wv) = fetch_weather() {
+                    let ok = wv.ok;
+                    let note = if ok {
+                        "西安 · Open-Meteo".to_string()
+                    } else {
+                        "离线 · 显示上次数据".to_string()
+                    };
+                    let (temp_s, desc, wet) = if ok {
+                        (format!("{:.0}", wv.temp_c), code_desc(wv.code).to_string(), is_wet(wv.code))
+                    } else {
+                        ("--".into(), "--".into(), false)
+                    };
+                    let feels = format!("体感 {:.0}°", wv.feels_c);
+                    let wind = format!("{} {:.1} m/s", wind_dir_cn(wv.wind_dir), wv.wind_ms);
+                    let range = format!("今日 {:.0}~{:.0}°C · 降水概率 {:.0}%", wv.t_min, wv.t_max, wv.precip_prob);
+                    let extra = format!(
+                        "湿度 {:.0}% · 降水 {:.1}mm · 日出 {} · 日落 {}",
+                        wv.humidity,
+                        wv.precip_mm,
+                        wv.sunrise.clone().unwrap_or_else(|| "--:--".into()),
+                        wv.sunset.clone().unwrap_or_else(|| "--:--".into()),
+                    );
+                    {
+                        let mut g = weather_cell().lock().unwrap_or_else(|p| p.into_inner());
+                        if ok {
+                            *g = wv.clone();
+                        }
                     }
+                    let ok2 = ok;
+                    w.upgrade_in_event_loop(move |ui| {
+                        let clk = ui.global::<Clk>();
+                        clk.set_w_ok(ok2);
+                        clk.set_w_temp(temp_s.into());
+                        clk.set_w_desc(desc.into());
+                        clk.set_w_wet(wet);
+                        clk.set_w_feels(feels.into());
+                        clk.set_w_wind(wind.into());
+                        clk.set_w_range(range.into());
+                        clk.set_w_extra(extra.into());
+                        clk.set_w_note(note.into());
+                    })
+                    .ok();
                 }
-                let ok2 = ok;
-                w.upgrade_in_event_loop(move |ui| {
-                    let clk = ui.global::<Clk>();
-                    clk.set_w_ok(ok2);
-                    clk.set_w_temp(temp_s.into());
-                    clk.set_w_desc(desc.into());
-                    clk.set_w_wet(wet);
-                    clk.set_w_feels(feels.into());
-                    clk.set_w_wind(wind.into());
-                    clk.set_w_range(range.into());
-                    clk.set_w_extra(extra.into());
-                    clk.set_w_note(note.into());
-                })
-                .ok();
+                std::thread::sleep(Duration::from_secs(900));
             }
-            std::thread::sleep(Duration::from_secs(900));
         })
         .expect("weather-feed 线程启动失败");
 }
@@ -1076,11 +1123,7 @@ wind_speed_10m,wind_direction_10m,precipitation\
             && out.status.success()
             && let Some(w) = parse_weather(&String::from_utf8_lossy(&out.stdout))
         {
-            return Some(WeatherNow {
-                ok: true,
-                updated: Some(Instant::now()),
-                ..w
-            });
+            return Some(WeatherNow { ok: true, updated: Some(Instant::now()), ..w });
         }
     }
     // 失败：保留上次数据（ok 置 false 让界面标注离线）
@@ -1100,11 +1143,7 @@ fn parse_weather(body: &str) -> Option<WeatherNow> {
         o.get(k)?.as_array()?.get(i)?.as_str().map(|s| s.to_string())
     };
     let first_num = |o: &Value, k: &str| {
-        o.get(k)
-            .and_then(|x| x.as_array())
-            .and_then(|a| a.first())
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0)
+        o.get(k).and_then(|x| x.as_array()).and_then(|a| a.first()).and_then(|v| v.as_f64()).unwrap_or(0.0)
     };
     let hhmm_of = |s: Option<String>| -> Option<String> {
         s.and_then(|s| s.split('T').nth(1).map(|t| t.chars().take(5).collect()))
@@ -1235,10 +1274,7 @@ fn spawn_system_poller(w: Weak<App>) {
                         }
                         // 历史环形（等化器）
                         let cpu = ov.pointer("/cpu/overall_usage").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let mem_pct = ov
-                            .pointer("/memory/usage_percent")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0);
+                        let mem_pct = ov.pointer("/memory/usage_percent").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         push_hist(&mut cpu_hist, cpu as f32, HIST_BARS);
                         push_hist(&mut mem_hist, mem_pct as f32, HIST_BARS);
 
@@ -1300,15 +1336,13 @@ fn tracing_or_log(msg: &str) {
 }
 
 fn hostname() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| {
-            std::process::Command::new("hostname")
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .unwrap_or_else(|| "device".into())
-        })
+    std::fs::read_to_string("/proc/sys/kernel/hostname").map(|s| s.trim().to_string()).unwrap_or_else(|_| {
+        std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|| "device".into())
+    })
 }
 
 fn battery_status_cn(status: &str) -> (String, bool) {
@@ -1321,15 +1355,7 @@ fn battery_status_cn(status: &str) -> (String, bool) {
     }
 }
 
-fn apply_overview(
-    w: &Weak<App>,
-    ov: &Value,
-    ip: &str,
-    rx: f64,
-    tx: f64,
-    cpu_hist: &[f32],
-    mem_hist: &[f32],
-) {
+fn apply_overview(w: &Weak<App>, ov: &Value, ip: &str, rx: f64, tx: f64, cpu_hist: &[f32], mem_hist: &[f32]) {
     let ov = ov.clone();
     let cpu_usage = ov.pointer("/cpu/overall_usage").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let cores: Vec<crate::CoreRow> = ov
@@ -1348,26 +1374,13 @@ fn apply_overview(
     let mut thermal: Vec<(String, f64)> = ov
         .get("thermal")
         .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .map(|t| {
-                    (
-                        js(t, "name").replace("-thermal", ""),
-                        jf(t, "temp_celsius"),
-                    )
-                })
-                .collect()
-        })
+        .map(|a| a.iter().map(|t| (js(t, "name").replace("-thermal", ""), jf(t, "temp_celsius"))).collect())
         .unwrap_or_default();
     thermal.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let thermal_rows: Vec<crate::ThermalRow> = thermal
         .into_iter()
         .take(6)
-        .map(|(n, t)| crate::ThermalRow {
-            name: n.into(),
-            temp: t as f32,
-            temp_str: format!("{t:.1}").into(),
-        })
+        .map(|(n, t)| crate::ThermalRow { name: n.into(), temp: t as f32, temp_str: format!("{t:.1}").into() })
         .collect();
 
     let mem_used = ji(ov.pointer("/memory").unwrap_or(&json!({})), "used_mb");
@@ -1378,22 +1391,15 @@ fn apply_overview(
     let swap_t = ji(&mem, "swap_total_mb");
 
     let bat = ov.get("battery").cloned().unwrap_or(json!({}));
-    let bat_pct = if ji(&bat, "display_capacity_pct") > 0 {
-        ji(&bat, "display_capacity_pct")
-    } else {
-        ji(&bat, "capacity")
-    };
+    let bat_pct =
+        if ji(&bat, "display_capacity_pct") > 0 { ji(&bat, "display_capacity_pct") } else { ji(&bat, "capacity") };
     let (charger_online, hw_protocol, hw_brightness) = {
         let g = HW_LATEST.lock().unwrap_or_else(|p| p.into_inner());
         (g.charger_online, g.protocol.clone(), g.brightness.clone())
     };
     let (status_cn, charging) = battery_status_cn(&js(&bat, "status"));
     let protocol = if hw_protocol.is_empty() { js(&bat, "protocol_label") } else { hw_protocol };
-    let pill = if protocol.is_empty() {
-        status_cn.to_string()
-    } else {
-        format!("{status_cn} · {protocol}")
-    };
+    let pill = if protocol.is_empty() { status_cn.to_string() } else { format!("{status_cn} · {protocol}") };
     let remain = match ji(&bat, "time_left_min") {
         0 => "--".to_string(),
         n if n > 0 => format!("{}h{}m", n / 60, n % 60),
@@ -1425,12 +1431,11 @@ fn apply_overview(
 
     let mihomo = ov.get("mihomo").cloned().unwrap_or(json!({}));
     let uptime = jf(&ov, "uptime") as i64;
-    let load = ov.get("load_avg").and_then(|v| v.as_array()).map(|a| {
-        a.iter()
-            .map(|v| format!("{:.2}", v.as_f64().unwrap_or(0.0)))
-            .collect::<Vec<_>>()
-            .join(" / ")
-    }).unwrap_or_else(|| "-- / -- / --".into());
+    let load = ov
+        .get("load_avg")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().map(|v| format!("{:.2}", v.as_f64().unwrap_or(0.0))).collect::<Vec<_>>().join(" / "))
+        .unwrap_or_else(|| "-- / -- / --".into());
 
     let cpu_hist_rows: Vec<f32> = pad_hist(cpu_hist, HIST_BARS);
     let mem_hist_rows: Vec<f32> = pad_hist(mem_hist, HIST_BARS);
@@ -1488,11 +1493,7 @@ fn apply_overview(
         let vpn_ok = jb(&mihomo, "available");
         sys.set_vpn_ok(vpn_ok);
         sys.set_vpn_kind(if jb(&mihomo, "tun_enabled") { "TUN" } else { "代理" }.into());
-        sys.set_vpn_node(if vpn_ok {
-            clean_proxy(&js(&mihomo, "active_proxy")).into()
-        } else {
-            "未连接".into()
-        });
+        sys.set_vpn_node(if vpn_ok { clean_proxy(&js(&mihomo, "active_proxy")).into() } else { "未连接".into() });
         sys.set_vpn_conn(format!("连接 {}", ji(&mihomo, "connection_count")).into());
         sys.set_vpn_mode(format!("{} 模式", js(&mihomo, "mode")).into());
     })
@@ -1564,6 +1565,12 @@ fn apply_hardware(w: &Weak<App>, v: &Value) {
         sys.set_bat_chg_v(chg_v.into());
         sys.set_bat_chg_i(chg_i.into());
         ui.global::<Ui>().set_screen_on(screen_on);
+        // 亮度回填：拖动期间跳过——轮询拿到的是请求落地前的旧值，回填会把旋钮拽回去
+        let ui_g = ui.global::<Ui>();
+        if !ui_g.get_bright_drag() {
+            ui_g.set_brightness(br as f32);
+            ui_g.set_brightness_text(format!("{br}%").into());
+        }
     })
     .ok();
 }
@@ -1571,11 +1578,7 @@ fn apply_hardware(w: &Weak<App>, v: &Value) {
 fn apply_process(w: &Weak<App>, v: &Value) {
     let mut rows: Vec<(i64, String, f64, i64)> = v
         .as_array()
-        .map(|a| {
-            a.iter()
-                .map(|p| (ji(p, "pid"), js(p, "name"), jf(p, "cpu_usage"), ji(p, "memory_mb")))
-                .collect()
-        })
+        .map(|a| a.iter().map(|p| (ji(p, "pid"), js(p, "name"), jf(p, "cpu_usage"), ji(p, "memory_mb"))).collect())
         .unwrap_or_default();
     rows.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
     let count = rows.len();
@@ -1601,11 +1604,7 @@ fn apply_process(w: &Weak<App>, v: &Value) {
 fn apply_disk(w: &Weak<App>, v: &Value) {
     let root = v
         .as_array()
-        .and_then(|a| {
-            a.iter()
-                .find(|d| js(d, "mount") == "/")
-                .or_else(|| a.first())
-        })
+        .and_then(|a| a.iter().find(|d| js(d, "mount") == "/").or_else(|| a.first()))
         .cloned()
         .unwrap_or(json!({}));
     let pct = jf(&root, "usage_percent");
@@ -1632,11 +1631,7 @@ fn apply_wifi(w: &Weak<App>, v: &Value) {
     let band = js(v, "band");
     let ch = jf(v, "channel") as i64;
     let bitrate = js(v, "bitrate");
-    let detail = if connected {
-        format!("{band} · 信道{ch} · {bitrate}")
-    } else {
-        String::new()
-    };
+    let detail = if connected { format!("{band} · 信道{ch} · {bitrate}") } else { String::new() };
     w.upgrade_in_event_loop(move |ui| {
         let sys = ui.global::<Sys>();
         sys.set_wifi_ok(connected);
@@ -1655,11 +1650,7 @@ fn apply_bluetooth(w: &Weak<App>, v: &Value) {
         connected = devs.iter().filter(|d| jb(d, "connected")).count();
     }
     let text = if powered {
-        if connected > 0 {
-            format!("蓝牙 开 · {connected} 台连接")
-        } else {
-            "蓝牙 开".to_string()
-        }
+        if connected > 0 { format!("蓝牙 开 · {connected} 台连接") } else { "蓝牙 开".to_string() }
     } else {
         "蓝牙 关".to_string()
     };
@@ -1684,10 +1675,7 @@ fn apply_services(w: &Weak<App>) {
             "failed" => "失败",
             _ => "未知",
         };
-        rows.push(crate::SvcRow {
-            name: s.into(),
-            state: label.into(),
-        });
+        rows.push(crate::SvcRow { name: s.into(), state: label.into() });
     }
     w.upgrade_in_event_loop(move |ui| {
         ui.global::<Sys>().set_services(model(rows));
@@ -1707,12 +1695,7 @@ fn apply_alerts(w: &Weak<App>, v: &Value) {
                 Local.from_utc_datetime(&d.naive_utc()).format("%H:%M").to_string()
             })
             .unwrap_or_default();
-        (
-            js(&first, "title"),
-            js(&first, "message"),
-            time,
-            js(&first, "level"),
-        )
+        (js(&first, "title"), js(&first, "message"), time, js(&first, "level"))
     };
     w.upgrade_in_event_loop(move |ui| {
         let sys = ui.global::<Sys>();
@@ -1729,57 +1712,59 @@ fn apply_alerts(w: &Weak<App>, v: &Value) {
 fn spawn_token_poller(w: Weak<App>) {
     std::thread::Builder::new()
         .name("xtb-poll".into())
-        .spawn(move || loop {
-            // 熄屏降负载：跳过 stats 拉取与上屏（醒来 ≤5s 恢复，WS 样本照常进滑窗）
-            if !SCREEN_ON.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_secs(5));
-                continue;
-            }
-            let midnight = Local::now()
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .and_then(|d| Local.from_local_datetime(&d).single())
-                .map(|d| d.timestamp())
-                .unwrap_or(0);
-            let t0 = Instant::now();
-            let today = fetch_json(&format!("{XTB}/stats/summary?since={midnight}")).ok();
-            let d7 = fetch_json(&format!("{XTB}/stats/summary?hours=168")).ok();
-            let trend = fetch_json(&format!("{XTB}/stats/trend?hours=168&bucket=day")).ok();
-            let by_model = fetch_json(&format!("{XTB}/stats/by-model?hours=168")).ok();
-            let by_channel = fetch_json(&format!("{XTB}/stats/by-channel?hours=168")).ok();
-            let by_key = fetch_json(&format!("{XTB}/stats/by-key?hours=168")).ok();
-            let lifetime = fetch_json(&format!("{XTB}/stats/lifetime")).ok();
-            let forecast = fetch_json(&format!("{XTB}/stats/cost/forecast")).ok();
-            let billing = fetch_json(&format!("{XTB}/settings/billing")).ok();
-            let balances = fetch_json(&format!("{XTB}/channels/balances")).ok();
-            let channels = fetch_json(&format!("{XTB}/channels")).ok();
-            let rest_ok = today.is_some();
-            let http_ms = t0.elapsed().as_millis();
+        .spawn(move || {
+            loop {
+                // 熄屏降负载：跳过 stats 拉取与上屏（醒来 ≤5s 恢复，WS 样本照常进滑窗）
+                if !SCREEN_ON.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_secs(5));
+                    continue;
+                }
+                let midnight = Local::now()
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .and_then(|d| Local.from_local_datetime(&d).single())
+                    .map(|d| d.timestamp())
+                    .unwrap_or(0);
+                let t0 = Instant::now();
+                let today = fetch_json(&format!("{XTB}/stats/summary?since={midnight}")).ok();
+                let d7 = fetch_json(&format!("{XTB}/stats/summary?hours=168")).ok();
+                let trend = fetch_json(&format!("{XTB}/stats/trend?hours=168&bucket=day")).ok();
+                let by_model = fetch_json(&format!("{XTB}/stats/by-model?hours=168")).ok();
+                let by_channel = fetch_json(&format!("{XTB}/stats/by-channel?hours=168")).ok();
+                let by_key = fetch_json(&format!("{XTB}/stats/by-key?hours=168")).ok();
+                let lifetime = fetch_json(&format!("{XTB}/stats/lifetime")).ok();
+                let forecast = fetch_json(&format!("{XTB}/stats/cost/forecast")).ok();
+                let billing = fetch_json(&format!("{XTB}/settings/billing")).ok();
+                let balances = fetch_json(&format!("{XTB}/channels/balances")).ok();
+                let channels = fetch_json(&format!("{XTB}/channels")).ok();
+                let rest_ok = today.is_some();
+                let http_ms = t0.elapsed().as_millis();
 
-            apply_token(
-                &w,
-                today.as_ref(),
-                d7.as_ref(),
-                trend.as_ref(),
-                by_model.as_ref(),
-                by_channel.as_ref(),
-                by_key.as_ref(),
-                lifetime.as_ref(),
-                forecast.as_ref(),
-                billing.as_ref(),
-                balances.as_ref(),
-                channels.as_ref(),
-                rest_ok,
-                http_ms,
-            );
+                apply_token(
+                    &w,
+                    today.as_ref(),
+                    d7.as_ref(),
+                    trend.as_ref(),
+                    by_model.as_ref(),
+                    by_channel.as_ref(),
+                    by_key.as_ref(),
+                    lifetime.as_ref(),
+                    forecast.as_ref(),
+                    billing.as_ref(),
+                    balances.as_ref(),
+                    channels.as_ref(),
+                    rest_ok,
+                    http_ms,
+                );
 
-            // 15s 轮询；stats.updated 事件把间隔压到 5s
-            let mut waited = 0u64;
-            while waited < 15 {
-                std::thread::sleep(Duration::from_millis(500));
-                waited += 1; // 最快 5s 一刷：sleep 10 拍后允许
-                if waited >= 10 && REFRESH_REQUESTED.swap(false, Ordering::Relaxed) {
-                    break;
+                // 15s 轮询；stats.updated 事件把间隔压到 5s
+                let mut waited = 0u64;
+                while waited < 15 {
+                    std::thread::sleep(Duration::from_millis(500));
+                    waited += 1; // 最快 5s 一刷：sleep 10 拍后允许
+                    if waited >= 10 && REFRESH_REQUESTED.swap(false, Ordering::Relaxed) {
+                        break;
+                    }
                 }
             }
         })
@@ -1806,29 +1791,16 @@ fn apply_token(
     let empty = json!({});
     let today = today.unwrap_or(&empty);
     let d7 = d7.unwrap_or(&empty);
-    let rate = billing
-        .map(|b| jf(b, "usd_cny_rate"))
-        .filter(|r| *r > 0.0)
-        .unwrap_or(7.2);
-    let currency = billing
-        .map(|b| js(b, "display_currency"))
-        .filter(|c| !c.is_empty())
-        .unwrap_or_else(|| "CNY".into());
+    let rate = billing.map(|b| jf(b, "usd_cny_rate")).filter(|r| *r > 0.0).unwrap_or(7.2);
+    let currency = billing.map(|b| js(b, "display_currency")).filter(|c| !c.is_empty()).unwrap_or_else(|| "CNY".into());
     let is_cny = currency.eq_ignore_ascii_case("CNY");
     let money = |usd: f64| {
-        if is_cny {
-            format!("¥{:.2}", usd * rate)
-        } else {
-            format!("${usd:.2}")
-        }
+        if is_cny { format!("¥{:.2}", usd * rate) } else { format!("${usd:.2}") }
     };
 
     let total_req = ji(today, "total_requests");
-    let success_rate = if total_req > 0 {
-        ji(today, "success_requests") as f64 / total_req as f64 * 100.0
-    } else {
-        100.0
-    };
+    let success_rate =
+        if total_req > 0 { ji(today, "success_requests") as f64 / total_req as f64 * 100.0 } else { 100.0 };
 
     let trend_pts: Vec<f32> = trend
         .and_then(|t| t.as_array())
@@ -1837,21 +1809,15 @@ fn apply_token(
     let (trend_line, trend_area) = polyline(&trend_pts, TREND_W, TREND_H, "");
     let (trend_line_p, trend_area_p) = polyline(&trend_pts, TREND_W_P, TREND_H, "");
 
-    let total_all: i64 = by_model
-        .and_then(|m| m.as_array())
-        .map(|a| a.iter().map(|r| ji(r, "requests")).sum())
-        .unwrap_or(0);
+    let total_all: i64 =
+        by_model.and_then(|m| m.as_array()).map(|a| a.iter().map(|r| ji(r, "requests")).sum()).unwrap_or(0);
     let models: Vec<crate::RankRow> = by_model
         .and_then(|m| m.as_array())
         .map(|a| {
             a.iter()
                 .take(5)
                 .map(|r| {
-                    let share = if total_all > 0 {
-                        ji(r, "requests") as f64 / total_all as f64 * 100.0
-                    } else {
-                        0.0
-                    };
+                    let share = if total_all > 0 { ji(r, "requests") as f64 / total_all as f64 * 100.0 } else { 0.0 };
                     crate::RankRow {
                         name: js(r, "name").into(),
                         reqs: format!("{}", ji(r, "requests")).into(),
@@ -1876,15 +1842,9 @@ fn apply_token(
                 .take(4)
                 .map(|r| {
                     let name = js(r, "name");
-                    let bal = balances
-                        .and_then(|b| b.get("items").and_then(|i| i.as_array()))
-                        .and_then(|items| {
-                            items
-                                .iter()
-                                .find(|x| js(x, "channel_name") == name)
-                                .and_then(|x| x.get("balance"))
-                                .cloned()
-                        });
+                    let bal = balances.and_then(|b| b.get("items").and_then(|i| i.as_array())).and_then(|items| {
+                        items.iter().find(|x| js(x, "channel_name") == name).and_then(|x| x.get("balance")).cloned()
+                    });
                     let bal_s = match bal {
                         Some(b) if jf(&b, "total") > 0.0 => {
                             let cur = js(&b, "currency");
@@ -1907,21 +1867,15 @@ fn apply_token(
         })
         .unwrap_or_default();
 
-    let key_total: i64 = by_key
-        .and_then(|m| m.as_array())
-        .map(|a| a.iter().map(|r| ji(r, "requests")).sum())
-        .unwrap_or(0);
+    let key_total: i64 =
+        by_key.and_then(|m| m.as_array()).map(|a| a.iter().map(|r| ji(r, "requests")).sum()).unwrap_or(0);
     let keys: Vec<crate::KeyRow> = by_key
         .and_then(|m| m.as_array())
         .map(|a| {
             a.iter()
                 .take(4)
                 .map(|r| {
-                    let share = if key_total > 0 {
-                        ji(r, "requests") as f64 / key_total as f64 * 100.0
-                    } else {
-                        0.0
-                    };
+                    let share = if key_total > 0 { ji(r, "requests") as f64 / key_total as f64 * 100.0 } else { 0.0 };
                     crate::KeyRow {
                         name: js(r, "name").into(),
                         reqs: format!("{} 次", ji(r, "requests")).into(),
@@ -1967,8 +1921,11 @@ fn apply_token(
     );
     let lt_tokens_s = fmt_tokens(ji(lt, "total_tokens"));
     let peak_day = js(lt, "peak_day");
-    let lt_peak_s = format!("{} ({})", fmt_tokens(ji(lt, "peak_day_tokens")),
-        if peak_day.len() >= 10 { &peak_day[5..10] } else { &peak_day });
+    let lt_peak_s = format!(
+        "{} ({})",
+        fmt_tokens(ji(lt, "peak_day_tokens")),
+        if peak_day.len() >= 10 { &peak_day[5..10] } else { &peak_day }
+    );
     let lt_streak_s = format!("{} / {} 天", ji(lt, "current_streak"), ji(lt, "max_streak"));
     let rest_info = format!("{http_ms}ms");
 
@@ -2190,24 +2147,39 @@ fn spawn_demo(w: Weak<App>) {
                     "brightness": {"percent": 42},
                 });
                 apply_hardware(&w, &hw);
-                apply_disk(&w, &json!([{"mount": "/", "usage_percent": 62.4, "used_mb": 45_600,
-                                        "total_mb": 96_000, "fstype": "ext4", "inode_percent": 4.1}]));
-                apply_wifi(&w, &json!({"connected": true, "ssid": "Home-5G", "signal_dbm": -52,
-                                       "band": "5GHz", "channel": 44, "bitrate": "866.7 Mbit/s"}));
-                apply_bluetooth(&w, &json!({"powered": true, "devices": [
-                    {"address": "AA:BB:CC:DD:EE:FF", "name": "小米手环", "paired": true, "connected": true},
-                ]}));
-                apply_process(&w, &json!([
-                    {"pid": 812, "name": "xtokenhub", "cpu_usage": 23.4, "memory_mb": 412},
-                    {"pid": 331, "name": "mihomo", "cpu_usage": 8.1, "memory_mb": 188},
-                    {"pid": 1, "name": "init", "cpu_usage": 0.1, "memory_mb": 12},
-                    {"pid": 902, "name": "device-monitor-server", "cpu_usage": 3.2, "memory_mb": 96},
-                    {"pid": 77, "name": "slint-panel", "cpu_usage": 6.5, "memory_mb": 132},
-                ]));
+                apply_disk(
+                    &w,
+                    &json!([{"mount": "/", "usage_percent": 62.4, "used_mb": 45_600,
+                                        "total_mb": 96_000, "fstype": "ext4", "inode_percent": 4.1}]),
+                );
+                apply_wifi(
+                    &w,
+                    &json!({"connected": true, "ssid": "Home-5G", "signal_dbm": -52,
+                                       "band": "5GHz", "channel": 44, "bitrate": "866.7 Mbit/s"}),
+                );
+                apply_bluetooth(
+                    &w,
+                    &json!({"powered": true, "devices": [
+                        {"address": "AA:BB:CC:DD:EE:FF", "name": "小米手环", "paired": true, "connected": true},
+                    ]}),
+                );
+                apply_process(
+                    &w,
+                    &json!([
+                        {"pid": 812, "name": "xtokenhub", "cpu_usage": 23.4, "memory_mb": 412},
+                        {"pid": 331, "name": "mihomo", "cpu_usage": 8.1, "memory_mb": 188},
+                        {"pid": 1, "name": "init", "cpu_usage": 0.1, "memory_mb": 12},
+                        {"pid": 902, "name": "device-monitor-server", "cpu_usage": 3.2, "memory_mb": 96},
+                        {"pid": 77, "name": "slint-panel", "cpu_usage": 6.5, "memory_mb": 132},
+                    ]),
+                );
                 apply_services(&w);
-                apply_alerts(&w, &json!([
-                    {"level": "warning", "title": "内存偏高", "message": "使用率 71% 超过阈值 70%", "timestamp": chrono::Utc::now().timestamp() - 600},
-                ]));
+                apply_alerts(
+                    &w,
+                    &json!([
+                        {"level": "warning", "title": "内存偏高", "message": "使用率 71% 超过阈值 70%", "timestamp": chrono::Utc::now().timestamp() - 600},
+                    ]),
+                );
                 t += 2.0;
                 std::thread::sleep(Duration::from_secs(2));
             }
@@ -2279,11 +2251,7 @@ fn spawn_demo(w: Weak<App>) {
             let mut t = 0f64;
             loop {
                 let burst = (t % 40.0 < 12.0) as i32;
-                let v = if burst == 1 {
-                    (30.0 + 25.0 * (t * 2.7).sin()).max(2.0) as f32
-                } else {
-                    0.0
-                };
+                let v = if burst == 1 { (30.0 + 25.0 * (t * 2.7).sin()).max(2.0) as f32 } else { 0.0 };
                 tps.push_back(v);
                 while tps.len() > TPS_POINTS {
                     tps.pop_front();

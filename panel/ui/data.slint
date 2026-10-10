@@ -267,6 +267,12 @@ export global Ui {
     in-out property <bool> flip: false;
     // 面板版本（设置页「关于」展示，Rust 启动时写入）
     in-out property <string> panel-version: "";
+    // 屏幕亮度（2–100%）：设置页滑块的值；Rust 侧 4s 轮询 /hardware 回填，
+    // 拖动期间（bright-drag）不回填，否则 4s 一次的旧值会把旋钮拽回去。
+    // 显示文本由 Rust 格式化（Slint 浮点插值不控精度，见文件头约定）。
+    in-out property <float> brightness: 42.0;
+    in-out property <string> brightness-text: "42%";
+    in-out property <bool> bright-drag: false;
     // LiveDot 呼吸相位（Rust tick 每秒推进，同上）
     in-out property <float> live-pulse: 0.9;
 
@@ -291,4 +297,7 @@ export global Ui {
     callback set-orientation(bool);
     // 设置页屏幕反转（true=翻转 180°）：写 panel-flip.txt 后退出重启
     callback set-flip(bool);
+    // 设置页亮度滑块（percent 2–100）：设备上 POST /api/hardware/brightness（写背光节点），
+    // 工作线程合并拖动期间的密集回调；macOS 预览只落 UI。
+    callback set-brightness(float);
 }

@@ -1,35 +1,47 @@
-// 第 4 页：设置。方向（横/竖，写 panel-orientation.txt 后重启面板生效）+ 主题 + 关于。
-// 横版 1142x404 双列，竖版 512x1028 单列；按钮为大触控目标（本机是触摸屏）。
+// 第 4 页：设置。显示方向（横/竖/反转）+ 外观主题 + 屏幕亮度 + 关于。
+//
+// 交互控件（v2）：旧版把选项做成 170x152（竖版 154x190）的大色块，按键几乎占满整张卡，
+// 信息密度极低。现在改成一行分段按钮（segmented control）：
+//   · 高度 52（竖版 64）逻辑像素 = 104 / 128 物理像素 ≈ 6.5 / 8.0 mm，
+//     是本机触摸屏「能稳稳点中」的下限，同时不再喧宾夺主；
+//   · 选中态只用主题色描边 + 淡色底 + 彩色副标题表达，不引入新的硬编码色值；
+//   · 卡片留白改为「提示在上、控件居中、当前值在下」，比旧版更好扫读。
+// 亮度：滑块直接调背光（Rust 侧 POST /api/hardware/brightness → 写 /sys/class/backlight），
+// 滑杆命中区 44（竖版 56）高，拖动中 Ui.bright-drag 置位，避免 4s 轮询的旧值把旋钮拽回去。
+// 横版 1142x404：2x2 四卡；竖版 512x1028 单列四卡。
 import { Theme } from "theme.slint";
 import { Sys, Ui } from "data.slint";
 import { Card, Mono } from "widgets.slint";
 
-// 大号选择按钮：选中态 = 主题色描边 + 淡色底 + 彩色说明文字
-component OptBtn inherits Rectangle {
+// 分段按钮：单行两段文字（主标签 + 副说明），高度由调用方给。
+// 按下即变暗（无过渡动画，瞬时不烧渲染循环）；选中态 = 主题色描边 + 14% 淡色底。
+component SegBtn inherits Rectangle {
     in property <string> label;
     in property <string> sub: "";
     in property <bool> sel;
     in property <color> tint: Theme.accent;
     callback pick();
-    border-radius: 14px;
-    background: root.sel ? root.tint.with-alpha(0.13) : Theme.card-alt;
+    accessible-role: button;
+    accessible-label: root.label + " " + root.sub;
+    border-radius: 13px;
+    background: root.sel ? root.tint.with-alpha(0.14) : Theme.card-alt;
     border-width: 1.5px;
     border-color: root.sel ? root.tint : Theme.border;
     animate background {
-        duration: 200ms;
+        duration: 180ms;
         easing: ease-out;
     }
     animate border-color {
-        duration: 200ms;
+        duration: 180ms;
         easing: ease-out;
     }
     VerticalLayout {
-        padding: 12px;
+        padding: 5px;
         alignment: center;
-        spacing: 6px;
+        spacing: 0px;
         Text {
             text: root.label;
-            font-size: 17px;
+            font-size: 15px;
             font-weight: 700;
             color: root.sel ? Theme.emphasis : Theme.fg;
             font-family: Theme.font-body;
@@ -43,9 +55,87 @@ component OptBtn inherits Rectangle {
             horizontal-alignment: TextHorizontalAlignment.center;
         }
     }
-    TouchArea {
+    ta := TouchArea {
         clicked => {
             root.pick();
+        }
+    }
+    opacity: ta.pressed ? 0.78 : 1.0;
+}
+
+// 亮度滑块：视觉高度 = 轨道 8 + 旋钮 22，命中区由调用方给（44 / 56）。
+// value 由调用方单向绑定（Ui.brightness）——拖动只回调 changed，由页面写回全局，
+// 所以旋钮位置永远等于真实值（含 Rust 侧的下限钳位），不存在「滑杆值」与「屏幕值」两套状态。
+component BrightSlider inherits Rectangle {
+    in property <float> value: 50.0;
+    callback changed(float);
+    callback grabbed();
+    callback released();
+    property <length> knob: 22px;
+    property <length> track-x: root.knob / 2;
+    property <length> track-w: root.width - root.knob;
+    property <float> pct: Math.max(2.0, Math.min(root.value, 100.0));
+
+    // 触摸点到百分比的换算：两端各留半个旋钮的死区
+    public function pct-at(x: length) -> float {
+        Math.max(2.0, Math.min(100.0, (x - root.track-x) / root.track-w * 100.0))
+    }
+
+    Rectangle {
+        x: root.track-x;
+        y: (root.height - 8px) / 2;
+        width: root.track-w;
+        height: 8px;
+        border-radius: 4px;
+        background: Theme.track;
+        Rectangle {
+            // x 必须显式写 0：子元素宽度用 parent.width 表达时，Slint 会自动生成
+            // 「居中」的 x（生成代码 (parent.width - width)/2），填充块就跑到轨道正中间去了
+            x: 0px;
+            width: parent.width * root.pct / 100;
+            height: 100%;
+            border-radius: 4px;
+            // 纯色，不要渐变：渐变的坐标系是填充矩形自身，宽度随进度变化 ⇒ 同一个像素
+            // 的颜色会跟着进度漂移，半透明→实色的过渡带落在轨道中段就是一条脏色带
+            // （8px 高的半透明渐变在暗轨道上还出色阶）。已滑过区域就该是一个选中色。
+            background: Theme.accent;
+        }
+    }
+    Rectangle {
+        x: root.track-x + root.track-w * root.pct / 100 - root.knob / 2;
+        y: (root.height - root.knob) / 2;
+        width: root.knob;
+        height: root.knob;
+        border-radius: root.knob / 2;
+        background: Theme.card;
+        border-width: 2.5px;
+        border-color: Theme.accent;
+        Rectangle {
+            x: (parent.width - 6px) / 2;
+            y: (parent.height - 6px) / 2;
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: Theme.accent;
+        }
+    }
+    TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.grabbed();
+            }
+            if (e.kind == PointerEventKind.down || (e.kind == PointerEventKind.move && self.pressed)) {
+                root.changed(root.pct-at(self.mouse-x));
+            }
+            if (e.kind == PointerEventKind.up) {
+                root.changed(root.pct-at(self.mouse-x));
+                root.released();
+            }
+            // 控件中途被禁用/指针被抢走时 Slint 只发 cancel：这里必须复位拖动标志，
+            // 否则 Ui.bright-drag 会一直挂着，4s 轮询就再也不回填亮度了
+            if (e.kind == PointerEventKind.cancel) {
+                root.released();
+            }
         }
     }
 }
@@ -54,7 +144,7 @@ component OptBtn inherits Rectangle {
 component Kv inherits Rectangle {
     in property <string> k;
     in property <string> v;
-    height: 24px;
+    height: 26px;
     Text {
         x: 0px;
         y: Theme.text-nudge;
@@ -66,8 +156,8 @@ component Kv inherits Rectangle {
         font-family: Theme.font-body;
     }
     Mono {
-        x: 120px;
-        width: parent.width - 120px;
+        x: 88px;
+        width: parent.width - 88px;
         y: Theme.text-nudge;
         height: parent.height;
         vertical-alignment: TextVerticalAlignment.center;
@@ -78,7 +168,13 @@ component Kv inherits Rectangle {
     }
 }
 
-// ── 横屏版（1142x404）：方向 / 主题 双列 + 关于通栏 ──
+// 卡片内分隔发丝线
+component Hairline inherits Rectangle {
+    height: 1px;
+    background: Theme.border;
+}
+
+// ── 横屏版（1142x404）：2x2 四卡 ──
 export component PageSettings inherits Rectangle {
     in property <int> idx: 3;
     x: (root.idx - Ui.page) * ((root.idx - Ui.page) <= 0 ? 395px : 1142px);
@@ -101,23 +197,23 @@ export component PageSettings inherits Rectangle {
         x: 0px;
         y: 0px;
         width: 560px;
-        height: 240px;
+        height: 196px;
         title: "显示方向";
         Text {
             x: 14px;
             y: 30px;
-            width: 530px;
-            text: "横/竖切换或屏幕反转都会让面板自动重启（约 5 秒黑屏），触摸坐标随朝向自动校准；选择会记忆，重启后保持。";
+            width: 532px;
+            text: "切换方向或反转会让面板重启（约 5 秒），触摸坐标自动跟随朝向；选择会持久保存。";
             font-size: 8.5px;
             color: Theme.muted;
             font-family: Theme.font-body;
             wrap: word-wrap;
         }
-        OptBtn {
+        SegBtn {
             x: 14px;
-            y: 64px;
+            y: 86px;
             width: 170px;
-            height: 152px;
+            height: 52px;
             label: "横屏";
             sub: "1170 × 540";
             sel: !Ui.portrait;
@@ -125,11 +221,11 @@ export component PageSettings inherits Rectangle {
                 Ui.set-orientation(false);
             }
         }
-        OptBtn {
-            x: 192px;
-            y: 64px;
+        SegBtn {
+            x: 195px;
+            y: 86px;
             width: 170px;
-            height: 152px;
+            height: 52px;
             label: "竖屏";
             sub: "540 × 1170";
             tint: Theme.accent2;
@@ -138,18 +234,32 @@ export component PageSettings inherits Rectangle {
                 Ui.set-orientation(true);
             }
         }
-        OptBtn {
-            x: 370px;
-            y: 64px;
+        SegBtn {
+            x: 376px;
+            y: 86px;
             width: 170px;
-            height: 152px;
+            height: 52px;
             label: "反转";
-            sub: "翻转 180°";
+            sub: "再翻 180°";
             tint: Theme.warning;
             sel: Ui.flip;
             pick => {
                 Ui.set-flip(!Ui.flip);
             }
+        }
+        Hairline {
+            x: 14px;
+            y: 152px;
+            width: 532px;
+        }
+        Text {
+            x: 14px;
+            y: 162px;
+            width: 532px;
+            text: "当前 " + (Ui.portrait ? "竖屏 540 × 1170" : "横屏 1170 × 540") + (Ui.flip ? " · 已反转" : "");
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
         }
     }
 
@@ -157,23 +267,23 @@ export component PageSettings inherits Rectangle {
         x: 576px;
         y: 0px;
         width: 566px;
-        height: 240px;
+        height: 196px;
         title: "外观主题";
         Text {
             x: 14px;
             y: 30px;
-            width: 536px;
-            text: "立即生效并记忆（panel-theme.txt）。深色适配夜间，浅色适配强光环境。";
+            width: 538px;
+            text: "立即生效并记入 panel-theme.txt。深色适配夜间与熄屏前，浅色适配强光环境。";
             font-size: 8.5px;
             color: Theme.muted;
             font-family: Theme.font-body;
             wrap: word-wrap;
         }
-        OptBtn {
+        SegBtn {
             x: 14px;
-            y: 64px;
-            width: 262px;
-            height: 152px;
+            y: 86px;
+            width: 265px;
+            height: 52px;
             label: "深色";
             sub: "夜间友好";
             sel: Theme.dark;
@@ -183,11 +293,11 @@ export component PageSettings inherits Rectangle {
                 }
             }
         }
-        OptBtn {
-            x: 290px;
-            y: 64px;
-            width: 262px;
-            height: 152px;
+        SegBtn {
+            x: 287px;
+            y: 86px;
+            width: 265px;
+            height: 52px;
             label: "浅色";
             sub: "强光可读";
             tint: Theme.warning;
@@ -198,47 +308,156 @@ export component PageSettings inherits Rectangle {
                 }
             }
         }
+        Hairline {
+            x: 14px;
+            y: 152px;
+            width: 538px;
+        }
+        Text {
+            x: 14px;
+            y: 162px;
+            width: 538px;
+            text: "当前 " + (Theme.dark ? "深色" : "浅色") + " · 底栏开关与这里同源";
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
     }
 
     Card {
         x: 0px;
-        y: 254px;
-        width: 1142px;
-        height: 150px;
+        y: 208px;
+        width: 560px;
+        height: 196px;
+        title: "屏幕亮度";
+        Text {
+            x: 14px;
+            y: 30px;
+            width: 532px;
+            text: "拖动即时生效；下限 2%，避免拖到全黑后连触摸都找不回来。";
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            wrap: word-wrap;
+        }
+        Text {
+            x: 14px;
+            y: 62px;
+            text: "亮度";
+            font-size: 9px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Mono {
+            x: 306px;
+            y: 54px;
+            width: 240px;
+            text: Ui.brightness-text;
+            font-size: 22px;
+            font-weight: 700;
+            color: Theme.accent;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        BrightSlider {
+            x: 14px;
+            y: 100px;
+            width: 532px;
+            height: 44px;
+            value: Ui.brightness;
+            changed(v) => {
+                Ui.brightness = v;
+                Ui.set-brightness(v);
+            }
+            grabbed => {
+                Ui.bright-drag = true;
+            }
+            released => {
+                Ui.bright-drag = false;
+            }
+        }
+        Hairline {
+            x: 14px;
+            y: 160px;
+            width: 532px;
+        }
+        Text {
+            x: 14px;
+            y: 170px;
+            width: 532px;
+            text: "背光 /sys/class/backlight/ae94000.dsi.0（0–2047）· 记忆 panel-brightness.txt";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+    }
+
+    Card {
+        x: 576px;
+        y: 208px;
+        width: 566px;
+        height: 196px;
         title: "关于";
         Kv {
             x: 14px;
-            y: 42px;
-            width: 540px;
+            y: 44px;
+            width: 262px;
             k: "面板版本";
             v: "v" + Ui.panel-version;
         }
         Kv {
-            x: 14px;
-            y: 74px;
-            width: 540px;
-            k: "采集间隔";
-            v: "\{Sys.refresh-secs}s";
-        }
-        Kv {
-            x: 588px;
-            y: 42px;
-            width: 540px;
+            x: 290px;
+            y: 44px;
+            width: 262px;
             k: "运行时长";
             v: Sys.uptime;
         }
         Kv {
-            x: 588px;
-            y: 74px;
-            width: 540px;
+            x: 14px;
+            y: 78px;
+            width: 262px;
+            k: "采集间隔";
+            v: "\{Sys.refresh-secs}s";
+        }
+        Kv {
+            x: 290px;
+            y: 78px;
+            width: 262px;
             k: "屏幕状态";
-            v: Ui.screen-on ? "亮屏" : "熄屏（降负载中）";
+            v: Ui.screen-on ? "亮屏" : "熄屏降负载";
+        }
+        Kv {
+            x: 14px;
+            y: 112px;
+            width: 262px;
+            k: "屏幕朝向";
+            v: (Ui.portrait ? "竖屏 540 × 1170" : "横屏 1170 × 540") + (Ui.flip ? " · 反转" : "");
+        }
+        Kv {
+            x: 290px;
+            y: 112px;
+            width: 262px;
+            k: "外观主题";
+            v: Theme.dark ? "深色" : "浅色";
+        }
+        Hairline {
+            x: 14px;
+            y: 150px;
+            width: 538px;
         }
         Text {
             x: 14px;
-            y: 112px;
-            width: 1114px;
-            text: "数据源 本机 API :3000 · XTokenHub :9192 · 天气 Open-Meteo（15 分钟）　|　配置 panel-orientation.txt · panel-theme.txt";
+            y: 160px;
+            width: 538px;
+            text: "数据源 API :3000 · XTokenHub :9192 · Open-Meteo 天气";
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: 14px;
+            y: 176px;
+            width: 538px;
+            text: "配置 panel-orientation / panel-flip / panel-theme / panel-brightness.txt";
             font-size: 8px;
             color: Theme.muted;
             font-family: Theme.font-body;
@@ -246,7 +465,7 @@ export component PageSettings inherits Rectangle {
     }
 }
 
-// ── 竖屏版（512x1028）：单列堆叠 ──
+// ── 竖屏版（512x1028）：单列四卡；控件高度 64（≈8 mm），竖握时更好点 ──
 export component PageSettingsP inherits Rectangle {
     in property <int> idx: 3;
     x: (root.idx - Ui.page) * ((root.idx - Ui.page) <= 0 ? 256px : 512px);
@@ -268,23 +487,23 @@ export component PageSettingsP inherits Rectangle {
         x: 0px;
         y: 0px;
         width: 512px;
-        height: 300px;
+        height: 230px;
         title: "显示方向";
         Text {
             x: 14px;
-            y: 30px;
+            y: 34px;
             width: 484px;
-            text: "横/竖切换或屏幕反转都会让面板自动重启（约 5 秒黑屏），触摸坐标随朝向自动校准；选择会记忆，重启后保持。";
-            font-size: 8.5px;
+            text: "切换方向或反转会让面板重启（约 5 秒），触摸坐标自动跟随朝向；选择会持久保存。";
+            font-size: 9px;
             color: Theme.muted;
             font-family: Theme.font-body;
             wrap: word-wrap;
         }
-        OptBtn {
+        SegBtn {
             x: 14px;
-            y: 70px;
+            y: 100px;
             width: 154px;
-            height: 190px;
+            height: 64px;
             label: "横屏";
             sub: "1170 × 540";
             sel: !Ui.portrait;
@@ -292,11 +511,11 @@ export component PageSettingsP inherits Rectangle {
                 Ui.set-orientation(false);
             }
         }
-        OptBtn {
-            x: 174px;
-            y: 70px;
+        SegBtn {
+            x: 179px;
+            y: 100px;
             width: 154px;
-            height: 190px;
+            height: 64px;
             label: "竖屏";
             sub: "540 × 1170";
             tint: Theme.accent2;
@@ -305,42 +524,56 @@ export component PageSettingsP inherits Rectangle {
                 Ui.set-orientation(true);
             }
         }
-        OptBtn {
-            x: 334px;
-            y: 70px;
+        SegBtn {
+            x: 344px;
+            y: 100px;
             width: 154px;
-            height: 190px;
+            height: 64px;
             label: "反转";
-            sub: "翻转 180°";
+            sub: "再翻 180°";
             tint: Theme.warning;
             sel: Ui.flip;
             pick => {
                 Ui.set-flip(!Ui.flip);
             }
         }
+        Hairline {
+            x: 14px;
+            y: 186px;
+            width: 484px;
+        }
+        Text {
+            x: 14px;
+            y: 196px;
+            width: 484px;
+            text: "当前 " + (Ui.portrait ? "竖屏 540 × 1170" : "横屏 1170 × 540") + (Ui.flip ? " · 已反转" : "");
+            font-size: 9px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
     }
 
     Card {
         x: 0px;
-        y: 316px;
+        y: 244px;
         width: 512px;
-        height: 300px;
+        height: 230px;
         title: "外观主题";
         Text {
             x: 14px;
-            y: 30px;
+            y: 34px;
             width: 484px;
-            text: "立即生效并记忆（panel-theme.txt）。深色适配夜间，浅色适配强光环境。";
-            font-size: 8.5px;
+            text: "立即生效并记入 panel-theme.txt。深色适配夜间与熄屏前，浅色适配强光环境。";
+            font-size: 9px;
             color: Theme.muted;
             font-family: Theme.font-body;
             wrap: word-wrap;
         }
-        OptBtn {
+        SegBtn {
             x: 14px;
-            y: 70px;
-            width: 235px;
-            height: 190px;
+            y: 100px;
+            width: 238px;
+            height: 64px;
             label: "深色";
             sub: "夜间友好";
             sel: Theme.dark;
@@ -350,11 +583,11 @@ export component PageSettingsP inherits Rectangle {
                 }
             }
         }
-        OptBtn {
-            x: 263px;
-            y: 70px;
-            width: 235px;
-            height: 190px;
+        SegBtn {
+            x: 260px;
+            y: 100px;
+            width: 238px;
+            height: 64px;
             label: "浅色";
             sub: "强光可读";
             tint: Theme.warning;
@@ -365,57 +598,152 @@ export component PageSettingsP inherits Rectangle {
                 }
             }
         }
+        Hairline {
+            x: 14px;
+            y: 186px;
+            width: 484px;
+        }
+        Text {
+            x: 14px;
+            y: 196px;
+            width: 484px;
+            text: "当前 " + (Theme.dark ? "深色" : "浅色") + " · 底栏开关与这里同源";
+            font-size: 9px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
     }
 
     Card {
         x: 0px;
-        y: 632px;
+        y: 488px;
         width: 512px;
-        height: 260px;
+        height: 220px;
+        title: "屏幕亮度";
+        Text {
+            x: 14px;
+            y: 34px;
+            width: 484px;
+            text: "拖动即时生效；下限 2%，避免拖到全黑后连触摸都找不回来。";
+            font-size: 9px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            wrap: word-wrap;
+        }
+        Text {
+            x: 14px;
+            y: 84px;
+            text: "亮度";
+            font-size: 9.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+        Mono {
+            x: 284px;
+            y: 74px;
+            width: 214px;
+            text: Ui.brightness-text;
+            font-size: 26px;
+            font-weight: 700;
+            color: Theme.accent;
+            horizontal-alignment: TextHorizontalAlignment.right;
+        }
+        BrightSlider {
+            x: 14px;
+            y: 124px;
+            width: 484px;
+            height: 56px;
+            value: Ui.brightness;
+            changed(v) => {
+                Ui.brightness = v;
+                Ui.set-brightness(v);
+            }
+            grabbed => {
+                Ui.bright-drag = true;
+            }
+            released => {
+                Ui.bright-drag = false;
+            }
+        }
+        Text {
+            x: 14px;
+            y: 190px;
+            width: 484px;
+            text: "背光 /sys/class/backlight/ae94000.dsi.0 · 记忆 panel-brightness.txt";
+            font-size: 8.5px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+        }
+    }
+
+    Card {
+        x: 0px;
+        y: 722px;
+        width: 512px;
+        height: 300px;
         title: "关于";
         Kv {
             x: 14px;
-            y: 42px;
+            y: 44px;
             width: 484px;
             k: "面板版本";
             v: "v" + Ui.panel-version;
         }
         Kv {
             x: 14px;
-            y: 74px;
+            y: 76px;
             width: 484px;
             k: "运行时长";
             v: Sys.uptime;
         }
         Kv {
             x: 14px;
-            y: 106px;
+            y: 108px;
             width: 484px;
             k: "采集间隔";
             v: "\{Sys.refresh-secs}s";
         }
         Kv {
             x: 14px;
-            y: 138px;
+            y: 140px;
             width: 484px;
             k: "屏幕状态";
-            v: Ui.screen-on ? "亮屏" : "熄屏（降负载中）";
+            v: Ui.screen-on ? "亮屏" : "熄屏降负载";
+        }
+        Kv {
+            x: 14px;
+            y: 172px;
+            width: 484px;
+            k: "屏幕朝向";
+            v: (Ui.portrait ? "竖屏 540 × 1170" : "横屏 1170 × 540") + (Ui.flip ? " · 反转" : "");
+        }
+        Kv {
+            x: 14px;
+            y: 204px;
+            width: 484px;
+            k: "外观主题";
+            v: Theme.dark ? "深色" : "浅色";
+        }
+        Hairline {
+            x: 14px;
+            y: 250px;
+            width: 484px;
         }
         Text {
             x: 14px;
-            y: 180px;
+            y: 262px;
             width: 484px;
-            text: "数据源 本机 API :3000 · XTokenHub :9192 · 天气 Open-Meteo（15 分钟）";
-            font-size: 8px;
+            text: "数据源 API :3000 · XTokenHub :9192 · Open-Meteo 天气";
+            font-size: 8.5px;
             color: Theme.muted;
             font-family: Theme.font-body;
         }
         Text {
             x: 14px;
-            y: 200px;
+            y: 282px;
             width: 484px;
-            text: "配置 panel-orientation.txt · panel-theme.txt";
-            font-size: 8px;
+            text: "配置 panel-orientation / panel-flip / panel-theme / panel-brightness.txt";
+            font-size: 8.5px;
             color: Theme.muted;
             font-family: Theme.font-body;
         }
