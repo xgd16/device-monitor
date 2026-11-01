@@ -285,6 +285,32 @@ pnpm dev
 
 熄屏语义：电源键 / `POST /api/hardware/screen` 只写背光 `bl_power`（4=灭）。熄屏时服务端对触摸屏 `stmfts` 的 evdev 节点做 `EVIOCGRAB` 独占：事件只进服务端 fd 并被丢弃，libinput 收不到，黑屏下的触摸不会再被面板消费（改亮度 / 主题 / 方向）；亮屏释放 grab 即恢复。**不走 input `inhibited`**：那会让驱动 close/open 并反复切 FTS5 scan mode（0x00/0xff），这台机器的触摸 IC 在多次切换后会整块失效（2026-11-01 实测，只能硬复位恢复）。服务端每 2s 巡检 `bl_power`，外部直接改背光状态也会同步。
 
+### 触摸屏（FTS5）暖重启后不扫描的修复（2026-11-01）
+
+现象：暖重启（`reboot`，不是整机断电）后触摸完全无响应；`stmfts` 仍有 ~26 次/秒 `STATUS_UPDATE` 中断，raw evdev 0 事件，面板只收到固定坐标的幽灵触点。重启、驱动 unbind/bind、整机冷断电、reset 引脚脉冲都试过，只能偶尔恢复。
+
+根因：主线 FTS5 驱动在 `input_open` 里只下发 `0xa0 0x00 0xff`（scan mode），没有像 FTS4 那样下发 `MS_MT_SENSE_ON (0x93)`。暖重启后芯片的扫描引擎停在关闭状态，scan-mode 命令被 ACK 但不会真正启动扫描；补发 `0x93` 后立即恢复（无需长复位/冷断电）。
+
+修复见 `patches/stmfts5-sense-on-and-vendor-reset.patch`（基于设备内核树里已有 ghost/stuck 补丁的 `stmfts.c`）：
+
+- `stmfts5_input_open` 在 scan mode 之后补发 `STMFTS_MS_MT_SENSE_ON`（0x93）；
+- 接管 DT 的厂商属性 `st,reset-gpio`（标准 `reset-gpios` 不存在），按低电平有效处理；
+- 增加 `.shutdown`：暖重启前拉复位并关闭 vdd/avdd，进一步保证下次 probe 是干净状态；
+- `reset_hold_ms` / `reset_release_ms` 模块参数默认 20/50，仅用于排障。
+
+应用方式：
+
+```bash
+cd /home/user/build/linux-sdm845-7.1-rc1-r0
+patch -p1 < /path/to/patches/stmfts5-sense-on-and-vendor-reset.patch
+make -j8 LLVM=1 ARCH=arm64 KBUILD_MODPOST_WARN=1 M=drivers/input/touchscreen stmfts.ko
+zstd -19 -f -o /lib/modules/$(uname -r)/kernel/drivers/input/touchscreen/stmfts.ko.zst \
+  drivers/input/touchscreen/stmfts.ko
+depmod -a && modprobe -r stmfts && modprobe stmfts
+```
+
+验证：暖重启后 raw evdev 滑动 10 秒有 1400+ 字节事件、面板 `[touch-probe]` 正常增长；反复重启/熄屏亮屏不再失效。
+
 ```bash
 # 构建服务端 + 面板（两个 crate 都在 workspace 默认成员里，一条命令编完）
 cargo build --release

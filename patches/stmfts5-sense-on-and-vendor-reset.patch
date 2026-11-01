@@ -1,0 +1,112 @@
+--- a/drivers/input/touchscreen/stmfts.c
++++ b/drivers/input/touchscreen/stmfts.c
+@@ -99,6 +99,19 @@
+ #define STMFTS_MAX_FINGERS	10
+ #define STMFTS_DEV_NAME		"stmfts"
+ 
++/*
++ * Perseus: the FTS5 can come out of a warm reboot with its scan engine
++ * stopped (only STATUS_UPDATE interrupts).  A longer reset pulse than the
++ * 20 ms datasheet minimum is sometimes needed; make it tunable so the
++ * minimum can be found at runtime without rebuilding the module.
++ */
++static unsigned int reset_hold_ms = 20;
++module_param(reset_hold_ms, uint, 0644);
++MODULE_PARM_DESC(reset_hold_ms, "Touch IC reset assert time in milliseconds");
++static unsigned int reset_release_ms = 50;
++module_param(reset_release_ms, uint, 0644);
++MODULE_PARM_DESC(reset_release_ms, "Touch IC reset release-to-I2C time in milliseconds");
++
+ static const struct regulator_bulk_data stmfts_supplies[] = {
+ 	{ .supply = "vdd" },
+ 	{ .supply = "avdd" },
+@@ -884,6 +897,18 @@
+ 		return err;
+ 	}
+ 
++	/*
++	 * The FTS4 path uses MS_MT_SENSE_ON to actually start the analog
++	 * scan engine; FTS5 mainline only issues the 0xa0 scan-mode command.
++	 * On this unit the scan engine can stay stopped after a warm reboot
++	 * even though 0xa0/0xff was accepted, so issue the explicit sense-on
++	 * as well.
++	 */
++	err = i2c_smbus_write_byte(sdata->client, STMFTS_MS_MT_SENSE_ON);
++	if (err)
++		dev_warn(&sdata->client->dev,
++			 "input_open: MS_MT_SENSE_ON failed: %d\n", err);
++
+ 	return 0;
+ }
+ 
+@@ -1074,10 +1099,10 @@
+ static void stmfts_reset(struct stmfts_data *sdata)
+ {
+ 	gpiod_set_value_cansleep(sdata->reset_gpio, 1);
+-	msleep(20);
++	msleep(reset_hold_ms);
+ 
+ 	gpiod_set_value_cansleep(sdata->reset_gpio, 0);
+-	msleep(50);
++	msleep(reset_release_ms);
+ }
+ 
+ static int stmfts_configure(struct stmfts_data *sdata)
+@@ -1334,6 +1359,27 @@
+ 		return dev_err_probe(dev, PTR_ERR(sdata->reset_gpio),
+ 				     "Failed to get GPIO 'reset'\n");
+ 
++	/*
++	 * Perseus DT uses the vendor property "st,reset-gpio" instead of the
++	 * standard "reset-gpios".  Without this fallback reset_gpio stays
++	 * NULL, stmfts_power_on() never pulses it, and the FTS5 can come out
++	 * of a warm reboot stuck in STATUS_UPDATE-only mode (no scanning).
++	 */
++	if (!sdata->reset_gpio) {
++		sdata->reset_gpio = devm_gpiod_get_optional(dev, "st,reset",
++							    GPIOD_OUT_HIGH);
++		if (IS_ERR(sdata->reset_gpio))
++			return dev_err_probe(dev, PTR_ERR(sdata->reset_gpio),
++					     "Failed to get GPIO 'st,reset'\n");
++		if (sdata->reset_gpio) {
++			/* Perseus wires this line active-low, but the vendor DT */
++			/* property has no GPIO_ACTIVE_LOW flag.  Flip the descriptor */
++			/* so gpiod_set_value(1) really asserts reset. */
++			gpiod_toggle_active_low(sdata->reset_gpio);
++			dev_info(dev, "using vendor reset GPIO 'st,reset-gpio' (active-low)\n");
++		}
++	}
++
+ 	sdata->input = devm_input_allocate_device(dev);
+ 	if (!sdata->input)
+ 		return -ENOMEM;
+@@ -1412,6 +1458,21 @@
+ 	pm_runtime_disable(&client->dev);
+ }
+ 
++static void stmfts_shutdown(struct i2c_client *client)
++{
++	struct stmfts_data *sdata = i2c_get_clientdata(client);
++
++	/*
++	 * Perseus: make a warm reboot behave like a power cycle for the FTS5.
++	 * Assert reset and drop the touch rails; otherwise the chip can come
++	 * back with its scan engine stopped (STATUS_UPDATE only).  reset_gpio
++	 * is active-low on this board (see the vendor-property fallback).
++	 */
++	if (sdata->reset_gpio)
++		gpiod_set_value_cansleep(sdata->reset_gpio, 1);
++	stmfts_power_off(sdata);
++}
++
+ static int stmfts_runtime_suspend(struct device *dev)
+ {
+ 	struct stmfts_data *sdata = dev_get_drvdata(dev);
+@@ -1557,6 +1618,7 @@
+ 	},
+ 	.probe = stmfts_probe,
+ 	.remove = stmfts_remove,
++	.shutdown = stmfts_shutdown,
+ 	.id_table = stmfts_id,
+ };
+ 
