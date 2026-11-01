@@ -722,10 +722,50 @@ pub fn set_brightness(percent: u32) -> Result<(), String> {
     write_sysfs(&format!("{}/brightness", BACKLIGHT), &val.to_string())
 }
 
-/// 控制屏幕背光开关。
+/// 读取背光开关状态（bl_power：0=亮，4=灭；读失败按亮屏处理）。
+pub fn screen_on() -> bool {
+    read_sysfs(&format!("{}/bl_power", BACKLIGHT)).parse::<u32>().map(|v| v == 0).unwrap_or(true)
+}
+
+/// 按设备名解析触摸屏（stmfts）的 sysfs 事件节点。
+/// 与启动器一致不硬编码 eventN：枚举顺序会随 probe 顺序变化。
+fn touch_event_dir() -> Option<std::path::PathBuf> {
+    for entry in fs::read_dir("/sys/class/input").ok()?.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with("event") {
+            continue;
+        }
+        let name = fs::read_to_string(entry.path().join("device/name")).unwrap_or_default();
+        if name.trim() == "stmfts" {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
+/// 抑制（true）/恢复（false）触摸屏输入。
+///
+/// 熄屏只写 `bl_power=4` 只关背光：stmfts 仍上报事件，libinput/Slint 照常把
+/// 手指送进面板 —— 黑屏下点设置页会真的改亮度/主题/方向。走 input 核心的
+/// `inhibited` 属性让驱动 close（STMFTS_MS_MT_SENSE_OFF）、事件在 input 层丢弃，
+/// 亮屏再 uninhibit 触发 open，面板进程无需重启。
+/// 内核不支持或设备缺失时静默跳过（fail-open）。
+pub fn set_touch_inhibited(inhibit: bool) -> Result<(), String> {
+    let Some(dir) = touch_event_dir() else { return Ok(()) };
+    let path = dir.join("device/inhibited");
+    if !path.exists() {
+        return Ok(());
+    }
+    write_sysfs(path.to_string_lossy().as_ref(), if inhibit { "1" } else { "0" })
+}
+
+/// 控制屏幕背光开关（熄屏时同步停掉触摸屏输入，避免黑屏误触）。
 pub fn set_screen_power(on: bool) -> Result<(), String> {
     let val = if on { "0" } else { "4" };
-    write_sysfs(&format!("{}/bl_power", BACKLIGHT), val)
+    write_sysfs(&format!("{}/bl_power", BACKLIGHT), val)?;
+    if let Err(e) = set_touch_inhibited(!on) {
+        eprintln!("set_screen_power: 触摸屏{}失败: {e}", if on { "恢复" } else { "抑制" });
+    }
+    Ok(())
 }
 
 /// 触发一次振动，时长限制在 50-3000ms。

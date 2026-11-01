@@ -77,7 +77,7 @@ Web 端新增 **NFC** 页（顶栏导航），调用设备上的 NFC 控制器�
 ### 物理屏与按键
 
 - **GPU 物理屏仪表**（唯一显示）：`panel/` crate（Slint 1.18 + femtovg，直驱 KMS/GLES），四页卡片布局（系统监控 / Token 用量 / 时钟 / 设置；设置页含显示方向 / 屏幕反转 / 外观主题 / 屏幕亮度滑块），触摸操作（切页 / 滑动 / 底栏主题）。由 `device-monitor-launcher.sh` 拉起，与 API 服务组合为 `device-monitor.service`；面板异常退出自动重拉。
-- **按键**：电源键单击 = 屏幕熄灭/点亮（熄屏时面板暂停渲染，采集与 WS 继续）、双击 = 切换白光/黄光手电筒；音量上双击 = 翻转屏幕横向朝向（落盘 `rotation.txt`，面板重启后生效）
+- **按键**：电源键单击 = 屏幕熄灭/点亮（熄屏时面板暂停渲染、触摸屏经 input `inhibited` 整体停用，采集与 WS 继续）、双击 = 切换白光/黄光手电筒；音量上双击 = 翻转屏幕横向朝向（落盘 `rotation.txt`，面板重启后生效）
 - 旧 DRM/KMS 直绘（`--screen`）与 kmscon/ASCII 字符 TUI（`--tui`）渲染器及其回退链已于 2026-09-27 移除
 
 ### 其他
@@ -281,6 +281,8 @@ pnpm dev
 | 显示方向（横屏 / 竖屏 / 反转） | 落盘 `panel-orientation.txt` / `panel-flip.txt`，面板退出由启动器按新朝向重拉（约 5 秒黑屏过渡） |
 | 外观主题（深色 / 浅色） | 立即生效，落盘 `panel-theme.txt`（与底栏主题开关同源） |
 | 屏幕亮度滑块 | 下限 2%（防止拖到全黑后触摸找不回），经 `POST /api/hardware/brightness` 写背光节点；滑块拖动期间的密集回调由面板侧工作线程按 50ms 归并后下发，成功后落盘 `panel-brightness.txt`，下次启动补下发 |
+
+熄屏语义：电源键 / `POST /api/hardware/screen` 只写背光 `bl_power`（4=灭）。熄屏时服务端同时把触摸屏 `stmfts` 的 `/sys/class/input/eventN/device/inhibited` 置 1，input 核心会停掉驱动（`STMFTS_MS_MT_SENSE_OFF`），黑屏下的触摸不会再被面板消费（改亮度 / 主题 / 方向）；亮屏置 0 触发驱动重新 open，面板进程无需重启。服务端每 2s 巡检 `bl_power`，外部直接改背光状态也会同步。
 
 ```bash
 # 构建服务端 + 面板（两个 crate 都在 workspace 默认成员里，一条命令编完）

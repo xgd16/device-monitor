@@ -53,8 +53,23 @@ static/
 battery_effective_max.txt
 battery_low_streak.txt
 battery_session_peak.txt
+battery_capacity_mah.txt
+battery_discharge.txt
+battery_session_done.txt
+/Discharging
+/rotation.txt
+/refresh_secs.txt
+/theme.txt
+/panel-flip.txt
+/panel-orientation.txt
 
 # Panel
 panel/target/
 panel-theme.txt
 panel-brightness.txt
+
+# macOS AppleDouble / 本地备份（跨机拷贝会带 ._ 前缀资源叉）
+._*
+*.bak
+*.bak-*
+

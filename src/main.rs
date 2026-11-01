@@ -64,6 +64,11 @@ async fn main() {
     // 音量键：双击音量上翻转物理屏朝向并落盘 rotation.txt，面板下次启动按新值渲染。
     collector::power_key::start_listener();
     collector::hotkeys::start_listener();
+    // 熄屏状态可能早于服务启动：先按背光同步一次触摸屏抑制，
+    // 否则熄屏状态下的重启会让黑屏触摸重新生效。
+    if let Err(e) = collector::hardware::set_touch_inhibited(!collector::hardware::screen_on()) {
+        tracing::warn!("触摸屏抑制初始化失败: {}", e);
+    }
     // 朝向状态与落盘对齐：Web 端 /api/system/rotation 展示与双击翻转都依赖它；
     // 不初始化会出现「展示 rot90 而实际 rot270」以及第一次双击写回原值的假失灵。
     crate::collector::hotkeys::set_rot270(store::settings::load_rotation().as_deref() == Some("rot270"));
@@ -112,6 +117,10 @@ async fn main() {
                     collector::power_key::update_screen_state(screen_on);
                     if screen_on != prev_screen_on {
                         prev_screen_on = screen_on;
+                        // 外部写 bl_power（面板 DPMS / 手写 sysfs）也兜住：熄屏停触摸
+                        if let Err(e) = collector::hardware::set_touch_inhibited(!screen_on) {
+                            tracing::error!("触摸屏抑制同步失败: {}", e);
+                        }
                         tracing::info!(
                             "屏幕{}：采集间隔 {}s（refresh={}s）",
                             if screen_on { "点亮" } else { "熄灭" },
