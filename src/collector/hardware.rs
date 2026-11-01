@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -190,6 +191,8 @@ const RX7_VOLUME_MAX: u32 = 124;
 
 /// 振动是否正在进行（供状态查询）
 static VIBRATING: AtomicBool = AtomicBool::new(false);
+/// 熄屏期间持有的触摸 evdev 独占句柄（None = 未抑制）。
+static TOUCH_GRAB: Mutex<Option<fs::File>> = Mutex::new(None);
 /// CPU 使用率是否联动状态 LED 亮度。
 static CPU_STATUS_LED_LINK: AtomicBool = AtomicBool::new(false);
 /// CPU 联动：低于此使用率熄灭
@@ -744,17 +747,38 @@ fn touch_event_dir() -> Option<std::path::PathBuf> {
 /// 抑制（true）/恢复（false）触摸屏输入。
 ///
 /// 熄屏只写 `bl_power=4` 只关背光：stmfts 仍上报事件，libinput/Slint 照常把
-/// 手指送进面板 —— 黑屏下点设置页会真的改亮度/主题/方向。走 input 核心的
-/// `inhibited` 属性让驱动 close（STMFTS_MS_MT_SENSE_OFF）、事件在 input 层丢弃，
-/// 亮屏再 uninhibit 触发 open，面板进程无需重启。
-/// 内核不支持或设备缺失时静默跳过（fail-open）。
+/// 手指送进面板 —— 黑屏下点设置页会真的改亮度/主题/方向。
+///
+/// 这里用 `EVIOCGRAB` 独占触摸 evdev：事件只进本进程 fd（不读、直接丢），
+/// libinput 收不到；亮屏 ioctl 释放即恢复。**不碰芯片 scan mode** —— 之前用
+/// input 核心的 `inhibited` 会触发驱动 close/open（FTS5 `SET_SCAN_MODE`
+/// 0x00/0xff），这台机器的触摸 IC 在反复切换后会整块失效（只能硬复位恢复）。
 pub fn set_touch_inhibited(inhibit: bool) -> Result<(), String> {
-    let Some(dir) = touch_event_dir() else { return Ok(()) };
-    let path = dir.join("device/inhibited");
-    if !path.exists() {
-        return Ok(());
+    // EVIOCGRAB = _IOW('E', 0x90, int)
+    const EVIOCGRAB: u64 = 0x4004_4590;
+
+    let mut slot = TOUCH_GRAB.lock().unwrap_or_else(|e| e.into_inner());
+    if inhibit {
+        if slot.is_some() {
+            return Ok(());
+        }
+        let Some(dir) = touch_event_dir() else { return Ok(()) };
+        let Some(name) = dir.file_name() else { return Ok(()) };
+        let node = Path::new("/dev/input").join(name);
+        let file = fs::File::open(&node).map_err(|e| format!("open {} failed: {e}", node.display()))?;
+        let ret = unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGRAB as _, 1) };
+        if ret < 0 {
+            return Err(format!(
+                "EVIOCGRAB {} failed: {}",
+                node.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        *slot = Some(file);
+    } else if let Some(file) = slot.take() {
+        unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGRAB as _, 0) };
     }
-    write_sysfs(path.to_string_lossy().as_ref(), if inhibit { "1" } else { "0" })
+    Ok(())
 }
 
 /// 控制屏幕背光开关（熄屏时同步停掉触摸屏输入，避免黑屏误触）。
