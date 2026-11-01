@@ -275,7 +275,7 @@ fn run_amixer_cset(control: &str, value: &str) {
 
 /// 确保外放 mixer 路由已打开（MultiMedia3 / QUAT_MI2S_RX）。
 fn apply_speaker_alsa_route() {
-    const CSETS: [(&str, &str); 10] = [
+    const CSETS: [(&str, &str); 9] = [
         ("name=QUAT_MI2S_RX Audio Mixer MultiMedia3", "1"),
         ("name=COMP7 Switch", "1"),
         ("name=COMP8 Switch", "1"),
@@ -283,7 +283,6 @@ fn apply_speaker_alsa_route() {
         ("name=RX INT8_1 MIX1 INP0", "RX1"),
         ("name=RX INT7_1 INTERP", "RX INT7_1 MIX1"),
         ("name=RX INT8_1 INTERP", "RX INT8_1 MIX1"),
-        ("name=MultiMedia2 Mixer SLIMBUS_0_TX", "0"),
         ("name=SLIMBUS_0_RX Audio Mixer MultiMedia1", "0"),
         ("name=SLIMBUS_0_RX Audio Mixer MultiMedia2", "0"),
     ];
