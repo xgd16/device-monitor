@@ -5,6 +5,7 @@
 //!   WebSocket 推送与 DRM 物理屏重绘随之变化
 //! - `GET/POST /api/system/rotation` — DRM 屏横向朝向（面板竖装，横放有两个朝向），
 //!   真机上也可以双击音量上加翻转
+//! - `POST /api/system/power` — 重启 / 关机（面板设置页二次确认后调用）
 
 use super::{error, success};
 use crate::AppState;
@@ -12,7 +13,10 @@ use crate::store;
 use axum::Json;
 use axum::extract::State;
 use serde_json::{Value, json};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 电源操作互斥：请求已下发后拒绝重复调用，避免 systemd 同时收到 reboot/poweroff。
+static POWER_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// 返回后台采集任务维护的最新系统概览，避免每次 HTTP 请求重复采集。
 pub async fn overview(State(state): State<AppState>) -> Json<Value> {
@@ -72,4 +76,42 @@ pub async fn set_rotation(Json(body): Json<Value>) -> Json<Value> {
     }
     tracing::info!("屏幕朝向改为 {rot}（来源：API）");
     success(json!({ "rotation": rot }))
+}
+
+/// `POST /api/system/power` — 重启 / 关机。
+///
+/// 只接受 `reboot` / `poweroff`；延迟 1.5 秒再交给 systemd，让 HTTP 响应和
+/// 面板的「正在重启…」提示先到达，再用 `--no-block` 立即返回，不阻塞关机流程。
+pub async fn power_control(Json(body): Json<Value>) -> Json<Value> {
+    let Some(action) = body.get("action").and_then(|v| v.as_str()) else {
+        return error("缺少 action（reboot / poweroff）");
+    };
+    if action != "reboot" && action != "poweroff" {
+        return error("action 仅支持 reboot / poweroff");
+    }
+    if POWER_PENDING.swap(true, Ordering::SeqCst) {
+        return error("已有电源操作在执行");
+    }
+
+    tracing::warn!("收到电源操作：{action}（1.5s 后执行 systemctl --no-block {action}）");
+    let action_for_thread = action.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let status = std::process::Command::new("systemctl").args(["--no-block", action_for_thread.as_str()]).status();
+        match status {
+            Ok(s) if s.success() => {
+                tracing::warn!("systemctl --no-block {action_for_thread} 已下发");
+            }
+            Ok(s) => {
+                tracing::error!("systemctl --no-block {action_for_thread} 退出码 {s}");
+                POWER_PENDING.store(false, Ordering::SeqCst);
+            }
+            Err(e) => {
+                tracing::error!("systemctl --no-block {action_for_thread} 执行失败: {e}");
+                POWER_PENDING.store(false, Ordering::SeqCst);
+            }
+        }
+    });
+
+    success(json!({ "action": action, "scheduled_in_ms": 1500 }))
 }

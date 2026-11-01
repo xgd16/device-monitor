@@ -179,6 +179,7 @@ async fn main() {
             "/system/rotation",
             get(crate::api::system::get_rotation).post(crate::api::system::set_rotation),
         )
+        .route("/system/power", post(api::system::power_control))
         .route("/cpu", get(api::cpu::cpu_info))
         .route("/cpu/governor", get(api::cpu::get_governor).post(api::cpu::set_governor))
         .route("/cpu/frequency", get(api::cpu::get_frequency))

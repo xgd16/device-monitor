@@ -76,7 +76,7 @@ Web 端新增 **NFC** 页（顶栏导航），调用设备上的 NFC 控制器�
 
 ### 物理屏与按键
 
-- **GPU 物理屏仪表**（唯一显示）：`panel/` crate（Slint 1.18 + femtovg，直驱 KMS/GLES），四页卡片布局（系统监控 / Token 用量 / 时钟 / 设置；设置页含显示方向 / 屏幕反转 / 外观主题 / 屏幕亮度滑块），触摸操作（切页 / 滑动 / 底栏主题）。由 `device-monitor-launcher.sh` 拉起，与 API 服务组合为 `device-monitor.service`；面板异常退出自动重拉。
+- **GPU 物理屏仪表**（唯一显示）：`panel/` crate（Slint 1.18 + femtovg，直驱 KMS/GLES），四页卡片布局（系统监控 / Token 用量 / 时钟 / 设置；设置页含显示方向 / 屏幕反转 / 外观主题 / 屏幕亮度滑块 / 系统与电源），触摸操作（切页 / 滑动 / 底栏主题）。设置页的 **重启 / 关机** 按钮均会先弹二次确认层，确认后经 `POST /api/system/power` 交给 systemd。由 `device-monitor-launcher.sh` 拉起，与 API 服务组合为 `device-monitor.service`；面板异常退出自动重拉。
 - **按键**：电源键单击 = 屏幕熄灭/点亮（熄屏时面板暂停渲染、触摸屏经 `EVIOCGRAB` 独占停用，采集与 WS 继续）、双击 = 切换白光/黄光手电筒；音量上双击 = 翻转屏幕横向朝向（落盘 `rotation.txt`，面板重启后生效）
 - 旧 DRM/KMS 直绘（`--screen`）与 kmscon/ASCII 字符 TUI（`--tui`）渲染器及其回退链已于 2026-09-27 移除
 
@@ -281,6 +281,7 @@ pnpm dev
 | 显示方向（横屏 / 竖屏 / 反转） | 落盘 `panel-orientation.txt` / `panel-flip.txt`，面板退出由启动器按新朝向重拉（约 5 秒黑屏过渡） |
 | 外观主题（深色 / 浅色） | 立即生效，落盘 `panel-theme.txt`（与底栏主题开关同源） |
 | 屏幕亮度滑块 | 下限 2%（防止拖到全黑后触摸找不回），经 `POST /api/hardware/brightness` 写背光节点；滑块拖动期间的密集回调由面板侧工作线程按 50ms 归并后下发，成功后落盘 `panel-brightness.txt`，下次启动补下发 |
+| 重启 / 关机 | 点击只打开确认层，确认后 `POST /api/system/power`（`{ "action": "reboot" \| "poweroff" }`）。服务端延迟 1.5 秒再执行 `systemctl --no-block`，让面板先显示「正在重启/关机…」；失败时确认层保留并显示错误，可重试 |
 
 熄屏语义：电源键 / `POST /api/hardware/screen` 只写背光 `bl_power`（4=灭）。熄屏时服务端对触摸屏 `stmfts` 的 evdev 节点做 `EVIOCGRAB` 独占：事件只进服务端 fd 并被丢弃，libinput 收不到，黑屏下的触摸不会再被面板消费（改亮度 / 主题 / 方向）；亮屏释放 grab 即恢复。**不走 input `inhibited`**：那会让驱动 close/open 并反复切 FTS5 scan mode（0x00/0xff），这台机器的触摸 IC 在多次切换后会整块失效（2026-11-01 实测，只能硬复位恢复）。服务端每 2s 巡检 `bl_power`，外部直接改背光状态也会同步。
 
@@ -377,6 +378,7 @@ journalctl -u device-monitor -f      # 面板日志见 panel.log，服务日志�
 | GET | `/api/system/overview` | 完整系统概览（后台采集的最新快照） |
 | GET | `/api/system/refresh` | 当前界面刷新间隔与可选项（秒） |
 | POST | `/api/system/refresh` | 设置刷新间隔，`body: { "secs": 1\|3\|5\|10 }`；立即改变采集心跳（WS 推送、DRM 屏跟随），持久化到 `refresh_secs.txt` |
+| POST | `/api/system/power` | 重启 / 关机，`body: { "action": "reboot" \| "poweroff" }`；1.5 秒后执行 `systemctl --no-block`，同一时间只接受一个电源操作 |
 | GET | `/api/cpu` | CPU 使用率与频率（返回采集快照，避免插入采样污染差分） |
 | GET | `/api/cpu/governor` | 当前 governor 与可用策略 |
 | POST | `/api/cpu/governor` | 设置 governor，`body: { "governor": "schedutil" }` |

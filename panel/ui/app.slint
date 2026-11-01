@@ -13,6 +13,152 @@ import { PageTokenP } from "page-token.slint";
 import { PageClockP } from "page-clock.slint";
 import { PageSettingsP } from "page-settings.slint";
 
+// 电源确认层按钮：filled=true 为实底主操作，false 为次级「取消」。
+component DialogBtn inherits Rectangle {
+    in property <string> label;
+    in property <color> tint: Theme.accent;
+    in property <bool> filled: false;
+    callback pick();
+    height: 52px;
+    border-radius: 12px;
+    background: root.filled ? root.tint : Theme.card-alt;
+    border-width: 1px;
+    border-color: root.filled ? root.tint : Theme.border;
+    Text {
+        x: 0px;
+        width: 100%;
+        y: Theme.text-nudge;
+        height: 100%;
+        text: root.label;
+        font-size: 12px;
+        font-weight: 700;
+        color: root.filled ? (Theme.dark ? #071019 : #FFFFFF) : Theme.fg;
+        font-family: Theme.font-body;
+        horizontal-alignment: TextHorizontalAlignment.center;
+        vertical-alignment: TextVerticalAlignment.center;
+    }
+    ta := TouchArea {
+        clicked => {
+            root.pick();
+        }
+    }
+    opacity: ta.pressed ? 0.80 : 1.0;
+}
+
+// 电源确认卡片：横竖屏共用，尺寸随 Ui.portrait 切换。
+// 只在 Ui.power-pending 非空时由 App 挂载；确认后切换成「正在重启/关机…」，
+// 不再接受点击（Ui.power-busy）。
+component PowerDialog inherits Rectangle {
+    property <length> pad: 24px;
+    property <length> btn-y: root.height - 72px;
+    property <color> tint: Ui.power-pending == "reboot" ? Theme.accent : Theme.error;
+    width: Ui.portrait ? 468px : 520px;
+    height: Ui.power-busy ? 190px : (Ui.portrait ? 300px : 250px);
+    border-radius: 18px;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: root.tint.with-alpha(0.55);
+    // 吃掉卡片空白区域的点击，避免点文字时穿透到遮罩把弹窗关掉
+    TouchArea {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+    }
+
+    Rectangle {
+        x: root.pad;
+        y: 0px;
+        width: 42px;
+        height: 3px;
+        border-radius: 1.5px;
+        background: root.tint;
+    }
+    Text {
+        x: root.pad;
+        y: 18px;
+        text: "电源操作 · POWER";
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: root.tint;
+        font-family: Theme.font-mono;
+    }
+    Text {
+        x: root.pad;
+        y: 38px;
+        width: root.width - root.pad * 2;
+        text: Ui.power-busy
+            ? (Ui.power-pending == "reboot" ? "正在重启…" : "正在关机…")
+            : (Ui.power-pending == "reboot" ? "确认重启设备？" : "确认关机设备？");
+        font-size: 22px;
+        font-weight: 700;
+        color: Theme.emphasis;
+        font-family: Theme.font-body;
+    }
+    Text {
+        x: root.pad;
+        y: 78px;
+        width: root.width - root.pad * 2;
+        text: Ui.power-busy
+            ? "请求已下发，设备即将断开连接，请稍候。"
+            : (Ui.power-pending == "reboot"
+                ? "设备将立即重启，约 20–40 秒后自动恢复；采集与面板显示会中断。"
+                : "设备将完全断电，需要按电源键或重新插电才能开机。");
+        font-size: 10px;
+        color: Theme.muted;
+        font-family: Theme.font-body;
+        wrap: word-wrap;
+    }
+    if Ui.power-error != "" : Text {
+        x: root.pad;
+        y: 132px;
+        width: root.width - root.pad * 2;
+        text: "下发失败：" + Ui.power-error;
+        font-size: 9px;
+        color: Theme.error;
+        font-family: Theme.font-body;
+        wrap: word-wrap;
+    }
+    if Ui.power-error == "" && !Ui.power-busy : Text {
+        x: root.pad;
+        y: 140px;
+        width: root.width - root.pad * 2;
+        text: "此操作不可撤销";
+        font-size: 9px;
+        color: Theme.warning;
+        font-family: Theme.font-body;
+    }
+    if !Ui.power-busy : HorizontalLayout {
+        x: root.pad;
+        y: root.btn-y;
+        width: root.width - root.pad * 2;
+        height: 52px;
+        spacing: 12px;
+        DialogBtn {
+            label: "取消";
+            tint: Theme.muted;
+            horizontal-stretch: 1;
+            pick => {
+                Ui.power-pending = "";
+            }
+        }
+        DialogBtn {
+            label: Ui.power-pending == "reboot" ? "确认重启" : "确认关机";
+            tint: root.tint;
+            filled: true;
+            horizontal-stretch: 1;
+            pick => {
+                if (!Ui.power-busy) {
+                    Ui.power-busy = true;
+                    Ui.power-error = "";
+                    Ui.power-confirm(Ui.power-pending);
+                }
+            }
+        }
+    }
+}
+
 // Rust 侧要访问的全局与结构体必须从主文件 re-export
 export { Theme } from "theme.slint";
 export { Sys, Clk, Ui, Tok } from "data.slint";
@@ -47,6 +193,10 @@ export component App inherits Window {
             self.focus();
         }
         key-pressed(e) => {
+            // 电源确认层打开时吞掉所有按键，避免方向键在背后切页
+            if (Ui.power-pending != "") {
+                return accept;
+            }
             if (e.text == Key.RightArrow) {
                 Ui.next();
                 return accept;
@@ -693,6 +843,36 @@ export component App inherits Window {
                         }
                     }
                 }
+            }
+        }
+
+        // ── 电源确认层：横竖屏共用，盖住页面/底栏/滑动切页 ──
+        if Ui.power-pending != "" : Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 100%;
+            height: 100%;
+
+            Rectangle {
+                width: 100%;
+                height: 100%;
+                background: #000000.with-alpha(0.72);
+            }
+            // 点遮罩取消；请求已下发（power-busy）时不可关闭
+            TouchArea {
+                x: 0px;
+                y: 0px;
+                width: 100%;
+                height: 100%;
+                clicked => {
+                    if (!Ui.power-busy) {
+                        Ui.power-pending = "";
+                    }
+                }
+            }
+            PowerDialog {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
             }
         }
     }

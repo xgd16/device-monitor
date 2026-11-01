@@ -282,6 +282,16 @@ export global Ui {
     in-out property <length> probe-y: 0px;
     callback probe(float, float, string);
 
+    // ── 电源操作（设置页「系统与电源」卡）──
+    // 待确认动作："" = 无弹窗；"reboot" / "poweroff" = 确认层已打开。
+    // 点击按钮只改这个属性，真正的系统调用必须经过确认层，避免误触直接重启。
+    in-out property <string> power-pending: "";
+    // 已确认并下发：确认层切换成「正在重启/关机…」，同时禁用按钮防重复提交。
+    in-out property <bool> power-busy: false;
+    // 下发失败时显示在确认层里的错误（成功路径由系统重启清空）。
+    in-out property <string> power-error: "";
+    callback power-confirm(string);
+
     public function go(i: int) {
         page = Math.max(0, Math.min(i, page-count - 1));
     }

@@ -380,6 +380,31 @@ fn main() {
         });
     }
 
+    // 设置页电源按钮：确认层点「确认」后才走到这里。
+    // HTTP 放到工作线程，避免请求超时把 UI 卡住；失败时保留确认层并显示错误。
+    {
+        let w = weak.clone();
+        app.global::<Ui>().on_power_confirm(move |action: slint::SharedString| {
+            let action = action.to_string();
+            if action != "reboot" && action != "poweroff" {
+                return;
+            }
+            tracing_or_log(&format!("设置页电源操作确认 → {action}"));
+            let w = w.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = post_power(&action) {
+                    tracing_or_log(&format!("电源操作 {action} 下发失败：{e}"));
+                    w.upgrade_in_event_loop(move |ui| {
+                        let ui = ui.global::<Ui>();
+                        ui.set_power_busy(false);
+                        ui.set_power_error(e.into());
+                    })
+                    .ok();
+                }
+            });
+        });
+    }
+
     // 秒级时钟 + 时间进度 + 日出相位 + 世界时钟（子进程 30s 缓存）
     let timer = slint::Timer::default();
     {
@@ -444,6 +469,26 @@ fn fetch_json(url: &str) -> Result<Value, String> {
 
 fn model<T: 'static + Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(rows))
+}
+
+/// 下发电源动作：POST /api/system/power。
+/// 服务端延迟 1.5s 再执行 systemctl，保证 HTTP 响应能先回到面板，
+/// 让确认层有时间切到「正在重启/关机…」。
+fn post_power(action: &str) -> Result<(), String> {
+    let url = format!("{BASE}/system/power");
+    let body = format!("{{\"action\":\"{action}\"}}");
+    let resp = ureq::post(&url)
+        .timeout(Duration::from_secs(4))
+        .set("Content-Type", "application/json")
+        .send_string(&body)
+        .map_err(|e| format!("{url}: {e}"))?;
+    let text = resp.into_string().map_err(|e| format!("读取 {url}: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("解析 {url}: {e}"))?;
+    if v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1) != 0 {
+        let msg = v.get("error").and_then(|e| e.as_str()).unwrap_or(&text);
+        return Err(msg.to_string());
+    }
+    Ok(())
 }
 
 /// 下发亮度：POST /api/hardware/brightness，服务端换算成背光节点的绝对值写入。

@@ -63,6 +63,49 @@ component SegBtn inherits Rectangle {
     opacity: ta.pressed ? 0.78 : 1.0;
 }
 
+// 电源按钮：重启 / 关机。点击只打开确认层，不直接执行系统调用；
+// 确认层在 app.slint 里（覆盖整个窗口，横竖屏共用）。
+component PowerBtn inherits Rectangle {
+    in property <string> label;
+    in property <string> sub;
+    in property <color> tint: Theme.accent;
+    in property <bool> enabled: true;
+    callback pick();
+    accessible-role: button;
+    accessible-label: root.label + " " + root.sub;
+    border-radius: 12px;
+    background: root.tint.with-alpha(root.enabled ? 0.10 : 0.03);
+    border-width: 1.5px;
+    border-color: root.enabled ? root.tint.with-alpha(0.62) : Theme.border;
+    VerticalLayout {
+        padding: 4px;
+        alignment: center;
+        spacing: 0px;
+        Text {
+            text: root.label;
+            font-size: 14px;
+            font-weight: 700;
+            color: root.enabled ? root.tint : Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.center;
+        }
+        Text {
+            text: root.sub;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-mono;
+            horizontal-alignment: TextHorizontalAlignment.center;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.pick();
+        }
+    }
+    opacity: root.enabled ? (ta.pressed ? 0.78 : 1.0) : 0.45;
+}
+
 // 亮度滑块：视觉高度 = 轨道 8 + 旋钮 22，命中区由调用方给（44 / 56）。
 // value 由调用方单向绑定（Ui.brightness）——拖动只回调 changed，由页面写回全局，
 // 所以旋钮位置永远等于真实值（含 Rust 侧的下限钳位），不存在「滑杆值」与「屏幕值」两套状态。
@@ -396,69 +439,88 @@ export component PageSettings inherits Rectangle {
         y: 208px;
         width: 566px;
         height: 196px;
-        title: "关于";
+        title: "系统与电源";
         Kv {
             x: 14px;
-            y: 44px;
+            y: 34px;
             width: 262px;
             k: "面板版本";
             v: "v" + Ui.panel-version;
         }
         Kv {
             x: 290px;
-            y: 44px;
+            y: 34px;
             width: 262px;
             k: "运行时长";
             v: Sys.uptime;
         }
         Kv {
             x: 14px;
-            y: 78px;
+            y: 60px;
             width: 262px;
             k: "采集间隔";
             v: "\{Sys.refresh-secs}s";
         }
         Kv {
             x: 290px;
-            y: 78px;
+            y: 60px;
             width: 262px;
             k: "屏幕状态";
             v: Ui.screen-on ? "亮屏" : "熄屏降负载";
         }
         Kv {
             x: 14px;
-            y: 112px;
+            y: 86px;
             width: 262px;
             k: "屏幕朝向";
             v: (Ui.portrait ? "竖屏 540 × 1170" : "横屏 1170 × 540") + (Ui.flip ? " · 反转" : "");
         }
         Kv {
             x: 290px;
-            y: 112px;
+            y: 86px;
             width: 262px;
             k: "外观主题";
             v: Theme.dark ? "深色" : "浅色";
         }
         Hairline {
             x: 14px;
-            y: 150px;
+            y: 114px;
             width: 538px;
+        }
+        PowerBtn {
+            x: 14px;
+            y: 122px;
+            width: 265px;
+            height: 42px;
+            label: "重启";
+            sub: "reboot";
+            tint: Theme.accent;
+            enabled: !Ui.power-busy;
+            pick => {
+                Ui.power-error = "";
+                Ui.power-pending = "reboot";
+            }
+        }
+        PowerBtn {
+            x: 287px;
+            y: 122px;
+            width: 265px;
+            height: 42px;
+            label: "关机";
+            sub: "poweroff";
+            tint: Theme.error;
+            enabled: !Ui.power-busy;
+            pick => {
+                Ui.power-error = "";
+                Ui.power-pending = "poweroff";
+            }
         }
         Text {
             x: 14px;
-            y: 160px;
+            y: 172px;
             width: 538px;
-            text: "数据源 API :3000 · XTokenHub :9192 · Open-Meteo 天气";
-            font-size: 8px;
-            color: Theme.muted;
-            font-family: Theme.font-body;
-        }
-        Text {
-            x: 14px;
-            y: 176px;
-            width: 538px;
-            text: "配置 panel-orientation / panel-flip / panel-theme / panel-brightness.txt";
-            font-size: 8px;
+            text: "重启 / 关机需二次确认 · 配置 panel-orientation / panel-flip / panel-theme / panel-brightness.txt";
+            font-size: 7.5px;
             color: Theme.muted;
             font-family: Theme.font-body;
         }
@@ -681,59 +743,87 @@ export component PageSettingsP inherits Rectangle {
         y: 722px;
         width: 512px;
         height: 300px;
-        title: "关于";
+        title: "系统与电源";
         Kv {
             x: 14px;
-            y: 44px;
+            y: 32px;
             width: 484px;
             k: "面板版本";
             v: "v" + Ui.panel-version;
         }
         Kv {
             x: 14px;
-            y: 76px;
+            y: 58px;
             width: 484px;
             k: "运行时长";
             v: Sys.uptime;
         }
         Kv {
             x: 14px;
-            y: 108px;
+            y: 84px;
             width: 484px;
             k: "采集间隔";
             v: "\{Sys.refresh-secs}s";
         }
         Kv {
             x: 14px;
-            y: 140px;
+            y: 110px;
             width: 484px;
             k: "屏幕状态";
             v: Ui.screen-on ? "亮屏" : "熄屏降负载";
         }
         Kv {
             x: 14px;
-            y: 172px;
+            y: 136px;
             width: 484px;
             k: "屏幕朝向";
             v: (Ui.portrait ? "竖屏 540 × 1170" : "横屏 1170 × 540") + (Ui.flip ? " · 反转" : "");
         }
         Kv {
             x: 14px;
-            y: 204px;
+            y: 162px;
             width: 484px;
             k: "外观主题";
             v: Theme.dark ? "深色" : "浅色";
         }
         Hairline {
             x: 14px;
-            y: 250px;
+            y: 190px;
             width: 484px;
+        }
+        PowerBtn {
+            x: 14px;
+            y: 198px;
+            width: 238px;
+            height: 56px;
+            label: "重启";
+            sub: "reboot";
+            tint: Theme.accent;
+            enabled: !Ui.power-busy;
+            pick => {
+                Ui.power-error = "";
+                Ui.power-pending = "reboot";
+            }
+        }
+        PowerBtn {
+            x: 260px;
+            y: 198px;
+            width: 238px;
+            height: 56px;
+            label: "关机";
+            sub: "poweroff";
+            tint: Theme.error;
+            enabled: !Ui.power-busy;
+            pick => {
+                Ui.power-error = "";
+                Ui.power-pending = "poweroff";
+            }
         }
         Text {
             x: 14px;
             y: 262px;
             width: 484px;
-            text: "数据源 API :3000 · XTokenHub :9192 · Open-Meteo 天气";
+            text: "重启 / 关机需二次确认；操作会中断采集与面板显示";
             font-size: 8.5px;
             color: Theme.muted;
             font-family: Theme.font-body;
@@ -743,7 +833,7 @@ export component PageSettingsP inherits Rectangle {
             y: 282px;
             width: 484px;
             text: "配置 panel-orientation / panel-flip / panel-theme / panel-brightness.txt";
-            font-size: 8.5px;
+            font-size: 8px;
             color: Theme.muted;
             font-family: Theme.font-body;
         }
