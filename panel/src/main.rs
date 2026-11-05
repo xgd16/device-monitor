@@ -72,7 +72,10 @@ const BRIGHT_FILE: &str = "panel-brightness.txt";
 const MIN_BRIGHTNESS: u32 = 2;
 
 /// 有效旋转（与启动器 try_panel 完全同序）：横屏朝向(rotation.txt) → 竖屏映射
-/// (90→180 / 270→0) → 屏幕反转(+180)。返回 0/90/180/270。
+/// (90→0 / 270→180) → 屏幕反转(+180)。返回 0/90/180/270。
+///
+/// 竖屏必须用横屏朝向减 90°：从横屏把手机转 90° 立起来时，KMS 旋转也随之
+/// 减 90°，这样竖屏的「上边」才和用户手里的物理方向一致（0 = 原生竖屏）。
 fn effective_rotation(portrait: bool, flip: bool) -> u32 {
     let digits: String =
         std::fs::read_to_string(ROTATION_FILE).unwrap_or_default().chars().filter(|c| c.is_ascii_digit()).collect();
@@ -81,7 +84,7 @@ fn effective_rotation(portrait: bool, flip: bool) -> u32 {
         90 | 270 => raw,
         _ => 90,
     };
-    let mut rot = if portrait { if base == 90 { 180 } else { 0 } } else { base };
+    let mut rot = if portrait { (base + 270) % 360 } else { base };
     if flip {
         rot = (rot + 180) % 360;
     }
@@ -225,7 +228,7 @@ fn main() {
 
     // ── 屏幕方向（进程常量；切换 = 设置页写 panel-orientation.txt 后退出、启动器重拉）──
     // 优先级：PANEL_MODE env（调试）> panel-orientation.txt（设置页持久化）> 横屏。
-    // 竖屏时按横屏朝向推导 KMS 旋转（270→0 / 90→180），保持「哪边朝上」的用户习惯不变。
+    // 竖屏时按横屏朝向推导 KMS 旋转（90→0 / 270→180），保持「哪边朝上」的用户习惯不变。
     let mode = std::env::var("PANEL_MODE")
         .ok()
         .filter(|m| m == "portrait" || m == "landscape")

@@ -145,7 +145,8 @@ try_panel() {
     *) rotate=90 ;;
   esac
   # 竖屏模式由面板设置页手动选择并持久化（panel-orientation.txt：portrait/landscape）：
-  # 竖屏旋转 = 横屏朝向的对偶（270→0 / 90→180），触摸矩阵随实际旋转联动。
+  # 竖屏旋转 = 横屏朝向减 90°（90→0 / 270→180），触摸矩阵随实际旋转联动。
+  # 0 才是手机原生竖屏；用 180 会把画面整个倒过来。
   _mode=""
   if [ -r "$DEPLOY_DIR/panel-orientation.txt" ]; then
     _pref=$(tr -d ' \t\n' < "$DEPLOY_DIR/panel-orientation.txt" 2>/dev/null)
@@ -153,8 +154,8 @@ try_panel() {
   fi
   if [ "$_mode" = portrait ]; then
     case "$rotate" in
-      90) rotate=180 ;;
-      *) rotate=0 ;;
+      90) rotate=0 ;;
+      *) rotate=180 ;;
     esac
   fi
   # 屏幕反转（panel-flip.txt = 1）：在当前朝向上再翻 180°（0↔180 / 90↔270）
