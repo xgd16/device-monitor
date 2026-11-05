@@ -294,9 +294,12 @@ pnpm dev
 修复见 `patches/stmfts5-sense-on-and-vendor-reset.patch`（基于设备内核树里已有 ghost/stuck 补丁的 `stmfts.c`）：
 
 - `stmfts5_input_open` 在 scan mode 之后补发 `STMFTS_MS_MT_SENSE_ON`（0x93）；
+- `stmfts5_configure` 复位后轮询 `CONTROLLER_READY`（0x03，25ms × 20）——FTS5 固件启动要做 flash CRC，冷启动时单次读会抢跑，轮询到 READY 再继续；
 - 接管 DT 的厂商属性 `st,reset-gpio`（标准 `reset-gpios` 不存在），按低电平有效处理；
 - 增加 `.shutdown`：暖重启前拉复位并关闭 vdd/avdd，进一步保证下次 probe 是干净状态；
 - `reset_hold_ms` / `reset_release_ms` 模块参数默认 20/50，仅用于排障。
+
+**0% 电池 brownout 注意**：电池耗尽导致的异常断电可能把芯片留在更深的状态，暖重启/软件复位/驱动 reload 都不一定能救回来；2026-11-05 实测需要**拔掉充电线、真正整机断电 60 秒**后再开机（RTC 定时唤醒可以自动完成）。正常冷启动/暖重启则依靠上面的 READY 轮询 + 0x93 恢复。
 
 应用方式：
 
@@ -309,7 +312,7 @@ zstd -19 -f -o /lib/modules/$(uname -r)/kernel/drivers/input/touchscreen/stmfts.
 depmod -a && modprobe -r stmfts && modprobe stmfts
 ```
 
-验证：暖重启后 raw evdev 滑动 10 秒有 1400+ 字节事件、面板 `[touch-probe]` 正常增长；反复重启/熄屏亮屏不再失效。
+验证：暖重启后 raw evdev 滑动 10 秒有 1400+ 字节事件、面板 `[touch-probe]` 正常增长；反复重启/熄屏亮屏不再失效。2026-11-05 电池耗尽后一次：拔掉充电线、RTC 冷断电约 60 秒再开机，触摸恢复，raw evdev 滑动 10 秒 1560 字节。
 
 ```bash
 # 构建服务端 + 面板（两个 crate 都在 workspace 默认成员里，一条命令编完）
