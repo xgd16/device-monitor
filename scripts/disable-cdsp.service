@@ -1,0 +1,11 @@
+[Unit]
+Description=Stop unused CDSP remoteproc
+After=basic.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/disable-cdsp.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -20,10 +20,29 @@
  static const struct regulator_bulk_data stmfts_supplies[] = {
  	{ .supply = "vdd" },
  	{ .supply = "avdd" },
-@@ -884,6 +897,18 @@
- 		return err;
- 	}
+@@ -187,6 +200,7 @@
+ 	void (*parse_events)(struct stmfts_data *sdata);
+ 	int  (*set_hover)(struct stmfts_data *sdata, bool enable);
+ 	int  (*runtime_resume)(struct stmfts_data *sdata);
++	int  (*start_scan)(struct stmfts_data *sdata);
+ };
  
+ static int stmfts_brightness_set(struct led_classdev *led_cdev,
+@@ -855,6 +869,32 @@
+ 	return 0;
+ }
+ 
++static int stmfts5_start_scan(struct stmfts_data *sdata)
++{
++	int err;
++
++	err = stmfts5_set_scan_mode(sdata, 0xff);
++	if (err) {
++		dev_err(&sdata->client->dev,
++			"set_scan_mode(0xff) failed: %d (touch dead)\n", err);
++		return err;
++	}
++
 +	/*
 +	 * The FTS4 path uses MS_MT_SENSE_ON to actually start the analog
 +	 * scan engine; FTS5 mainline only issues the 0xa0 scan-mode command.
@@ -34,12 +53,28 @@
 +	err = i2c_smbus_write_byte(sdata->client, STMFTS_MS_MT_SENSE_ON);
 +	if (err)
 +		dev_warn(&sdata->client->dev,
-+			 "input_open: MS_MT_SENSE_ON failed: %d\n", err);
++			 "MS_MT_SENSE_ON failed: %d\n", err);
 +
- 	return 0;
- }
++	return err;
++}
++
+ static int stmfts5_input_open(struct input_dev *dev)
+ {
+ 	struct stmfts_data *sdata = input_get_drvdata(dev);
+@@ -872,11 +912,8 @@
+ 	sdata->running = true;
+ 	mutex_unlock(&sdata->mutex);
  
-@@ -1071,15 +1096,6 @@
+-	err = stmfts5_set_scan_mode(sdata, 0xff);
++	err = stmfts5_start_scan(sdata);
+ 	if (err) {
+-		dev_err(&sdata->client->dev,
+-			"input_open: set_scan_mode(0xff) failed: %d (touch dead until next open)\n",
+-			err);
+ 		mutex_lock(&sdata->mutex);
+ 		sdata->running = false;
+ 		mutex_unlock(&sdata->mutex);
+@@ -1071,15 +1108,6 @@
  	return 0;
  }
  
@@ -55,7 +90,7 @@
  static int stmfts_configure(struct stmfts_data *sdata)
  {
  	int err;
-@@ -1135,24 +1151,46 @@
+@@ -1135,24 +1163,46 @@
  	sdata->irq_defer_blocked = false;
  	mutex_unlock(&sdata->mutex);
  
@@ -107,7 +142,7 @@
  
  	return err;
  }
-@@ -1161,13 +1199,32 @@
+@@ -1161,13 +1211,32 @@
  {
  	u8 event[STMFTS_EVENT_SIZE];
  	int ret;
@@ -144,7 +179,7 @@
  
  	enable_irq(sdata->client->irq);
  
-@@ -1334,6 +1391,27 @@
+@@ -1334,6 +1403,27 @@
  		return dev_err_probe(dev, PTR_ERR(sdata->reset_gpio),
  				     "Failed to get GPIO 'reset'\n");
  
@@ -172,7 +207,7 @@
  	sdata->input = devm_input_allocate_device(dev);
  	if (!sdata->input)
  		return -ENOMEM;
-@@ -1412,6 +1490,21 @@
+@@ -1412,6 +1502,21 @@
  	pm_runtime_disable(&client->dev);
  }
  
@@ -194,7 +229,42 @@
  static int stmfts_runtime_suspend(struct device *dev)
  {
  	struct stmfts_data *sdata = dev_get_drvdata(dev);
-@@ -1557,6 +1650,7 @@
+@@ -1503,8 +1608,25 @@
+ static int stmfts_resume(struct device *dev)
+ {
+ 	struct stmfts_data *sdata = dev_get_drvdata(dev);
++	int ret;
+ 
+-	return stmfts_power_on(sdata);
++	ret = stmfts_power_on(sdata);
++	if (ret)
++		return ret;
++
++	/*
++	 * stmfts_power_on() resets and reconfigures the chip, but the input
++	 * device stays open across system suspend, so ->input_open() is not
++	 * called and the FTS5 scan engine remains stopped.  Restart scanning
++	 * if the device is logically open.
++	 */
++	if (sdata->running && sdata->ops->start_scan) {
++		ret = sdata->ops->start_scan(sdata);
++		if (ret)
++			dev_err(dev, "failed to restart scan after resume: %d\n", ret);
++	}
++
++	return ret;
+ }
+ 
+ static const struct dev_pm_ops stmfts_pm_ops = {
+@@ -1531,6 +1653,7 @@
+ 	.input_close	= stmfts5_input_close,
+ 	.parse_events	= stmfts5_parse_events,
+ 	.runtime_resume	= stmfts5_chip_runtime_resume,
++	.start_scan	= stmfts5_start_scan,
+ };
+ 
+ static const struct of_device_id stmfts_of_match[] = {
+@@ -1557,6 +1680,7 @@
  	},
  	.probe = stmfts_probe,
  	.remove = stmfts_remove,

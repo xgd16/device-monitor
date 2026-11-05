@@ -12,9 +12,11 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
+use std::time::{Duration, Instant};
 
 /// 硬件当前状态快照。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -781,12 +783,75 @@ pub fn set_touch_inhibited(inhibit: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// 熄屏自动 suspend 偏好：panel-suspend.txt = "0" 关闭（缺省开启）。
+const SUSPEND_PREF_FILE: &str = "panel-suspend.txt";
+/// 熄屏后延迟多久进入 suspend（给面板停渲染/触摸 grab 留时间）。
+const SUSPEND_DELAY: Duration = Duration::from_secs(3);
+/// 每次熄屏递增；亮屏或再次熄屏会让旧的延迟任务失效。
+static SUSPEND_GEN: AtomicU64 = AtomicU64::new(0);
+
+fn suspend_enabled() -> bool {
+    // 默认关闭：panel-suspend.txt = "1" 才启用。缺省开启曾在面板二进制缺失时
+    // 把设备留在“黑屏 + suspend”状态，改为显式 opt-in 更安全。
+    fs::read_to_string(SUSPEND_PREF_FILE).map(|s| s.trim() == "1").unwrap_or(false)
+}
+
+fn cancel_suspend() {
+    SUSPEND_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+fn schedule_suspend() {
+    if !suspend_enabled() {
+        return;
+    }
+    let generation = SUSPEND_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = thread::Builder::new().name("screen-suspend".into()).spawn(move || {
+        thread::sleep(SUSPEND_DELAY);
+        if SUSPEND_GEN.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if screen_on() {
+            return;
+        }
+
+        // 面板进程不在时绝不 suspend：否则黑屏 + suspend 会让用户以为死机，
+        // 而且只能靠电源键/整机断电恢复。面板正在被启动器重拉时也会走这里。
+        match Command::new("pgrep").args(["-f", "target/release/device-monitor-panel"]).status() {
+            Ok(status) if status.success() => {}
+            _ => {
+                eprintln!("screen-suspend: 面板进程不存在，跳过 suspend");
+                return;
+            }
+        }
+
+        // 只尝试一次；失败就放弃，绝不重试成“resume 后立刻再 suspend”的循环。
+        // `-i` 需要 root 的 polkit 规则；没有规则时会失败并在 journal 留痕。
+        let started = Instant::now();
+        match Command::new("systemctl").args(["suspend", "-i"]).status() {
+            Ok(status) if status.success() => {
+                eprintln!("screen-suspend: 已从 suspend 恢复（耗时 {:?}）", started.elapsed());
+            }
+            Ok(status) => {
+                eprintln!("screen-suspend: suspend -i 退出 {status}，本次不再重试");
+            }
+            Err(e) => eprintln!("screen-suspend: 无法执行 systemctl: {e}"),
+        }
+    });
+}
+
 /// 控制屏幕背光开关（熄屏时同步停掉触摸屏输入，避免黑屏误触）。
+/// 亮屏时取消待执行的 suspend；熄屏时延迟 3 秒进入 suspend。
 pub fn set_screen_power(on: bool) -> Result<(), String> {
+    let was_on = screen_on();
     let val = if on { "0" } else { "4" };
     write_sysfs(&format!("{}/bl_power", BACKLIGHT), val)?;
     if let Err(e) = set_touch_inhibited(!on) {
         eprintln!("set_screen_power: 触摸屏{}失败: {e}", if on { "恢复" } else { "抑制" });
+    }
+    if on {
+        cancel_suspend();
+    } else if was_on {
+        schedule_suspend();
     }
     Ok(())
 }

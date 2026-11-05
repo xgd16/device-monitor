@@ -77,7 +77,7 @@ Web 端新增 **NFC** 页（顶栏导航），调用设备上的 NFC 控制器�
 ### 物理屏与按键
 
 - **GPU 物理屏仪表**（唯一显示）：`panel/` crate（Slint 1.18 + femtovg，直驱 KMS/GLES），四页卡片布局（系统监控 / Token 用量 / 时钟 / 设置；设置页含显示方向 / 屏幕反转 / 外观主题 / 屏幕亮度滑块 / 系统与电源），触摸操作（切页 / 滑动 / 底栏主题）。设置页的 **重启 / 关机** 按钮均会先弹二次确认层，确认后经 `POST /api/system/power` 交给 systemd。由 `device-monitor-launcher.sh` 拉起，与 API 服务组合为 `device-monitor.service`；面板异常退出自动重拉。
-- **按键**：电源键单击 = 屏幕熄灭/点亮（熄屏时面板暂停渲染、触摸屏经 `EVIOCGRAB` 独占停用，采集与 WS 继续）、双击 = 切换白光/黄光手电筒；音量上双击 = 翻转屏幕横向朝向（落盘 `rotation.txt`，面板重启后生效）
+- **按键**：电源键单击 = 屏幕熄灭/点亮（熄屏时面板暂停渲染、触摸屏经 `EVIOCGRAB` 独占停用，采集与 WS 继续；熄屏 3 秒后自动进入 suspend），双击 = 切换白光/黄光手电筒；音量上双击 = 翻转屏幕横向朝向（落盘 `rotation.txt`，面板重启后生效）
 - 旧 DRM/KMS 直绘（`--screen`）与 kmscon/ASCII 字符 TUI（`--tui`）渲染器及其回退链已于 2026-09-27 移除
 
 ### 其他
@@ -285,6 +285,10 @@ pnpm dev
 
 熄屏语义：电源键 / `POST /api/hardware/screen` 只写背光 `bl_power`（4=灭）。熄屏时服务端对触摸屏 `stmfts` 的 evdev 节点做 `EVIOCGRAB` 独占：事件只进服务端 fd 并被丢弃，libinput 收不到，黑屏下的触摸不会再被面板消费（改亮度 / 主题 / 方向）；亮屏释放 grab 即恢复。**不走 input `inhibited`**：那会让驱动 close/open 并反复切 FTS5 scan mode（0x00/0xff），这台机器的触摸 IC 在多次切换后会整块失效（2026-11-01 实测，只能硬复位恢复）。服务端每 2s 巡检 `bl_power`，外部直接改背光状态也会同步。
 
+熄屏后自动 suspend（2026-11-05）：默认**关闭**；`panel-suspend.txt` 写 `1` 才启用。`set_screen_power(false)` 会启动一个 3 秒延迟任务，确认屏幕仍灭且 `device-monitor-panel` 进程存在后执行一次 `systemctl suspend -i`（需要 root 的 polkit 规则；失败只记录、不重试，避免 resume 后立刻再次 suspend 的循环）。这样 DSI PLL/CRTC 也随 suspend 关闭，不再出现“背光灭了但显示链路还在跑”的 0.2W 级浪费。实测 s2idle 可正常唤醒，NetworkManager 在 resume 后自动重连 WiFi；stmfts 驱动的 `stmfts_resume` 会重新启动扫描，唤醒后触摸正常；面板 `screen-watch` 检测到 `bl_power=0` 后恢复 tick/轮询。面板进程缺失时会跳过 suspend，避免“黑屏 + 睡眠”卡死。polkit 规则示例见 `scripts/10-systemd-logind-root-ignore-inhibitors.rules`。
+
+未使用的 CDSP 可在开机后停掉（modem 不能停：停掉后 ath10k 会报 `-108` 且 WiFi 数据面失效；ADSP 负责音频；SLPI 被 `hexagonrpcd-sdsp` 使用）。`scripts/disable-cdsp.service` 会在 `multi-user.target` 后把 `cdsp` remoteproc 置为 `offline`，需要时手动 `echo start > /sys/class/remoteproc/remoteproc1/state` 恢复。
+
 ### 触摸屏（FTS5）暖重启后不扫描的修复（2026-11-01）
 
 现象：暖重启（`reboot`，不是整机断电）后触摸完全无响应；`stmfts` 仍有 ~26 次/秒 `STATUS_UPDATE` 中断，raw evdev 0 事件，面板只收到固定坐标的幽灵触点。重启、驱动 unbind/bind、整机冷断电、reset 引脚脉冲都试过，只能偶尔恢复。
@@ -294,6 +298,7 @@ pnpm dev
 修复见 `patches/stmfts5-sense-on-and-vendor-reset.patch`（基于设备内核树里已有 ghost/stuck 补丁的 `stmfts.c`）：
 
 - `stmfts5_input_open` 在 scan mode 之后补发 `STMFTS_MS_MT_SENSE_ON`（0x93）；
+- `stmfts_resume` 在系统 suspend 恢复后，如果 input 设备仍处于打开状态（`sdata->running`），重新下发 scan mode `0xff` + `0x93`——否则 `stmfts_power_on` 只做 reset/configure，芯片不会重新扫描，表现为唤醒后屏幕亮但触摸完全无事件；
 - `stmfts5_configure` 复位后轮询 `CONTROLLER_READY`（0x03，25ms × 20）——FTS5 固件启动要做 flash CRC，冷启动时单次读会抢跑，轮询到 READY 再继续；
 - **`stmfts_power_on` 先拉复位（active-low）再使能 vdd/avdd，保持 500ms 后释放**。触摸的 vdd/avdd 在 DT 里是 `regulator-always-on` 且与显示共用，驱动无法真正切断电源，只能在“上电”阶段用长复位模拟 power-on reset；这是电池耗尽式硬断电后**第一次开机**恢复的关键；
 - 接管 DT 的厂商属性 `st,reset-gpio`（标准 `reset-gpios` 不存在），按低电平有效处理；
