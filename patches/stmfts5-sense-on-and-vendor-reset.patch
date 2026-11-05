@@ -10,10 +10,10 @@
 + * 20 ms datasheet minimum is sometimes needed; make it tunable so the
 + * minimum can be found at runtime without rebuilding the module.
 + */
-+static unsigned int reset_hold_ms = 20;
++static unsigned int reset_hold_ms = 500;
 +module_param(reset_hold_ms, uint, 0644);
 +MODULE_PARM_DESC(reset_hold_ms, "Touch IC reset assert time in milliseconds");
-+static unsigned int reset_release_ms = 50;
++static unsigned int reset_release_ms = 100;
 +module_param(reset_release_ms, uint, 0644);
 +MODULE_PARM_DESC(reset_release_ms, "Touch IC reset release-to-I2C time in milliseconds");
 +
@@ -39,20 +39,75 @@
  	return 0;
  }
  
-@@ -1074,10 +1099,10 @@
- static void stmfts_reset(struct stmfts_data *sdata)
- {
- 	gpiod_set_value_cansleep(sdata->reset_gpio, 1);
--	msleep(20);
-+	msleep(reset_hold_ms);
- 
- 	gpiod_set_value_cansleep(sdata->reset_gpio, 0);
--	msleep(50);
-+	msleep(reset_release_ms);
+@@ -1071,15 +1096,6 @@
+ 	return 0;
  }
  
+-static void stmfts_reset(struct stmfts_data *sdata)
+-{
+-	gpiod_set_value_cansleep(sdata->reset_gpio, 1);
+-	msleep(20);
+-
+-	gpiod_set_value_cansleep(sdata->reset_gpio, 0);
+-	msleep(50);
+-}
+-
  static int stmfts_configure(struct stmfts_data *sdata)
-@@ -1161,13 +1186,32 @@
+ {
+ 	int err;
+@@ -1135,24 +1151,46 @@
+ 	sdata->irq_defer_blocked = false;
+ 	mutex_unlock(&sdata->mutex);
+ 
++	/*
++	 * Perseus: assert reset BEFORE enabling the rails.  The touch vdd/avdd
++	 * are regulator-always-on and shared with the display, so the driver
++	 * cannot really cut power; holding reset while the rails come up is the
++	 * only way to give the FTS5 a power-on reset after a battery brownout.
++	 * The vendor driver uses the same order (reset low -> rails on -> wait
++	 * -> reset high).
++	 */
++	if (sdata->reset_gpio)
++		gpiod_set_value_cansleep(sdata->reset_gpio, 1);
++
+ 	err = regulator_bulk_enable(ARRAY_SIZE(stmfts_supplies),
+ 				    sdata->supplies);
+-	if (err)
++	if (err) {
++		if (sdata->reset_gpio)
++			gpiod_set_value_cansleep(sdata->reset_gpio, 0);
+ 		return err;
++	}
+ 
+ 	/*
+ 	 * The datasheet does not specify the power on time, but considering
+-	 * that the reset time is < 10ms, I sleep 20ms to be sure
++	 * that the reset time is < 10ms, I sleep 20ms to be sure.
+ 	 */
+ 	msleep(20);
+ 
+-	if (sdata->reset_gpio)
+-		stmfts_reset(sdata);
++	if (sdata->reset_gpio) {
++		/* Hold reset through power-up; brownout recovery needs longer
++		 * than the 20 ms datasheet minimum. */
++		msleep(reset_hold_ms);
++		gpiod_set_value_cansleep(sdata->reset_gpio, 0);
++		msleep(reset_release_ms);
++	}
+ 
+ 	err = sdata->ops->configure(sdata);
+-	if (err)
++	if (err) {
++		if (sdata->reset_gpio)
++			gpiod_set_value_cansleep(sdata->reset_gpio, 1);
+ 		regulator_bulk_disable(ARRAY_SIZE(stmfts_supplies),
+ 				       sdata->supplies);
++	}
+ 
+ 	return err;
+ }
+@@ -1161,13 +1199,32 @@
  {
  	u8 event[STMFTS_EVENT_SIZE];
  	int ret;
@@ -89,7 +144,7 @@
  
  	enable_irq(sdata->client->irq);
  
-@@ -1334,6 +1378,27 @@
+@@ -1334,6 +1391,27 @@
  		return dev_err_probe(dev, PTR_ERR(sdata->reset_gpio),
  				     "Failed to get GPIO 'reset'\n");
  
@@ -117,7 +172,7 @@
  	sdata->input = devm_input_allocate_device(dev);
  	if (!sdata->input)
  		return -ENOMEM;
-@@ -1412,6 +1477,21 @@
+@@ -1412,6 +1490,21 @@
  	pm_runtime_disable(&client->dev);
  }
  
@@ -139,7 +194,7 @@
  static int stmfts_runtime_suspend(struct device *dev)
  {
  	struct stmfts_data *sdata = dev_get_drvdata(dev);
-@@ -1557,6 +1637,7 @@
+@@ -1557,6 +1650,7 @@
  	},
  	.probe = stmfts_probe,
  	.remove = stmfts_remove,

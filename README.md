@@ -295,11 +295,12 @@ pnpm dev
 
 - `stmfts5_input_open` 在 scan mode 之后补发 `STMFTS_MS_MT_SENSE_ON`（0x93）；
 - `stmfts5_configure` 复位后轮询 `CONTROLLER_READY`（0x03，25ms × 20）——FTS5 固件启动要做 flash CRC，冷启动时单次读会抢跑，轮询到 READY 再继续；
+- **`stmfts_power_on` 先拉复位（active-low）再使能 vdd/avdd，保持 500ms 后释放**。触摸的 vdd/avdd 在 DT 里是 `regulator-always-on` 且与显示共用，驱动无法真正切断电源，只能在“上电”阶段用长复位模拟 power-on reset；这是电池耗尽式硬断电后**第一次开机**恢复的关键；
 - 接管 DT 的厂商属性 `st,reset-gpio`（标准 `reset-gpios` 不存在），按低电平有效处理；
 - 增加 `.shutdown`：暖重启前拉复位并关闭 vdd/avdd，进一步保证下次 probe 是干净状态；
-- `reset_hold_ms` / `reset_release_ms` 模块参数默认 20/50，仅用于排障。
+- `reset_hold_ms` / `reset_release_ms` 模块参数默认 500/100，仅用于排障。
 
-**0% 电池 brownout 注意**：电池耗尽导致的异常断电可能把芯片留在更深的状态，暖重启/软件复位/驱动 reload 都不一定能救回来；2026-11-05 实测需要**拔掉充电线、真正整机断电 60 秒**后再开机（RTC 定时唤醒可以自动完成）。正常冷启动/暖重启则依靠上面的 READY 轮询 + 0x93 恢复。
+**0% 电池 brownout**：2026-11-05 用 `sysrq o` 模拟电池耗尽式硬断电，重新开机后**第一次启动触摸就正常**（新驱动在 reset 保持 500ms + READY 轮询 + 0x93 后恢复），不再需要二次冷断电。极端情况下若仍失效，拔掉充电线、整机断电 60 秒仍是兜底方案。
 
 应用方式：
 
@@ -312,7 +313,7 @@ zstd -19 -f -o /lib/modules/$(uname -r)/kernel/drivers/input/touchscreen/stmfts.
 depmod -a && modprobe -r stmfts && modprobe stmfts
 ```
 
-验证：暖重启后 raw evdev 滑动 10 秒有 1400+ 字节事件、面板 `[touch-probe]` 正常增长；反复重启/熄屏亮屏不再失效。2026-11-05 电池耗尽后一次：拔掉充电线、RTC 冷断电约 60 秒再开机，触摸恢复，raw evdev 滑动 10 秒 1560 字节。
+验证：暖重启后 raw evdev 滑动 10 秒有 1400+ 字节事件、面板 `[touch-probe]` 正常增长；反复重启/熄屏亮屏不再失效。2026-11-05 电池耗尽后：拔掉充电线、RTC 冷断电约 60 秒再开机，触摸恢复（raw evdev 1560 字节）；随后用 `sysrq o` 模拟硬断电，**第一次开机**触摸即正常，面板 `[touch-probe]` 出现连续真实轨迹。
 
 ```bash
 # 构建服务端 + 面板（两个 crate 都在 workspace 默认成员里，一条命令编完）
