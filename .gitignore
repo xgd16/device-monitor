@@ -62,6 +62,7 @@ battery_session_done.txt
 /theme.txt
 /panel-flip.txt
 /panel-orientation.txt
+/panel-suspend.txt
 
 # Panel
 panel/target/

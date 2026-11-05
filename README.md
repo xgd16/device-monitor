@@ -183,7 +183,7 @@ device-monitor/
 └── test_vibrate.rs             # 振动马达 ioctl 测试工具（rustc 直接编译）
 ```
 
-运行时生成、不纳入版本管理的文件：`device_monitor.db*`、`static/`、`target/`、`node_modules/`、`battery_effective_max.txt`、`battery_low_streak.txt`、`battery_session_peak.txt`、`refresh_secs.txt`、`rotation.txt`、`panel-theme.txt`、`panel-brightness.txt`、`panel.log`、`api.log`。
+运行时生成、不纳入版本管理的文件：`device_monitor.db*`、`static/`、`target/`、`node_modules/`、`battery_effective_max.txt`、`battery_low_streak.txt`、`battery_session_peak.txt`、`refresh_secs.txt`、`rotation.txt`、`panel-suspend.txt`、`panel-theme.txt`、`panel-brightness.txt`、`panel.log`、`api.log`。
 
 ---
 
