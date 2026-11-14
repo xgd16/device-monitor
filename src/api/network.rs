@@ -5,6 +5,7 @@
 //! - `GET /api/network/wifi/scan` — 主动扫描周边 WiFi（面板 WiFi 操作页按需调用）
 //! - `POST /api/network/wifi/connect` — 连接 WiFi（密码留空时优先用已保存配置）
 //! - `GET /api/network/bluetooth` — 蓝牙适配器信息
+//! - `POST /api/network/bluetooth` — 蓝牙开关（`{ "enabled": true|false }`）
 
 use super::{error, success};
 use crate::collector;
@@ -60,4 +61,22 @@ pub async fn wifi_connect(Json(p): Json<WifiConnectParams>) -> Json<Value> {
 pub async fn bluetooth_info() -> Json<Value> {
     let data = collector::network::get_bluetooth_info();
     success(data)
+}
+
+#[derive(Deserialize)]
+pub struct BluetoothPowerParams {
+    pub enabled: bool,
+}
+
+/// `POST /api/network/bluetooth` — 开关蓝牙。
+///
+/// 优先走 BlueZ（`bluetoothctl power`）；本机当前 BlueZ 未接管 hci0，会自动退回
+/// `hciconfig down/up` + `rfkill`（见 collector::network::set_bluetooth_power）。
+pub async fn bluetooth_power(Json(p): Json<BluetoothPowerParams>) -> Json<Value> {
+    let enabled = p.enabled;
+    match tokio::task::spawn_blocking(move || collector::network::set_bluetooth_power(enabled)).await {
+        Ok(Ok(())) => success(serde_json::json!({ "enabled": enabled })),
+        Ok(Err(e)) => error(&e),
+        Err(e) => error(&format!("蓝牙切换任务异常: {e}")),
+    }
 }

@@ -385,6 +385,60 @@ fn main() {
         });
     }
 
+    // 设置页蓝牙开关：工作线程下发，按钮切「切换中…」防重复提交；
+    // 成功后重新拉一次 /network/bluetooth 回填真实状态，失败把错误显示在卡片脚注。
+    {
+        let w = weak.clone();
+        app.global::<Ui>().on_set_bluetooth(move |enabled: bool| {
+            let Some(ui) = w.upgrade() else { return };
+            {
+                let sys = ui.global::<Sys>();
+                if sys.get_bt_busy() {
+                    return;
+                }
+                sys.set_bt_busy(true);
+                sys.set_bt_error("".into());
+            }
+            let w = w.clone();
+            std::thread::spawn(move || {
+                if demo {
+                    // 演示：API 不存在，本地翻转供预览
+                    std::thread::sleep(Duration::from_millis(350));
+                    w.upgrade_in_event_loop(move |ui| {
+                        let sys = ui.global::<Sys>();
+                        sys.set_bt_on(enabled);
+                        sys.set_bt_busy(false);
+                        sys.set_bt(if enabled { "蓝牙 开（演示）" } else { "蓝牙 关（演示）" }.into());
+                    })
+                    .ok();
+                    return;
+                }
+                match post_bluetooth(enabled) {
+                    Ok(()) => {
+                        if let Ok(v) = fetch_json(&format!("{BASE}/network/bluetooth")) {
+                            apply_bluetooth(&w, &v);
+                        }
+                        w.upgrade_in_event_loop(move |ui| {
+                            let sys = ui.global::<Sys>();
+                            sys.set_bt_on(enabled);
+                            sys.set_bt_busy(false);
+                        })
+                        .ok();
+                    }
+                    Err(e) => {
+                        tracing_or_log(&format!("蓝牙切换失败：{e}"));
+                        w.upgrade_in_event_loop(move |ui| {
+                            let sys = ui.global::<Sys>();
+                            sys.set_bt_busy(false);
+                            sys.set_bt_error(e.into());
+                        })
+                        .ok();
+                    }
+                }
+            });
+        });
+    }
+
     // 设置页电源按钮：确认层点「确认」后才走到这里。
     // HTTP 放到工作线程，避免请求超时把 UI 卡住；失败时保留确认层并显示错误。
     {
@@ -496,6 +550,25 @@ fn post_power(action: &str) -> Result<(), String> {
     let body = format!("{{\"action\":\"{action}\"}}");
     let resp = ureq::post(&url)
         .timeout(Duration::from_secs(4))
+        .set("Content-Type", "application/json")
+        .send_string(&body)
+        .map_err(|e| format!("{url}: {e}"))?;
+    let text = resp.into_string().map_err(|e| format!("读取 {url}: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("解析 {url}: {e}"))?;
+    if v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1) != 0 {
+        let msg = v.get("error").and_then(|e| e.as_str()).unwrap_or(&text);
+        return Err(msg.to_string());
+    }
+    Ok(())
+}
+
+/// 下发蓝牙开关：POST /api/network/bluetooth。
+/// 服务端优先 BlueZ，未接管 hci0 时自动退回 hciconfig + rfkill。
+fn post_bluetooth(enabled: bool) -> Result<(), String> {
+    let url = format!("{BASE}/network/bluetooth");
+    let body = format!("{{\"enabled\":{enabled}}}");
+    let resp = ureq::post(&url)
+        .timeout(Duration::from_secs(15))
         .set("Content-Type", "application/json")
         .send_string(&body)
         .map_err(|e| format!("{url}: {e}"))?;
@@ -1717,7 +1790,9 @@ fn apply_bluetooth(w: &Weak<App>, v: &Value) {
         "蓝牙 关".to_string()
     };
     w.upgrade_in_event_loop(move |ui| {
-        ui.global::<Sys>().set_bt(text.into());
+        let sys = ui.global::<Sys>();
+        sys.set_bt(text.into());
+        sys.set_bt_on(powered);
     })
     .ok();
 }

@@ -37,10 +37,22 @@ fn nmcli_cmd() -> String {
     command_path(&["/usr/bin/nmcli", "/bin/nmcli", "nmcli"])
 }
 
+fn bluetoothctl_cmd() -> String {
+    command_path(&["/usr/bin/bluetoothctl", "/bin/bluetoothctl", "bluetoothctl"])
+}
+
+fn hciconfig_cmd() -> String {
+    command_path(&["/usr/bin/hciconfig", "/bin/hciconfig", "hciconfig"])
+}
+
+fn rfkill_cmd() -> String {
+    command_path(&["/usr/sbin/rfkill", "/sbin/rfkill", "/usr/bin/rfkill", "rfkill"])
+}
+
 /// 执行 bluetoothctl 子命令，返回 stdout（不可用/超时返回空串）。
 /// bluetoothctl 依赖 D-Bus，BlueZ 异常时可能挂住，有 timeout 则包 3 秒上限。
 fn bluetoothctl(args: &[&str]) -> String {
-    let bt = command_path(&["/usr/bin/bluetoothctl", "/bin/bluetoothctl", "bluetoothctl"]);
+    let bt = bluetoothctl_cmd();
     let timeout = command_path(&["/usr/bin/timeout", "/bin/timeout"]);
     let mut cmd = if timeout.is_empty() {
         let mut c = std::process::Command::new(&bt);
@@ -387,7 +399,20 @@ pub fn connect_wifi(ssid: &str, password: &str) -> Result<String, String> {
 
 /// 获取蓝牙适配器信息：优先 bluetoothctl（BlueZ 真实开关状态与设备列表），
 /// BlueZ 不可用时退回 hciconfig/sysfs。
+///
+/// rfkill 软锁时即使 hci0 还保持 UP（本机 BlueZ 未接管时就是这样），对外也报「关」，
+/// 避免面板显示开机但实际射频已被禁用。
 pub fn get_bluetooth_info() -> BluetoothInfo {
+    let blocked = rfkill_soft_blocked("bluetooth");
+    let mut info = read_bluetooth_info();
+    if blocked {
+        info.powered = false;
+        info.devices.clear();
+    }
+    info
+}
+
+fn read_bluetooth_info() -> BluetoothInfo {
     let show = bluetoothctl(&["show"]);
     if let Some(controller) = show.lines().find(|l| l.trim_start().starts_with("Controller ")) {
         let powered = extract_field(&show, "Powered").is_some_and(|v| v.eq_ignore_ascii_case("yes"));
@@ -419,7 +444,7 @@ pub fn get_bluetooth_info() -> BluetoothInfo {
 /// 兜底：bluetoothctl（BlueZ）不可用时，用 hciconfig 判断适配器是否 UP，
 /// 地址从 hciconfig 或 sysfs 读取。
 fn get_bluetooth_info_fallback() -> BluetoothInfo {
-    let output = std::process::Command::new(command_path(&["/usr/bin/hciconfig", "/bin/hciconfig", "hciconfig"]))
+    let output = std::process::Command::new(hciconfig_cmd())
         .arg("hci0")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -432,6 +457,45 @@ fn get_bluetooth_info_fallback() -> BluetoothInfo {
         .unwrap_or_default();
 
     BluetoothInfo { powered, address, name: String::new(), devices: Vec::new() }
+}
+
+/// rfkill 软锁状态（kind = "bluetooth"）。
+fn rfkill_soft_blocked(kind: &str) -> bool {
+    let Ok(text) = run_command(&rfkill_cmd(), &["list", kind], 5) else { return false };
+    text.to_ascii_lowercase().contains("soft blocked: yes")
+}
+
+/// BlueZ 是否已接管至少一个控制器。本机当前是反例：hci0 由 hci_uart 挂上但
+/// 没进 mgmt（`bluetoothctl list` / `btmgmt info` 都是 0 个），只能走 HCI + rfkill。
+fn bluetooth_controller_available() -> bool {
+    run_command(&bluetoothctl_cmd(), &["list"], 6).map(|t| t.contains("Controller ")).unwrap_or(false)
+}
+
+/// 开关蓝牙：优先 BlueZ（`bluetoothctl power`），没有控制器时退回 `hciconfig` + `rfkill`。
+///
+/// 关闭顺序：先下电/断开连接，再 rfkill 软锁（保证重启后仍保持关闭）。
+/// 打开顺序：先解 rfkill 再上电，否则适配器无法启动。
+pub fn set_bluetooth_power(enabled: bool) -> Result<(), String> {
+    if bluetooth_controller_available() {
+        if enabled {
+            let _ = run_command(&rfkill_cmd(), &["unblock", "bluetooth"], 5);
+            run_command(&bluetoothctl_cmd(), &["power", "on"], 10)?;
+        } else {
+            run_command(&bluetoothctl_cmd(), &["power", "off"], 10)?;
+            let _ = run_command(&rfkill_cmd(), &["block", "bluetooth"], 5);
+        }
+        return Ok(());
+    }
+
+    // 无 BlueZ 控制器：hci_uart 直接把 hci0 暴露给 HCI，rfkill 负责射频软锁
+    if enabled {
+        run_command(&rfkill_cmd(), &["unblock", "bluetooth"], 5)?;
+        run_command(&hciconfig_cmd(), &["hci0", "up"], 8)?;
+    } else {
+        run_command(&hciconfig_cmd(), &["hci0", "down"], 8)?;
+        let _ = run_command(&rfkill_cmd(), &["block", "bluetooth"], 5);
+    }
+    Ok(())
 }
 
 /// 从 iw 输出中按关键字提取冒号后的值。

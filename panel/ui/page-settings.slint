@@ -492,7 +492,7 @@ export component PageSettings inherits Rectangle {
         PowerBtn {
             x: 14px;
             y: 122px;
-            width: 172px;
+            width: 127px;
             height: 42px;
             label: "WiFi";
             sub: Sys.wifi-ok ? Sys.wifi-ssid : "未连接";
@@ -502,9 +502,22 @@ export component PageSettings inherits Rectangle {
             }
         }
         PowerBtn {
-            x: 196px;
+            x: 151px;
             y: 122px;
-            width: 172px;
+            width: 127px;
+            height: 42px;
+            label: "蓝牙";
+            sub: Sys.bt-busy ? "切换中…" : (Sys.bt-on ? "已开启" : "已关闭");
+            tint: Sys.bt-on ? Theme.accent2 : Theme.muted;
+            enabled: !Sys.bt-busy;
+            pick => {
+                Ui.set-bluetooth(!Sys.bt-on);
+            }
+        }
+        PowerBtn {
+            x: 288px;
+            y: 122px;
+            width: 127px;
             height: 42px;
             label: "重启";
             sub: "reboot";
@@ -516,9 +529,9 @@ export component PageSettings inherits Rectangle {
             }
         }
         PowerBtn {
-            x: 378px;
+            x: 425px;
             y: 122px;
-            width: 172px;
+            width: 127px;
             height: 42px;
             label: "关机";
             sub: "poweroff";
@@ -533,10 +546,13 @@ export component PageSettings inherits Rectangle {
             x: 14px;
             y: 172px;
             width: 538px;
-            text: "重启 / 关机需二次确认 · 配置 panel-orientation / panel-flip / panel-theme / panel-brightness.txt";
+            text: Sys.bt-error != ""
+                ? Sys.bt-error
+                : "重启 / 关机需二次确认 · 配置 panel-orientation / panel-flip / panel-theme / panel-brightness.txt";
             font-size: 7.5px;
-            color: Theme.muted;
+            color: Sys.bt-error != "" ? Theme.error : Theme.muted;
             font-family: Theme.font-body;
+            overflow: elide;
         }
     }
 }
@@ -808,7 +824,7 @@ export component PageSettingsP inherits Rectangle {
         PowerBtn {
             x: 14px;
             y: 198px;
-            width: 156px;
+            width: 115px;
             height: 56px;
             label: "WiFi";
             sub: Sys.wifi-ok ? Sys.wifi-ssid : "未连接";
@@ -818,9 +834,22 @@ export component PageSettingsP inherits Rectangle {
             }
         }
         PowerBtn {
-            x: 178px;
+            x: 137px;
             y: 198px;
-            width: 156px;
+            width: 115px;
+            height: 56px;
+            label: "蓝牙";
+            sub: Sys.bt-busy ? "切换中…" : (Sys.bt-on ? "已开启" : "已关闭");
+            tint: Sys.bt-on ? Theme.accent2 : Theme.muted;
+            enabled: !Sys.bt-busy;
+            pick => {
+                Ui.set-bluetooth(!Sys.bt-on);
+            }
+        }
+        PowerBtn {
+            x: 260px;
+            y: 198px;
+            width: 115px;
             height: 56px;
             label: "重启";
             sub: "reboot";
@@ -832,9 +861,9 @@ export component PageSettingsP inherits Rectangle {
             }
         }
         PowerBtn {
-            x: 342px;
+            x: 383px;
             y: 198px;
-            width: 156px;
+            width: 115px;
             height: 56px;
             label: "关机";
             sub: "poweroff";
@@ -849,10 +878,11 @@ export component PageSettingsP inherits Rectangle {
             x: 14px;
             y: 262px;
             width: 484px;
-            text: "重启 / 关机需二次确认；操作会中断采集与面板显示";
+            text: Sys.bt-error != "" ? Sys.bt-error : "重启 / 关机需二次确认；操作会中断采集与面板显示";
             font-size: 8.5px;
-            color: Theme.muted;
+            color: Sys.bt-error != "" ? Theme.error : Theme.muted;
             font-family: Theme.font-body;
+            overflow: elide;
         }
         Text {
             x: 14px;

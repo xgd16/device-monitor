@@ -151,6 +151,11 @@ export global Sys {
     in-out property <string> wifi-signal-str: "-- dBm";
     in-out property <string> wifi-detail: "";
     in-out property <string> bt: "蓝牙 关";
+    // 蓝牙开关（设置页「系统 · 网络 · 电源」卡）：bt-on 为真值，bt-busy 防重复提交，
+    // bt-error 显示在卡片脚注（失败时不再显示配置提示）。
+    in-out property <bool> bt-on: false;
+    in-out property <bool> bt-busy: false;
+    in-out property <string> bt-error: "";
     in-out property <string> rx: "0 B/s";
     in-out property <string> tx: "0 B/s";
     in-out property <bool> vpn-ok: false;
@@ -324,6 +329,9 @@ export global Ui {
     // 设置页亮度滑块（percent 2–100）：设备上 POST /api/hardware/brightness（写背光节点），
     // 工作线程合并拖动期间的密集回调；macOS 预览只落 UI。
     callback set-brightness(float);
+    // 设置页蓝牙开关：设备上 POST /api/network/bluetooth（BlueZ / hciconfig+rfkill），
+    // 工作线程执行，成功后重新拉取 /api/network/bluetooth 回填状态。
+    callback set-bluetooth(bool);
 }
 
 // ── WiFi 操作页（设置页「WiFi」按钮打开；全屏覆盖层）──
