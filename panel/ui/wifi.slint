@@ -54,9 +54,9 @@ component Bars inherits Rectangle {
 component Tag inherits Rectangle {
     in property <string> label;
     in property <color> tint: Theme.muted;
-    height: 18px;
+    height: 20px;
     width: lbl.preferred-width + 14px;
-    border-radius: 9px;
+    border-radius: 10px;
     background: root.tint.with-alpha(0.12);
     border-width: 1px;
     border-color: root.tint.with-alpha(0.35);
@@ -121,11 +121,15 @@ component ApRow inherits Rectangle {
     }
 
     // 右侧状态：已连接/已保存 胶囊 + 信号柱 + 百分比
+    //
+    // 注意：横向布局的 alignment 只管主轴（左右），交叉轴（上下）里固定高度的子项
+    // 会贴顶——之前胶囊/信号柱因此比百分比文本高一截。这里把整块压成 20px 并
+    // 用 y 垂直居中，子项高度统一为 20 填满交叉轴，三者基线才对齐。
     HorizontalLayout {
         x: root.width - (Ui.portrait ? 172px : 318px);
-        y: 0px;
+        y: (root.height - 20px) / 2;
         width: Ui.portrait ? 156px : 302px;
-        height: root.height;
+        height: 20px;
         spacing: 8px;
         alignment: end;
         if root.in-use : Tag {
@@ -142,6 +146,7 @@ component ApRow inherits Rectangle {
         }
         Text {
             width: 42px;
+            height: 20px;
             text: "\{root.signal}%";
             font-size: 10px;
             font-weight: 700;
