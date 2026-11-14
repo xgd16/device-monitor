@@ -191,6 +191,9 @@ async fn main() {
         .route("/battery", get(api::battery::battery_info))
         .route("/network", get(api::network::network_info))
         .route("/network/wifi", get(api::network::wifi_info))
+        // WiFi 操作页专用：扫描会触发真实射频扫描，只在面板打开该页时按需调用
+        .route("/network/wifi/scan", get(api::network::wifi_scan))
+        .route("/network/wifi/connect", post(api::network::wifi_connect))
         .route("/network/bluetooth", get(api::network::bluetooth_info))
         .route("/process", get(api::process::process_list))
         .route("/process/{pid}", get(api::process::process_detail))

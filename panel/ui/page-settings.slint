@@ -10,7 +10,7 @@
 // 滑杆命中区 44（竖版 56）高，拖动中 Ui.bright-drag 置位，避免 4s 轮询的旧值把旋钮拽回去。
 // 横版 1142x404：2x2 四卡；竖版 512x1028 单列四卡。
 import { Theme } from "theme.slint";
-import { Sys, Ui } from "data.slint";
+import { Sys, Ui, Wifi } from "data.slint";
 import { Card, Mono } from "widgets.slint";
 
 // 分段按钮：单行两段文字（主标签 + 副说明），高度由调用方给。
@@ -95,6 +95,8 @@ component PowerBtn inherits Rectangle {
             color: Theme.muted;
             font-family: Theme.font-mono;
             horizontal-alignment: TextHorizontalAlignment.center;
+            // WiFi SSID 可能很长：按钮内单行省略，避免顶破卡片
+            overflow: elide;
         }
     }
     ta := TouchArea {
@@ -439,7 +441,7 @@ export component PageSettings inherits Rectangle {
         y: 208px;
         width: 566px;
         height: 196px;
-        title: "系统与电源";
+        title: "系统 · 网络 · 电源";
         Kv {
             x: 14px;
             y: 34px;
@@ -490,7 +492,19 @@ export component PageSettings inherits Rectangle {
         PowerBtn {
             x: 14px;
             y: 122px;
-            width: 265px;
+            width: 172px;
+            height: 42px;
+            label: "WiFi";
+            sub: Sys.wifi-ok ? Sys.wifi-ssid : "未连接";
+            tint: Theme.info;
+            pick => {
+                Wifi.open-wifi();
+            }
+        }
+        PowerBtn {
+            x: 196px;
+            y: 122px;
+            width: 172px;
             height: 42px;
             label: "重启";
             sub: "reboot";
@@ -502,9 +516,9 @@ export component PageSettings inherits Rectangle {
             }
         }
         PowerBtn {
-            x: 287px;
+            x: 378px;
             y: 122px;
-            width: 265px;
+            width: 172px;
             height: 42px;
             label: "关机";
             sub: "poweroff";
@@ -743,7 +757,7 @@ export component PageSettingsP inherits Rectangle {
         y: 722px;
         width: 512px;
         height: 300px;
-        title: "系统与电源";
+        title: "系统 · 网络 · 电源";
         Kv {
             x: 14px;
             y: 32px;
@@ -794,7 +808,19 @@ export component PageSettingsP inherits Rectangle {
         PowerBtn {
             x: 14px;
             y: 198px;
-            width: 238px;
+            width: 156px;
+            height: 56px;
+            label: "WiFi";
+            sub: Sys.wifi-ok ? Sys.wifi-ssid : "未连接";
+            tint: Theme.info;
+            pick => {
+                Wifi.open-wifi();
+            }
+        }
+        PowerBtn {
+            x: 178px;
+            y: 198px;
+            width: 156px;
             height: 56px;
             label: "重启";
             sub: "reboot";
@@ -806,9 +832,9 @@ export component PageSettingsP inherits Rectangle {
             }
         }
         PowerBtn {
-            x: 260px;
+            x: 342px;
             y: 198px;
-            width: 238px;
+            width: 156px;
             height: 56px;
             label: "关机";
             sub: "poweroff";

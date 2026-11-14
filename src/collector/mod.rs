@@ -192,6 +192,28 @@ pub struct WifiInfo {
     pub bssid: String,
 }
 
+/// WiFi 扫描结果（`nmcli dev wifi list` 按 SSID 去重后的一行）。
+///
+/// 只在面板打开 WiFi 操作页时按需扫描：`--rescan yes` 会触发真实射频扫描，
+/// 常驻轮询既费电也会干扰当前连接的吞吐。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WifiNetwork {
+    pub ssid: String,
+    pub bssid: String,
+    /// nmcli SIGNAL：0–100 的信号百分比（不是 dBm）
+    pub signal: i32,
+    /// nmcli SECURITY 原文（如 "WPA2 WPA3"）；空串 = 开放网络
+    pub security: String,
+    pub secure: bool,
+    pub frequency_mhz: u64,
+    pub channel: u32,
+    pub band: String,
+    /// 当前是否正连接这个 SSID
+    pub in_use: bool,
+    /// 本机是否已有该 SSID 的已保存配置
+    pub saved: bool,
+}
+
 /// 蓝牙适配器信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BluetoothInfo {

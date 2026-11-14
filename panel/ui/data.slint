@@ -70,6 +70,20 @@ export struct ProgRow {
     left: string,
 }
 
+// WiFi 扫描列表行（Rust 侧把 /api/network/wifi/scan 的 JSON 整理成这里）
+export struct WifiRow {
+    ssid: string,
+    // nmcli SECURITY 原文（"WPA2 WPA3" 等），空串 = 开放网络
+    security: string,
+    secure: bool,
+    // nmcli SIGNAL 百分比 0–100（不是 dBm）
+    signal: int,
+    band: string,
+    channel: int,
+    in-use: bool,
+    saved: bool,
+}
+
 // ── 系统监控页数据（GET /api/system/overview + /api/disk + /api/hardware …）──
 export global Sys {
     in-out property <bool> online: false;
@@ -310,4 +324,50 @@ export global Ui {
     // 设置页亮度滑块（percent 2–100）：设备上 POST /api/hardware/brightness（写背光节点），
     // 工作线程合并拖动期间的密集回调；macOS 预览只落 UI。
     callback set-brightness(float);
+}
+
+// ── WiFi 操作页（设置页「WiFi」按钮打开；全屏覆盖层）──
+//
+// 性能约定：只有 visible=true（页面打开）时才调用 /api/network/wifi/scan 触发射频扫描；
+// 关闭页面立即提升扫描代次，丢弃迟到的结果。扫描/连接都在 Rust 工作线程执行，
+// UI 线程只收最终结果，避免 nmcli 的 3–50s 阻塞渲染循环。
+export global Wifi {
+    in-out property <bool> visible: false;
+    in-out property <bool> scanning: false;
+    in-out property <bool> connecting: false;
+    in-out property <string> error: "";
+    in-out property <string> status: "";
+
+    // 当前连接（/api/network/wifi）
+    in-out property <bool> current-connected: false;
+    in-out property <string> current-ssid: "";
+    in-out property <string> current-detail: "";
+
+    // 扫描结果（Rust 已按信号排序、同 SSID 去重）
+    in-out property <[WifiRow]> aps: [];
+
+    // 密码输入视图
+    in-out property <bool> pass-view: false;
+    in-out property <string> sel-ssid: "";
+    in-out property <string> sel-security: "";
+    in-out property <bool> sel-saved: false;
+    in-out property <string> password: "";
+    // 实际显示串：明文或等长圆点（Rust 侧生成，Slint 没有字符串 repeat）
+    in-out property <string> pass-display: "";
+    in-out property <bool> pass-show: false;
+    // 0 = 字母键盘，1 = 数字/符号键盘
+    in-out property <int> kb-layer: 0;
+    in-out property <bool> kb-shift: false;
+
+    callback open-wifi();
+    callback close-wifi();
+    callback rescan();
+    // ssid, security, saved, in-use
+    callback pick(string, string, bool, bool);
+    callback key(string);
+    callback backspace();
+    callback clear-pass();
+    callback toggle-show();
+    callback submit();
+    callback cancel-pass();
 }

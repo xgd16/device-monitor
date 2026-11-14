@@ -4,7 +4,7 @@
 //! - WiFi：通过 `iw dev wlan0 link` 解析连接信息
 //! - 蓝牙：bluetoothctl（BlueZ）读取适配器开关与设备列表，不可用时退回 hciconfig/sysfs
 
-use super::{BluetoothDevice, BluetoothInfo, NetworkInterface, WifiInfo};
+use super::{BluetoothDevice, BluetoothInfo, NetworkInterface, WifiInfo, WifiNetwork};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -217,6 +217,174 @@ fn get_wifi_info_from_nmcli() -> Option<WifiInfo> {
     None
 }
 
+// ────────────────────────── WiFi 扫描 / 连接（NetworkManager） ──────────────────────────
+//
+// 设备上 NetworkManager 常驻、nmcli 1.56 可用。扫描只在面板打开 WiFi 操作页时
+// 由 `/api/network/wifi/scan` 触发：`--rescan yes` 会真正让射频扫描（实测约 3s），
+// 常驻轮询既费电也会挤占当前连接的吞吐，所以绝不放进入 2s 采集心跳。
+
+/// 按 nmcli `-t` 规则切分一行：列分隔符是未转义的冒号，值里的 `\:` / `\\` 需还原。
+fn nmcli_split(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut cur = String::new();
+    let mut escaped = false;
+    for c in line.chars() {
+        if escaped {
+            cur.push(c);
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == ':' {
+            fields.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    if escaped {
+        cur.push('\\');
+    }
+    fields.push(cur);
+    fields
+}
+
+/// 解析 `nmcli -t -f IN-USE,SSID,BSSID,SIGNAL,SECURITY,FREQ,CHAN dev wifi list` 的一行。
+fn parse_scan_line(line: &str) -> Option<WifiNetwork> {
+    let f = nmcli_split(line);
+    if f.len() < 7 {
+        return None;
+    }
+    let ssid = f[1].clone();
+    // 隐藏网络（SSID 为空）无法在面板上选择，直接丢弃
+    if ssid.is_empty() {
+        return None;
+    }
+    let security = f[4].trim().to_string();
+    let frequency_mhz = f[5].split_whitespace().next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    let (calc_channel, band) = freq_to_channel_band(frequency_mhz);
+    let channel = f[6].trim().parse::<u32>().unwrap_or(calc_channel);
+    Some(WifiNetwork {
+        ssid,
+        bssid: f[2].clone(),
+        signal: f[3].trim().parse::<i32>().unwrap_or(0),
+        secure: !security.is_empty(),
+        security,
+        frequency_mhz,
+        channel,
+        band,
+        in_use: f[0].trim() == "*",
+        saved: false,
+    })
+}
+
+/// 同一 SSID 可能有多个 BSSID：保留正在连接的那条，否则保留信号最强的。
+fn dedup_by_ssid(rows: Vec<WifiNetwork>) -> Vec<WifiNetwork> {
+    let mut map: HashMap<String, WifiNetwork> = HashMap::new();
+    for row in rows {
+        match map.get(&row.ssid) {
+            Some(old) if old.in_use || (!row.in_use && old.signal >= row.signal) => {}
+            _ => {
+                map.insert(row.ssid.clone(), row);
+            }
+        }
+    }
+    let mut out: Vec<WifiNetwork> = map.into_values().collect();
+    out.sort_by(|a, b| b.in_use.cmp(&a.in_use).then(b.signal.cmp(&a.signal)).then_with(|| a.ssid.cmp(&b.ssid)));
+    out
+}
+
+/// 带超时执行子进程（优先用系统 `timeout`，缺失时退化为阻塞执行）。
+/// 返回 stdout；失败时把 stderr（没有则 stdout）作为错误带回面板显示。
+fn run_command(program: &str, args: &[&str], timeout_secs: u64) -> Result<String, String> {
+    let timeout = command_path(&["/usr/bin/timeout", "/bin/timeout", "timeout"]);
+    let mut cmd = if timeout.is_empty() {
+        let mut c = std::process::Command::new(program);
+        c.args(args);
+        c
+    } else {
+        let mut c = std::process::Command::new(&timeout);
+        c.arg(timeout_secs.to_string()).arg(program).args(args);
+        c
+    };
+    let out = cmd.output().map_err(|e| format!("执行 {program} 失败: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if !out.status.success() {
+        let msg = if stderr.is_empty() { stdout } else { stderr };
+        let msg = if msg.is_empty() { format!("退出码 {:?}", out.status.code()) } else { msg };
+        return Err(msg);
+    }
+    Ok(stdout)
+}
+
+/// 已保存的 WiFi 配置：(连接名, SSID)。
+fn saved_wifi_profiles() -> Vec<(String, String)> {
+    let nmcli = nmcli_cmd();
+    let Ok(text) = run_command(&nmcli, &["-t", "-f", "NAME,TYPE", "connection", "show"], 5) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let f = nmcli_split(line);
+        if f.len() < 2 || f[1] != "802-11-wireless" {
+            continue;
+        }
+        let name = f[0].clone();
+        let ssid = run_command(&nmcli, &["-g", "802-11-wireless.ssid", "connection", "show", &name], 5)
+            .ok()
+            .map(|s| nmcli_split(s.trim()).into_iter().next().unwrap_or_default())
+            .unwrap_or_default();
+        if !ssid.is_empty() {
+            out.push((name, ssid));
+        }
+    }
+    out
+}
+
+/// 主动扫描周边 WiFi（仅供面板 WiFi 操作页按需调用）。
+pub fn scan_wifi_networks() -> Result<Vec<WifiNetwork>, String> {
+    let nmcli = nmcli_cmd();
+    let base = ["-t", "-f", "IN-USE,SSID,BSSID,SIGNAL,SECURITY,FREQ,CHAN", "dev", "wifi", "list"];
+    let mut args: Vec<&str> = base.to_vec();
+    args.extend(["--rescan", "yes"]);
+    // NM 偶尔会拒绝「刚扫过」的重扫请求：退回缓存列表，页面至少还有数据
+    let text = match run_command(&nmcli, &args, 25) {
+        Ok(t) => t,
+        Err(e) => run_command(&nmcli, &base, 8).map_err(|e2| format!("扫描失败：{e}；读取缓存失败：{e2}"))?,
+    };
+    let saved: Vec<String> = saved_wifi_profiles().into_iter().map(|(_, ssid)| ssid).collect();
+    let mut rows: Vec<WifiNetwork> = text.lines().filter_map(parse_scan_line).collect();
+    for row in &mut rows {
+        row.saved = saved.iter().any(|s| s == &row.ssid);
+    }
+    Ok(dedup_by_ssid(rows))
+}
+
+/// 连接指定 SSID：密码为空时优先激活已保存配置，否则交给 `nmcli device wifi connect`。
+/// 密码走 argv（本机 root 服务、无 shell 拼接）；nmcli 的 `--wait` 与外部 timeout 双重兜底。
+pub fn connect_wifi(ssid: &str, password: &str) -> Result<String, String> {
+    let ssid = ssid.trim();
+    if ssid.is_empty() {
+        return Err("SSID 不能为空".to_string());
+    }
+    if password.chars().count() > 63 {
+        return Err("WiFi 密码最长 63 个字符".to_string());
+    }
+    let nmcli = nmcli_cmd();
+    if password.is_empty()
+        && let Some((name, _)) = saved_wifi_profiles().into_iter().find(|(_, s)| s == ssid)
+    {
+        run_command(&nmcli, &["--wait", "45", "connection", "up", "id", &name], 55)?;
+        return Ok(format!("已连接到 {ssid}"));
+    }
+    let mut args: Vec<&str> = vec!["--wait", "45", "device", "wifi", "connect", ssid];
+    if !password.is_empty() {
+        args.push("password");
+        args.push(password);
+    }
+    run_command(&nmcli, &args, 55)?;
+    Ok(format!("已连接到 {ssid}"))
+}
+
 /// 获取蓝牙适配器信息：优先 bluetoothctl（BlueZ 真实开关状态与设备列表），
 /// BlueZ 不可用时退回 hciconfig/sysfs。
 pub fn get_bluetooth_info() -> BluetoothInfo {
@@ -289,5 +457,55 @@ fn freq_to_channel_band(freq_mhz: u64) -> (u32, String) {
         // 6 GHz: channels 1-233 (5955-7115 MHz)
         5955..=7115 => (((freq_mhz - 5950) / 5) as u32, "6G".to_string()),
         _ => (0, String::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nmcli_split_handles_escaped_colons() {
+        let f = nmcli_split(r"*:net_5g:D0\:5B\:CB\:C5\:67\:A2:100:WPA2 WPA3:5180 MHz:36");
+        assert_eq!(f.len(), 7);
+        assert_eq!(f[0], "*");
+        assert_eq!(f[2], "D0:5B:CB:C5:67:A2");
+        assert_eq!(f[4], "WPA2 WPA3");
+    }
+
+    #[test]
+    fn parse_scan_line_marks_open_and_secure() {
+        let open = parse_scan_line(r" :OpenNet:AA\:BB\:CC\:DD\:EE\:FF:42::2437 MHz:6").unwrap();
+        assert!(!open.secure);
+        assert_eq!(open.band, "2.4G");
+        assert_eq!(open.channel, 6);
+        assert!(!open.in_use);
+
+        let saved = parse_scan_line(r"*:net_5g:D0\:5B\:CB\:C5\:67\:A2:100:WPA2 WPA3:5180 MHz:36").unwrap();
+        assert!(saved.secure);
+        assert!(saved.in_use);
+        assert_eq!(saved.band, "5G");
+        assert_eq!(saved.channel, 36);
+    }
+
+    #[test]
+    fn hidden_ssid_is_skipped() {
+        assert!(parse_scan_line(r" ::3A\:70\:4F\:3B\:D1\:E6:52:WPA2:5220 MHz:44").is_none());
+    }
+
+    #[test]
+    fn dedup_keeps_strongest_and_connected() {
+        let rows = vec![
+            parse_scan_line(r" :XM_MX:AA\:BB\:CC\:DD\:EE\:01:40:WPA2:2432 MHz:5").unwrap(),
+            parse_scan_line(r" :XM_MX:AA\:BB\:CC\:DD\:EE\:02:70:WPA2:5220 MHz:44").unwrap(),
+            parse_scan_line(r"*:net_5g:AA\:BB\:CC\:DD\:EE\:03:30:WPA2:5180 MHz:36").unwrap(),
+            parse_scan_line(r" :net_5g:AA\:BB\:CC\:DD\:EE\:04:90:WPA2:5180 MHz:36").unwrap(),
+        ];
+        let out = dedup_by_ssid(rows);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].ssid, "net_5g");
+        assert!(out[0].in_use);
+        assert_eq!(out[1].ssid, "XM_MX");
+        assert_eq!(out[1].signal, 70);
     }
 }

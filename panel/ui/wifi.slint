@@ -1,0 +1,729 @@
+// WiFi 操作页（设置页「WiFi」按钮打开的全屏覆盖层）。
+//
+// 设计约束：
+//   · 扫描只在页面打开时触发一次（Rust 侧 on_open_wifi → /api/network/wifi/scan），
+//     关闭立即失效在途结果；页面内只有「重新扫描」会再次触发。
+//   · 密码输入用自绘键盘：Slint/linuxkms 没有系统输入法，WiFi 密码只需要
+//     ASCII 可见字符（字母/数字/常见符号），两套键盘（字母 / 符号）足够。
+//   · 横屏 1142x512、竖屏 512x1142：所有几何都按 Ui.portrait 切换，与设置页一致。
+import { Theme } from "theme.slint";
+import { Ui, Wifi } from "data.slint";
+import { ListView } from "std-widgets.slint";
+
+// 信号柱：4 根，按 nmcli 的 0–100 百分比点亮
+component Bars inherits Rectangle {
+    in property <int> value: 0;
+    in property <color> tint: Theme.success;
+    width: 28px;
+    height: 20px;
+    Rectangle {
+        x: 0px;
+        y: 14px;
+        width: 4px;
+        height: 6px;
+        border-radius: 1px;
+        background: root.value >= 15 ? root.tint : Theme.track;
+    }
+    Rectangle {
+        x: 7px;
+        y: 10px;
+        width: 4px;
+        height: 10px;
+        border-radius: 1px;
+        background: root.value >= 35 ? root.tint : Theme.track;
+    }
+    Rectangle {
+        x: 14px;
+        y: 6px;
+        width: 4px;
+        height: 14px;
+        border-radius: 1px;
+        background: root.value >= 60 ? root.tint : Theme.track;
+    }
+    Rectangle {
+        x: 21px;
+        y: 2px;
+        width: 4px;
+        height: 18px;
+        border-radius: 1px;
+        background: root.value >= 80 ? root.tint : Theme.track;
+    }
+}
+
+// 胶囊标签（小号，行内用）
+component Tag inherits Rectangle {
+    in property <string> label;
+    in property <color> tint: Theme.muted;
+    height: 18px;
+    width: lbl.preferred-width + 14px;
+    border-radius: 9px;
+    background: root.tint.with-alpha(0.12);
+    border-width: 1px;
+    border-color: root.tint.with-alpha(0.35);
+    lbl := Text {
+        x: 7px;
+        y: Theme.text-nudge;
+        height: parent.height;
+        text: root.label;
+        font-size: 8px;
+        font-weight: 700;
+        color: root.tint;
+        font-family: Theme.font-body;
+        vertical-alignment: TextVerticalAlignment.center;
+    }
+}
+
+// 扫描结果行：左 SSID + 加密方式/频段，右 已连接/已保存 + 信号柱 + 百分比
+component ApRow inherits Rectangle {
+    in property <string> ssid;
+    in property <string> security;
+    in property <bool> secure;
+    in property <int> signal;
+    in property <string> band;
+    in property <int> channel;
+    in property <bool> in-use;
+    in property <bool> saved;
+    callback pick();
+
+    height: Ui.portrait ? 64px : 52px;
+    border-radius: 11px;
+    background: root.in-use ? Theme.accent.with-alpha(0.10) : Theme.card-alt.with-alpha(0.62);
+    border-width: 1px;
+    border-color: root.in-use ? Theme.accent.with-alpha(0.5) : Theme.border.with-alpha(0.55);
+
+    // 触控层放最上面也没关系：本行没有其他可点控件
+    ta := TouchArea {
+        clicked => {
+            root.pick();
+        }
+    }
+
+    Text {
+        x: 16px;
+        y: Ui.portrait ? 10px : 6px;
+        width: root.width - (Ui.portrait ? 180px : 330px);
+        text: root.ssid;
+        font-size: Ui.portrait ? 14px : 13.5px;
+        font-weight: 700;
+        color: Theme.emphasis;
+        font-family: Theme.font-body;
+        overflow: elide;
+    }
+    Text {
+        x: 16px;
+        y: Ui.portrait ? 34px : 28px;
+        width: root.width - (Ui.portrait ? 180px : 330px);
+        text: (root.secure ? root.security : "开放网络") + (root.band == "" ? "" : " · " + root.band + (root.channel > 0 ? " Ch" + root.channel : ""));
+        font-size: 8.5px;
+        color: root.secure ? Theme.muted : Theme.warning;
+        font-family: Theme.font-body;
+        overflow: elide;
+    }
+
+    // 右侧状态：已连接/已保存 胶囊 + 信号柱 + 百分比
+    HorizontalLayout {
+        x: root.width - (Ui.portrait ? 172px : 318px);
+        y: 0px;
+        width: Ui.portrait ? 156px : 302px;
+        height: root.height;
+        spacing: 8px;
+        alignment: end;
+        if root.in-use : Tag {
+            label: "已连接";
+            tint: Theme.accent;
+        }
+        if !root.in-use && root.saved : Tag {
+            label: "已保存";
+            tint: Theme.success;
+        }
+        Bars {
+            value: root.signal;
+            tint: root.signal >= 60 ? Theme.success : (root.signal >= 35 ? Theme.warning : Theme.error);
+        }
+        Text {
+            width: 42px;
+            text: "\{root.signal}%";
+            font-size: 10px;
+            font-weight: 700;
+            color: Theme.muted;
+            font-family: Theme.font-mono;
+            horizontal-alignment: TextHorizontalAlignment.right;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+    }
+
+    opacity: ta.pressed ? 0.82 : 1.0;
+}
+
+// 键盘键：label 为目标字符（字母层是小写，显示层按 shift 转大写）
+component Key inherits Rectangle {
+    in property <string> label;
+    in property <bool> strong: false;
+    in property <color> tint: Theme.accent;
+    in property <bool> usable: true;
+    callback press();
+
+    height: Ui.portrait ? 52px : 46px;
+    border-radius: 9px;
+    background: root.strong ? root.tint.with-alpha(0.16) : Theme.card-alt;
+    border-width: 1px;
+    border-color: root.strong ? root.tint.with-alpha(0.6) : Theme.border;
+
+    Text {
+        x: 0px;
+        width: 100%;
+        y: Theme.text-nudge;
+        height: 100%;
+        text: root.label;
+        font-size: Ui.portrait ? 15px : 16px;
+        font-weight: root.strong ? 700 : 500;
+        color: root.strong ? root.tint : Theme.fg;
+        font-family: Theme.font-body;
+        horizontal-alignment: TextHorizontalAlignment.center;
+        vertical-alignment: TextVerticalAlignment.center;
+    }
+    ta := TouchArea {
+        enabled: root.usable;
+        clicked => {
+            root.press();
+        }
+    }
+    opacity: root.usable ? (ta.pressed ? 0.72 : 1.0) : 0.4;
+}
+
+// 等宽键盘行：letters=true 时按 shift 显示大写
+component KeyRow inherits HorizontalLayout {
+    in property <[string]> keys;
+    in property <bool> letters: false;
+    callback press(string);
+    spacing: 6px;
+    for k in root.keys : Key {
+        horizontal-stretch: 1;
+        label: (root.letters && Wifi.kb-shift) ? k.to-uppercase() : k;
+        // 大写键：开启时用主题色描边，跟 Shift 的选中态一致
+        strong: k == "大写" && Wifi.kb-shift;
+        usable: !Wifi.connecting;
+        press => {
+            root.press(k);
+        }
+    }
+}
+
+export component WifiOverlay inherits Rectangle {
+    width: 100%;
+    height: 100%;
+
+    property <length> cw: Ui.portrait ? 512px : 1142px;
+    property <length> ch: Ui.portrait ? 1142px : 512px;
+    property <length> pad: 26px;
+    property <length> field-y: Ui.portrait ? 146px : 144px;
+    property <length> kb-y: Ui.portrait ? 226px : 208px;
+
+    // 键盘字符表
+    property <[string]> row-letters-0: ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"];
+    property <[string]> row-letters-1: ["a", "s", "d", "f", "g", "h", "j", "k", "l"];
+    property <[string]> row-letters-2: ["大写", "z", "x", "c", "v", "b", "n", "m", "退格"];
+    property <[string]> row-symbols-0: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
+    property <[string]> row-symbols-1: ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")"];
+    property <[string]> row-symbols-2: ["-", "_", "=", "+", "[", "]", "{", "}", "\\", "退格"];
+    property <[string]> row-symbols-3: ["abc", ":", ";", ",", ".", "?", "/", "清空"];
+
+    // 键盘统一入口：特殊键走状态回调，普通字符写进密码串
+    function key-press(k: string) {
+        if (Wifi.connecting) {
+            return;
+        }
+        if (k == "大写") {
+            Wifi.kb-shift = !Wifi.kb-shift;
+            return;
+        }
+        if (k == "退格") {
+            Wifi.backspace();
+            return;
+        }
+        if (k == "123") {
+            Wifi.kb-layer = 1;
+            Wifi.kb-shift = false;
+            return;
+        }
+        if (k == "abc") {
+            Wifi.kb-layer = 0;
+            return;
+        }
+        if (k == "空格") {
+            Wifi.key(" ");
+            return;
+        }
+        if (k == "清空") {
+            Wifi.clear-pass();
+            return;
+        }
+        if (Wifi.kb-layer == 0 && Wifi.kb-shift) {
+            Wifi.key(k.to-uppercase());
+            Wifi.kb-shift = false;
+        } else {
+            Wifi.key(k);
+        }
+    }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000.with-alpha(0.78);
+    }
+    // 点遮罩空白处关闭（键盘/列表内的点击由各自控件吃掉）
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => {
+            if (!Wifi.connecting) {
+                Wifi.close-wifi();
+            }
+        }
+    }
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.cw;
+        height: root.ch;
+        border-radius: 18px;
+        background: Theme.card;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        // 吃掉卡片空白区域的点击，避免穿透到遮罩关闭页面
+        TouchArea {
+            width: 100%;
+            height: 100%;
+        }
+
+        // ── 头部 ──
+        Rectangle {
+            x: root.pad;
+            y: 16px;
+            width: 42px;
+            height: 3px;
+            border-radius: 1.5px;
+            background: Theme.accent;
+        }
+        Text {
+            x: root.pad;
+            y: 24px;
+            text: "WiFi 管理";
+            font-size: 20px;
+            font-weight: 700;
+            color: Theme.emphasis;
+            font-family: Theme.font-body;
+        }
+        Text {
+            x: root.pad;
+            y: 54px;
+            width: root.cw - 140px;
+            text: Wifi.current-connected
+                ? "已连接 " + Wifi.current-ssid + (Wifi.current-detail == "" ? "" : " · " + Wifi.current-detail)
+                : "未连接 · 打开页面时自动扫描（关闭后不再扫描）";
+            font-size: 9.5px;
+            color: Wifi.current-connected ? Theme.success : Theme.muted;
+            font-family: Theme.font-body;
+            overflow: elide;
+        }
+        // 关闭
+        close-ta := TouchArea {
+            x: root.cw - 64px;
+            y: 16px;
+            width: 44px;
+            height: 44px;
+            clicked => {
+                if (!Wifi.connecting) {
+                    Wifi.close-wifi();
+                }
+            }
+        }
+        Rectangle {
+            x: root.cw - 64px;
+            y: 16px;
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: Theme.card-alt;
+            border-width: 1px;
+            border-color: Theme.border;
+            Text {
+                x: 0px;
+                width: 100%;
+                y: Theme.text-nudge;
+                height: 100%;
+                text: "×";
+                font-size: 20px;
+                color: Theme.muted;
+                horizontal-alignment: TextHorizontalAlignment.center;
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+        }
+
+        // ── 列表视图 ──
+        if !Wifi.pass-view : Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 100%;
+            height: 100%;
+
+            Text {
+                x: root.pad;
+                y: 84px;
+                width: root.cw - 240px;
+                text: Wifi.error != "" ? Wifi.error : Wifi.status;
+                font-size: 9.5px;
+                color: Wifi.error != "" ? Theme.error : Theme.muted;
+                font-family: Theme.font-body;
+                overflow: elide;
+            }
+            // 重新扫描
+            scan-ta := TouchArea {
+                x: root.cw - 176px;
+                y: 78px;
+                width: 150px;
+                height: 38px;
+                enabled: !Wifi.scanning && !Wifi.connecting;
+                clicked => {
+                    Wifi.rescan();
+                }
+            }
+            Rectangle {
+                x: root.cw - 176px;
+                y: 78px;
+                width: 150px;
+                height: 38px;
+                border-radius: 11px;
+                background: Wifi.scanning ? Theme.card-alt : Theme.accent.with-alpha(0.14);
+                border-width: 1px;
+                border-color: Wifi.scanning ? Theme.border : Theme.accent.with-alpha(0.6);
+                Text {
+                    x: 0px;
+                    width: 100%;
+                    y: Theme.text-nudge;
+                    height: 100%;
+                    text: Wifi.scanning ? "扫描中…" : "重新扫描";
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: Wifi.scanning ? Theme.muted : Theme.accent;
+                    font-family: Theme.font-body;
+                    horizontal-alignment: TextHorizontalAlignment.center;
+                    vertical-alignment: TextVerticalAlignment.center;
+                }
+            }
+
+            ListView {
+                x: root.pad;
+                y: 126px;
+                width: root.cw - root.pad * 2;
+                height: root.ch - 144px;
+                for ap in Wifi.aps : ApRow {
+                    ssid: ap.ssid;
+                    security: ap.security;
+                    secure: ap.secure;
+                    signal: ap.signal;
+                    band: ap.band;
+                    channel: ap.channel;
+                    in-use: ap.in-use;
+                    saved: ap.saved;
+                    pick => {
+                        Wifi.pick(ap.ssid, ap.security, ap.saved, ap.in-use);
+                    }
+                }
+            }
+
+            if Wifi.aps.length == 0 : Text {
+                x: root.pad;
+                y: Ui.portrait ? 420px : 250px;
+                width: root.cw - root.pad * 2;
+                text: Wifi.scanning ? "正在扫描周边 WiFi…" : "没有可用网络，点「重新扫描」再试一次";
+                font-size: 11px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                horizontal-alignment: TextHorizontalAlignment.center;
+            }
+        }
+
+        // ── 密码输入视图 ──
+        if Wifi.pass-view : Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 100%;
+            height: 100%;
+
+            Text {
+                x: root.pad;
+                y: 90px;
+                width: root.cw - root.pad * 2;
+                text: "连接 " + Wifi.sel-ssid;
+                font-size: Ui.portrait ? 20px : 18px;
+                font-weight: 700;
+                color: Theme.emphasis;
+                font-family: Theme.font-body;
+                overflow: elide;
+            }
+            Text {
+                x: root.pad;
+                y: 118px;
+                width: root.cw - root.pad * 2;
+                text: (Wifi.sel-security == "" ? "开放网络" : Wifi.sel-security)
+                    + (Wifi.sel-saved ? " · 已保存配置，密码可留空直接连接" : "");
+                font-size: 9px;
+                color: Theme.muted;
+                font-family: Theme.font-body;
+                overflow: elide;
+            }
+
+            // 密码框
+            Rectangle {
+                x: root.pad;
+                y: root.field-y;
+                width: root.cw - root.pad * 2;
+                height: Ui.portrait ? 62px : 52px;
+                border-radius: 12px;
+                background: Theme.card-alt;
+                border-width: 1px;
+                border-color: Wifi.error != "" ? Theme.error.with-alpha(0.7) : Theme.border;
+                Text {
+                    x: 18px;
+                    y: Theme.text-nudge;
+                    width: parent.width - 120px;
+                    height: 100%;
+                    text: Wifi.pass-display == "" ? "输入 WiFi 密码" : Wifi.pass-display;
+                    font-size: Ui.portrait ? 15px : 16px;
+                    color: Wifi.pass-display == "" ? Theme.muted : Theme.emphasis;
+                    font-family: Theme.font-mono;
+                    vertical-alignment: TextVerticalAlignment.center;
+                    overflow: elide;
+                }
+                // 显示/隐藏
+                show-ta := TouchArea {
+                    x: parent.width - 92px;
+                    y: 6px;
+                    width: 84px;
+                    height: parent.height - 12px;
+                    clicked => {
+                        Wifi.toggle-show();
+                    }
+                }
+                Text {
+                    x: parent.width - 92px;
+                    y: Theme.text-nudge;
+                    width: 84px;
+                    height: 100%;
+                    text: Wifi.pass-show ? "隐藏" : "显示";
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: Theme.accent;
+                    font-family: Theme.font-body;
+                    horizontal-alignment: TextHorizontalAlignment.center;
+                    vertical-alignment: TextVerticalAlignment.center;
+                }
+            }
+
+            // ── 键盘 ──
+            if Wifi.kb-layer == 0 : VerticalLayout {
+                x: root.pad;
+                y: root.kb-y;
+                width: root.cw - root.pad * 2;
+                spacing: 6px;
+                KeyRow {
+                    keys: root.row-letters-0;
+                    letters: true;
+                    press(k) => {
+                        root.key-press(k);
+                    }
+                }
+                KeyRow {
+                    keys: root.row-letters-1;
+                    letters: true;
+                    press(k) => {
+                        root.key-press(k);
+                    }
+                }
+                KeyRow {
+                    keys: root.row-letters-2;
+                    press(k) => {
+                        root.key-press(k);
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Key {
+                        horizontal-stretch: 1.25;
+                        label: "123";
+                        strong: true;
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("123");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 3.0;
+                        label: "空格";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("空格");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.0;
+                        label: ".";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press(".");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.0;
+                        label: "-";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("-");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.0;
+                        label: "@";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("@");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.4;
+                        label: "清空";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("清空");
+                        }
+                    }
+                }
+            }
+            if Wifi.kb-layer == 1 : VerticalLayout {
+                x: root.pad;
+                y: root.kb-y;
+                width: root.cw - root.pad * 2;
+                spacing: 6px;
+                KeyRow {
+                    keys: root.row-symbols-0;
+                    press(k) => {
+                        root.key-press(k);
+                    }
+                }
+                KeyRow {
+                    keys: root.row-symbols-1;
+                    press(k) => {
+                        root.key-press(k);
+                    }
+                }
+                KeyRow {
+                    keys: root.row-symbols-2;
+                    press(k) => {
+                        root.key-press(k);
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Key {
+                        horizontal-stretch: 1.25;
+                        label: "abc";
+                        strong: true;
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("abc");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 2.2;
+                        label: "空格";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("空格");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.0;
+                        label: ":";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press(":");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.0;
+                        label: ";";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press(";");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.0;
+                        label: ",";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press(",");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.0;
+                        label: "?";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("?");
+                        }
+                    }
+                    Key {
+                        horizontal-stretch: 1.4;
+                        label: "清空";
+                        usable: !Wifi.connecting;
+                        press => {
+                            root.key-press("清空");
+                        }
+                    }
+                }
+            }
+
+            // 错误提示（键盘下方，横屏紧贴按钮行上方）
+            if Wifi.error != "" : Text {
+                x: root.pad;
+                y: Ui.portrait ? 532px : 470px;
+                width: root.cw - root.pad * 2;
+                text: Wifi.error;
+                font-size: 9.5px;
+                color: Theme.error;
+                font-family: Theme.font-body;
+                overflow: elide;
+            }
+
+            // 取消 / 连接（横屏贴在卡片底部；竖屏键盘下方）
+            HorizontalLayout {
+                x: root.pad;
+                y: Ui.portrait ? 470px : 420px;
+                width: root.cw - root.pad * 2;
+                height: Ui.portrait ? 56px : 44px;
+                spacing: 12px;
+                Key {
+                    horizontal-stretch: 1;
+                    label: "取消";
+                    usable: !Wifi.connecting;
+                    press => {
+                        Wifi.cancel-pass();
+                    }
+                }
+                Key {
+                    horizontal-stretch: 1.6;
+                    label: Wifi.connecting ? "正在连接…" : "连接";
+                    strong: true;
+                    usable: !Wifi.connecting;
+                    press => {
+                        Wifi.submit();
+                    }
+                }
+            }
+        }
+    }
+}

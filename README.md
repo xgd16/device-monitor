@@ -281,6 +281,7 @@ pnpm dev
 | 显示方向（横屏 / 竖屏 / 反转） | 落盘 `panel-orientation.txt` / `panel-flip.txt`，面板退出由启动器按新朝向重拉（约 5 秒黑屏过渡） |
 | 外观主题（深色 / 浅色） | 立即生效，落盘 `panel-theme.txt`（与底栏主题开关同源） |
 | 屏幕亮度滑块 | 下限 2%（防止拖到全黑后触摸找不回），经 `POST /api/hardware/brightness` 写背光节点；滑块拖动期间的密集回调由面板侧工作线程按 50ms 归并后下发，成功后落盘 `panel-brightness.txt`，下次启动补下发 |
+| WiFi 管理 | 打开全屏 WiFi 操作页：扫描周边网络（SSID / 加密方式 / 频段 / 信号）、点选网络、自绘键盘输入密码后连接。**只有页面打开时**才调用 `GET /api/network/wifi/scan` 触发一次射频扫描（约 3 秒），关闭页面立即作废在途结果；页面内仅「重新扫描」会再次触发。连接成功后刷新当前连接并只更新列表标记，不再额外扫描 |
 | 重启 / 关机 | 点击只打开确认层，确认后 `POST /api/system/power`（`{ "action": "reboot" \| "poweroff" }`）。服务端延迟 1.5 秒再执行 `systemctl --no-block`，让面板先显示「正在重启/关机…」；失败时确认层保留并显示错误，可重试 |
 
 熄屏语义：电源键 / `POST /api/hardware/screen` 只写背光 `bl_power`（4=灭）。熄屏时服务端对触摸屏 `stmfts` 的 evdev 节点做 `EVIOCGRAB` 独占：事件只进服务端 fd 并被丢弃，libinput 收不到，黑屏下的触摸不会再被面板消费（改亮度 / 主题 / 方向）；亮屏释放 grab 即恢复。**不走 input `inhibited`**：那会让驱动 close/open 并反复切 FTS5 scan mode（0x00/0xff），这台机器的触摸 IC 在多次切换后会整块失效（2026-11-01 实测，只能硬复位恢复）。服务端每 2s 巡检 `bl_power`，外部直接改背光状态也会同步。
@@ -426,6 +427,8 @@ journalctl -u device-monitor -f      # 面板日志见 panel.log，服务日志�
 | GET | `/api/battery` | 电池状态（含 `effective_max_pct` / `display_capacity_pct` / `is_degraded` / `at_charge_limit`） |
 | GET | `/api/network` | 网络接口列表 |
 | GET | `/api/network/wifi` | WiFi 连接信息 |
+| GET | `/api/network/wifi/scan` | 主动扫描周边 WiFi（`nmcli dev wifi list --rescan yes`，约 3 秒；仅为面板 WiFi 操作页按需调用）。返回 `ssid` / `bssid` / `signal`（0–100 百分比）/ `security` / `secure` / `frequency_mhz` / `channel` / `band` / `in_use` / `saved`，同 SSID 已去重取最强信号，按信号降序 |
+| POST | `/api/network/wifi/connect` | 连接 WiFi，`body: { "ssid": "...", "password": "..." }`；密码留空时优先激活同 SSID 的已保存配置，开放网络可省略密码。最长等待 45 秒（DHCP），失败返回 nmcli 错误文本 |
 | GET | `/api/network/bluetooth` | 蓝牙适配器信息 |
 | GET | `/api/history/metrics` | 历史指标时间序列。查询参数 `range=1h\|6h\|24h\|7d`（默认 1h）、`max_points`（默认 500，会被夹到 50–2000）。返回 `timestamps` 与 `cpu_usage`、`memory_percent`、`memory_used_mb`、`load_1/5/15`、`battery_capacity`、`battery_power_w`、`thermal_max`、`process_count`、`network_rx_kbps`、`network_tx_kbps` 等序列，以及 `count`、`range`、`from`、`to` |
 

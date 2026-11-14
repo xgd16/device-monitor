@@ -24,6 +24,8 @@ use slint::{ModelRc, VecModel, Weak};
 
 slint::include_modules!();
 
+mod wifi;
+
 // ── 与页面约定固定的几何常量（改 .slint 必须同步）──
 /// 吞吐面积图盒子（page-token.slint 实时吞吐卡）
 const TPS_W: f32 = 309.0;
@@ -41,7 +43,7 @@ const HIST_BARS: usize = 60;
 /// 吞吐滑窗点数（WS 2Hz → 约 30 秒）
 const TPS_POINTS: usize = 60;
 
-const BASE: &str = "http://127.0.0.1:3000/api";
+pub(crate) const BASE: &str = "http://127.0.0.1:3000/api";
 const XTB: &str = "http://127.0.0.1:9192/api/v1";
 const XTB_WS: &str = "ws://127.0.0.1:9192/api/v1/ws";
 
@@ -417,6 +419,13 @@ fn main() {
         });
     }
 
+    // 设置页 WiFi 操作页：扫描/连接/密码键盘（demo 下用合成列表）
+    wifi::init(&app, weak.clone(), demo);
+    // 预览辅助：`--demo --wifi` 直接打开 WiFi 覆盖层（真机上无效果）
+    if demo && std::env::args().any(|a| a == "--wifi") {
+        app.global::<Wifi>().invoke_open_wifi();
+    }
+
     if demo {
         spawn_demo(weak.clone());
     } else {
@@ -461,7 +470,12 @@ fn jb(v: &Value, k: &str) -> bool {
 
 /// 统一响应包装 `{code, data}`；XTokenHub 与 device-monitor 同构。
 fn fetch_json(url: &str) -> Result<Value, String> {
-    let resp = ureq::get(url).timeout(Duration::from_secs(4)).call().map_err(|e| format!("{url}: {e}"))?;
+    fetch_json_timeout(url, Duration::from_secs(4))
+}
+
+/// 同上，但允许调用方指定超时（WiFi 扫描 ~3s、连接最长 45s，4s 默认值不够）。
+pub(crate) fn fetch_json_timeout(url: &str, timeout: Duration) -> Result<Value, String> {
+    let resp = ureq::get(url).timeout(timeout).call().map_err(|e| format!("{url}: {e}"))?;
     let text = resp.into_string().map_err(|e| format!("读取 {url}: {e}"))?;
     let v: Value = serde_json::from_str(&text).map_err(|e| format!("解析 {url}: {e}"))?;
     if v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1) != 0 {
@@ -1379,7 +1393,7 @@ fn push_hist(v: &mut Vec<f32>, x: f32, cap: usize) {
     }
 }
 
-fn tracing_or_log(msg: &str) {
+pub(crate) fn tracing_or_log(msg: &str) {
     eprintln!("[panel] {msg}");
 }
 
@@ -1672,7 +1686,7 @@ fn apply_disk(w: &Weak<App>, v: &Value) {
     .ok();
 }
 
-fn apply_wifi(w: &Weak<App>, v: &Value) {
+pub(crate) fn apply_wifi(w: &Weak<App>, v: &Value) {
     let connected = jb(v, "connected");
     let ssid = js(v, "ssid");
     let signal = jf(v, "signal_dbm") as i64;

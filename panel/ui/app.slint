@@ -2,7 +2,7 @@
 // 结构：顶栏（状态/主机/页签/时钟）+ 翻页容器（滑动切换）+ 底栏（IP/速率/VPN/主题/页码）。
 // 竖屏模式是进程常量（Ui.portrait，由 Rust 侧启动时决定），切换 = 面板重启换向。
 import { Theme } from "theme.slint";
-import { Sys, Clk, Ui } from "data.slint";
+import { Sys, Clk, Ui, Wifi } from "data.slint";
 import { TabPill, LiveDot, Mono } from "widgets.slint";
 import { PageSystem } from "page-system.slint";
 import { PageToken } from "page-token.slint";
@@ -12,6 +12,7 @@ import { PageSystemP } from "page-system.slint";
 import { PageTokenP } from "page-token.slint";
 import { PageClockP } from "page-clock.slint";
 import { PageSettingsP } from "page-settings.slint";
+import { WifiOverlay } from "wifi.slint";
 
 // 电源确认层按钮：filled=true 为实底主操作，false 为次级「取消」。
 component DialogBtn inherits Rectangle {
@@ -161,8 +162,8 @@ component PowerDialog inherits Rectangle {
 
 // Rust 侧要访问的全局与结构体必须从主文件 re-export
 export { Theme } from "theme.slint";
-export { Sys, Clk, Ui, Tok } from "data.slint";
-export { CoreRow, ThermalRow, ProcRow, SvcRow, RankRow, ChanRow, KeyRow, CityRow, ProgRow } from "data.slint";
+export { Sys, Clk, Ui, Tok, Wifi } from "data.slint";
+export { CoreRow, ThermalRow, ProcRow, SvcRow, RankRow, ChanRow, KeyRow, CityRow, ProgRow, WifiRow } from "data.slint";
 
 export component App inherits Window {
     width: Ui.portrait ? 540px : 1170px;
@@ -193,8 +194,8 @@ export component App inherits Window {
             self.focus();
         }
         key-pressed(e) => {
-            // 电源确认层打开时吞掉所有按键，避免方向键在背后切页
-            if (Ui.power-pending != "") {
+            // 电源确认层 / WiFi 操作页打开时吞掉所有按键，避免方向键在背后切页
+            if (Ui.power-pending != "" || Wifi.visible) {
                 return accept;
             }
             if (e.text == Key.RightArrow) {
@@ -874,6 +875,12 @@ export component App inherits Window {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
             }
+        }
+
+        // ── WiFi 操作页：设置页「WiFi」按钮打开；盖住页面/底栏/电源层 ──
+        if Wifi.visible : WifiOverlay {
+            x: 0px;
+            y: 0px;
         }
     }
 }
