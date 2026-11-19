@@ -47,11 +47,13 @@ impl Drop for SessionGuard {
     }
 }
 
-fn try_acquire_session(ip: &str) -> Result<SessionGuard, Response> {
+fn try_acquire_session(ip: &str) -> Result<SessionGuard, Box<Response>> {
     let mut counts = SESSION_COUNTS.lock().unwrap();
     let n = counts.entry(ip.to_string()).or_insert(0);
     if *n >= MAX_SESSIONS_PER_IP {
-        return Err((StatusCode::TOO_MANY_REQUESTS, "Too many terminal sessions for this client").into_response());
+        return Err(Box::new(
+            (StatusCode::TOO_MANY_REQUESTS, "Too many terminal sessions for this client").into_response(),
+        ));
     }
     *n += 1;
     Ok(SessionGuard { ip: ip.to_string() })
@@ -62,7 +64,7 @@ pub async fn ws_handler(ws: WebSocketUpgrade, ConnectInfo(addr): ConnectInfo<Soc
     let ip = addr.ip().to_string();
     match try_acquire_session(&ip) {
         Ok(guard) => ws.on_upgrade(move |socket| handle_terminal(socket, guard)),
-        Err(resp) => resp,
+        Err(resp) => *resp,
     }
 }
 

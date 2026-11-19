@@ -60,7 +60,7 @@ pub struct EmulReq {
 /// 解析 UID hex（允许冒号/空格分隔），长度必须是 4/7/10 字节
 pub fn parse_uid(s: &str) -> Result<Vec<u8>, String> {
     let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if clean.len() % 2 != 0 {
+    if !clean.len().is_multiple_of(2) {
         return Err(format!("UID hex 长度非法：{s}"));
     }
     let bytes: Vec<u8> = (0..clean.len())
@@ -282,17 +282,12 @@ mod imp {
     }
 
     #[repr(C)]
+    #[derive(Default)]
     struct LineConfig {
         flags: u64,
         num_attrs: u32,
         padding: [u32; 5],
         attrs: [LineConfigAttribute; 10],
-    }
-
-    impl Default for LineConfig {
-        fn default() -> Self {
-            Self { flags: 0, num_attrs: 0, padding: [0; 5], attrs: Default::default() }
-        }
     }
 
     #[repr(C)]
@@ -306,14 +301,17 @@ mod imp {
         fd: i32,
     }
 
+    // GPIO v2 的 set-values 报文：EN 线先以输出电平申请，运行中还可再改。
     #[repr(C)]
     #[derive(Default)]
+    #[allow(dead_code)]
     struct LineValues {
         bits: u64,
         mask: u64,
     }
 
     const GPIO_V2_GET_LINE_IOCTL: libc::c_int = iowr::<LineRequest>(0x07);
+    #[allow(dead_code)]
     const GPIO_V2_LINE_SET_VALUES_IOCTL: libc::c_int = iowr::<LineValues>(0x0F);
 
     /// EN 电源线（持有期间保持输出电平）
@@ -344,6 +342,8 @@ mod imp {
             Ok(Self { fd: req.fd })
         }
 
+        // 目前只在申请时给定电平；保留运行中切换 EN 的能力（克隆模式复位会用到）。
+        #[allow(dead_code)]
         fn set(&self, value: u8) -> Result<(), String> {
             let mut vals = LineValues { bits: value as u64, mask: 1 };
             let rc = unsafe { libc::ioctl(self.fd, GPIO_V2_LINE_SET_VALUES_IOCTL, &mut vals) };

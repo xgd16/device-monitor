@@ -22,8 +22,9 @@ pub const NFC_GENL_VERSION: u8 = 1;
 /// 事件多播组名（net/nfc/netlink.c: NFC_GENL_MCAST_EVENT_NAME）
 pub const NFC_MCAST_EVENTS: &str = "events";
 
-/// `enum nfc_commands`
+/// `enum nfc_commands`（整表镜像内核 UAPI：未接入的命令也保留，便于扩展）
 pub mod cmd {
+    #![allow(dead_code)]
     pub const GET_DEVICE: u8 = 1;
     pub const DEV_UP: u8 = 2;
     pub const DEV_DOWN: u8 = 3;
@@ -47,8 +48,9 @@ pub mod cmd {
     pub const EV_SE_TRANSACTION: u8 = 25;
 }
 
-/// `enum nfc_attrs`
+/// `enum nfc_attrs`（整表镜像内核 UAPI）
 pub mod attr {
+    #![allow(dead_code)]
     pub const DEVICE_INDEX: u16 = 1;
     pub const DEVICE_NAME: u16 = 2;
     pub const PROTOCOLS: u16 = 3;
@@ -71,8 +73,9 @@ pub mod attr {
     pub const TARGET_ATS: u16 = 31;
 }
 
-/// `enum nfc_protocol`（数字是协议号，掩码是 `1 << 协议号`）
+/// `enum nfc_protocol`（数字是协议号，掩码是 `1 << 协议号`；整表镜像内核 UAPI）
 pub mod proto {
+    #![allow(dead_code)]
     pub const JEWEL: u32 = 1;
     pub const MIFARE: u32 = 2;
     pub const FELICA: u32 = 3;
@@ -314,8 +317,13 @@ fn parse_se(attrs: &[(u16, Vec<u8>)]) -> SeInfo {
     s
 }
 
+/// 一条报文解析出的属性表：(属性号, 负载)
+pub(crate) type AttrList = Vec<(u16, Vec<u8>)>;
+
 /// 把一条 genl 报文的属性区解析成 (属性号, 负载) 列表
-pub(crate) fn collect_attrs(attrs: &[u8]) -> Vec<(u16, Vec<u8>)> {
+// 当前解析路径直接走 walk_attrs；这个入口留给「按属性号取值」的调用方。
+#[allow(dead_code)]
+pub(crate) fn collect_attrs(attrs: &[u8]) -> AttrList {
     let mut out = Vec::new();
     walk_attrs(attrs, |t, v| out.push((t, v.to_vec())));
     out
@@ -346,12 +354,14 @@ impl Msg {
         self.buf.extend_from_slice(&len.to_ne_bytes());
         self.buf.extend_from_slice(&t.to_ne_bytes());
         self.buf.extend_from_slice(data);
-        while self.buf.len() % 4 != 0 {
+        while !self.buf.len().is_multiple_of(4) {
             self.buf.push(0);
         }
         self
     }
 
+    // 预留：需要 u32 属性的命令（当前命令都只带字节串）
+    #[allow(dead_code)]
     pub(crate) fn attr_u32(self, t: u16, v: u32) -> Self {
         self.attr(t, &v.to_ne_bytes())
     }
@@ -446,6 +456,8 @@ mod imp {
         }
 
         /// 家族号（`nfc`）
+        // 诊断/断言用：解析报文时按需取，不参与主流程。
+        #[allow(dead_code)]
         pub fn family(&self) -> u16 {
             self.family
         }
@@ -513,17 +525,9 @@ mod imp {
             );
             self.send(&msg)?;
 
-            let buf = loop {
-                match self.recv_timeout(Duration::from_secs(3))? {
-                    Some(b) => break b,
-                    None => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::NotFound,
-                            "内核未提供 nfc netlink 家族（NFC 子系统未加载？）",
-                        ));
-                    }
-                }
-            };
+            let buf = self.recv_timeout(Duration::from_secs(3))?.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "内核未提供 nfc netlink 家族（NFC 子系统未加载？）")
+            })?;
             let mut family = 0u16;
             let mut group = None;
             walk_nlmsgs(&buf, |ty, _f, _s, pl| {
@@ -631,7 +635,7 @@ mod imp {
         }
 
         /// 通用 dump：返回每条报文解析出的属性列表
-        fn dump(&mut self, c: u8, idx: u32, timeout: Duration) -> io::Result<Vec<Vec<(u16, Vec<u8>)>>> {
+        fn dump(&mut self, c: u8, idx: u32, timeout: Duration) -> io::Result<Vec<AttrList>> {
             let seq = self.next_seq();
             let msg = build_cmd(
                 self.family,

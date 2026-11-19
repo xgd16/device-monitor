@@ -27,17 +27,19 @@ slint::include_modules!();
 mod wifi;
 
 // ── 与页面约定固定的几何常量（改 .slint 必须同步）──
-/// 吞吐面积图盒子（page-token.slint 实时吞吐卡）
-const TPS_W: f32 = 309.0;
-const TPS_H: f32 = 72.0;
-/// 竖屏版图表盒宽（484 = 512 卡内宽），横竖两版同时生成
-const TPS_W_P: f32 = 484.0;
-/// 竖屏半宽卡（251 卡内宽 223）用的小图
+/// 吞吐面积图盒子（page-token.slint 横屏 A 舱实时吞吐）
+const TPS_W: f32 = 352.0;
+const TPS_H: f32 = 80.0;
+/// 竖屏版图表盒（508 = 540 屏 - 2×16 边距），横竖两版同时生成
+const TPS_W_P: f32 = 508.0;
+/// 竖屏吞吐图高度（横版 72，竖版给到 80）
+const TPS_H_P: f32 = 80.0;
+/// 竖屏半宽卡（旧版残留，保留数据字段以兼容）
 const TPS_W_S: f32 = 223.0;
-/// 7 天趋势面积图盒子（质量指标卡）
-const TREND_W: f32 = 353.0;
-const TREND_H: f32 = 40.0;
-const TREND_W_P: f32 = 484.0;
+/// 7 天趋势面积图盒子（横屏质量指标）
+const TREND_W: f32 = 374.0;
+const TREND_H: f32 = 48.0;
+const TREND_W_P: f32 = 508.0;
 /// 等化器柱数（CPU/内存历史，2s 采样 → 约 2 分钟窗口）
 const HIST_BARS: usize = 60;
 /// 吞吐滑窗点数（WS 2Hz → 约 30 秒）
@@ -123,8 +125,7 @@ fn preset_touch_matrix(portrait: bool, flip: bool) {
     // 面板退出前预写规则 + reload/trigger/settle + 轮询验证属性已进 udev 库
     //（至多 12×0.3s≈4s），让启动器的属性存在性检查首查即过——整段 udev
     // 同步（实测 1~13 秒）从切换关键路径挪出。printf 走 $1/$2 占位避开引号地狱。
-    let script = format!(
-        "printf '%s' \"$1\" > /etc/udev/rules.d/70-stmfts-rotation.rules && \\\n\
+    let script = "printf '%s' \"$1\" > /etc/udev/rules.d/70-stmfts-rotation.rules && \\\n\
          udevadm control --reload-rules && \\\n\
          udevadm trigger --action=change --subsystem-match=input && \\\n\
          udevadm settle --timeout=5\n\
@@ -138,8 +139,7 @@ fn preset_touch_matrix(portrait: bool, flip: bool) {
            [ -n \"$ev\" ] && udevadm trigger --action=change \"$ev\" >/dev/null 2>&1\n\
            i=$((i+1))\n\
            sleep 0.3\n\
-         done"
-    );
+         done";
     let _ = std::process::Command::new("sh")
         .arg("-c")
         .arg(script)
@@ -302,7 +302,7 @@ fn main() {
     }
     // 触摸调试探针：触点逻辑坐标落 panel.log（部署期诊断，代价可忽略）
     app.global::<Ui>().on_probe(|x, y, kind| {
-        eprintln!("[touch-probe] {kind} x={x:.1} y={y:.1} (logical 1170x540)");
+        eprintln!("[touch-probe] {} {kind} x={x:.1} y={y:.1} (logical 1170x540)", now_stamp());
     });
 
     // 设置页手动选方向：设备上写偏好文件后退出（启动器 ≤5s 按新方向重拉，KMS 旋转
@@ -872,7 +872,7 @@ fn tick_now(ui: &App) {
                 wnd.iter().copied().collect()
             };
             let (line, area) = polyline(&vals, TPS_W, TPS_H, "");
-            let (line_p, area_p) = polyline(&vals, TPS_W_P, TPS_H, "");
+            let (line_p, area_p) = polyline(&vals, TPS_W_P, TPS_H_P, "");
             let (line_s, area_s) = polyline(&vals, TPS_W_S, TPS_H, "");
             let cur = vals.last().copied().unwrap_or(0.0);
             let avg = if vals.is_empty() { 0.0 } else { vals.iter().sum::<f32>() / vals.len() as f32 };
@@ -1344,14 +1344,24 @@ fn is_wet(c: u32) -> bool {
 /// protocol_label 只在 hardware 接口里有，overview 的 battery 节点没有）。
 struct HwLatest {
     charger_online: bool,
-    chg_vi: String,
+    /// 充电器侧实测电压（µV，驱动在非充电态固定返回 0）
+    charger_voltage_uv: f64,
+    /// 充电器侧实测电流（µA，同上）
+    charger_current_ua: f64,
+    /// 充电功率（W，充电器侧；驱动无读数时为 0）
+    power_w: f64,
+    /// 当前充电限流（已格式化，如 "1.9A"）
+    limit_s: String,
     brightness: String,
     protocol: String,
 }
 
 static HW_LATEST: Mutex<HwLatest> = Mutex::new(HwLatest {
     charger_online: false,
-    chg_vi: String::new(),
+    charger_voltage_uv: 0.0,
+    charger_current_ua: 0.0,
+    power_w: 0.0,
+    limit_s: String::new(),
     brightness: String::new(),
     protocol: String::new(),
 });
@@ -1467,7 +1477,12 @@ fn push_hist(v: &mut Vec<f32>, x: f32, cap: usize) {
 }
 
 pub(crate) fn tracing_or_log(msg: &str) {
-    eprintln!("[panel] {msg}");
+    eprintln!("[panel] {} {msg}", now_stamp());
+}
+
+/// 日志时间戳（毫秒）：排查「开机后触摸多久才恢复」这类问题必须有时间轴。
+pub(crate) fn now_stamp() -> String {
+    chrono::Local::now().format("%H:%M:%S%.3f").to_string()
 }
 
 fn hostname() -> String {
@@ -1528,9 +1543,17 @@ fn apply_overview(w: &Weak<App>, ov: &Value, ip: &str, rx: f64, tx: f64, cpu_his
     let bat = ov.get("battery").cloned().unwrap_or(json!({}));
     let bat_pct =
         if ji(&bat, "display_capacity_pct") > 0 { ji(&bat, "display_capacity_pct") } else { ji(&bat, "capacity") };
-    let (charger_online, hw_protocol, hw_brightness) = {
+    let (charger_online, hw_protocol, hw_brightness, chg_v_uv, chg_i_ua, hw_power, hw_limit) = {
         let g = HW_LATEST.lock().unwrap_or_else(|p| p.into_inner());
-        (g.charger_online, g.protocol.clone(), g.brightness.clone())
+        (
+            g.charger_online,
+            g.protocol.clone(),
+            g.brightness.clone(),
+            g.charger_voltage_uv,
+            g.charger_current_ua,
+            g.power_w,
+            g.limit_s.clone(),
+        )
     };
     let (status_cn, charging) = battery_status_cn(&js(&bat, "status"));
     let protocol = if hw_protocol.is_empty() { js(&bat, "protocol_label") } else { hw_protocol };
@@ -1558,10 +1581,33 @@ fn apply_overview(w: &Weak<App>, ov: &Value, ip: &str, rx: f64, tx: f64, cpu_his
         limit2.push_str(if limit2.is_empty() { "已到充电上限" } else { " · 已到充电上限" });
     }
     let bat_limit2 = if charger_online {
-        let g = HW_LATEST.lock().unwrap_or_else(|p| p.into_inner());
-        format!("限流 {}{}{}", g.chg_vi, if limit2.is_empty() { "" } else { " · " }, limit2)
+        format!("限流 {}{}{}", hw_limit, if limit2.is_empty() { "" } else { " · " }, limit2)
     } else {
         limit2
+    };
+    // 充电电压/电流：充电器侧有读数就用（仅 status=Charging 时驱动才给），
+    // 充满/未充电时 qcom_smbx 固定返回 0，回退到电池侧，标签随之变成「电池…」。
+    let bat_v = jf(&bat, "voltage_v");
+    let bat_i = jf(&bat, "current_ma").abs();
+    let chg_v = if chg_v_uv > 0.0 { format!("{:.2}V", chg_v_uv / 1_000_000.0) } else { format!("{bat_v:.2}V") };
+    let chg_i = if chg_i_ua.abs() >= 1_000_000.0 {
+        format!("{:.2}A", chg_i_ua.abs() / 1_000_000.0)
+    } else if chg_i_ua.abs() > 0.0 {
+        format!("{:.0}mA", chg_i_ua.abs() / 1000.0)
+    } else {
+        format!("{bat_i:.0}mA")
+    };
+    // 电池功率：充满/仅供电时没有功率流入，直接给状态，不再显示 0.0W
+    let power_str =
+        if charger_online && !charging { status_cn.to_string() } else { format!("{:.1}W", jf(&bat, "power_w")) };
+    // 充电功率：充电中优先取充电器侧输入功率，驱动无读数时回退电池侧
+    let chg_p = if !charger_online {
+        "--".to_string()
+    } else if charging {
+        let pw = if hw_power > 0.05 { hw_power } else { jf(&bat, "power_w") };
+        format!("{pw:.1}W")
+    } else {
+        status_cn.to_string()
     };
 
     let mihomo = ov.get("mihomo").cloned().unwrap_or(json!({}));
@@ -1614,7 +1660,10 @@ fn apply_overview(w: &Weak<App>, ov: &Value, ip: &str, rx: f64, tx: f64, cpu_his
         sys.set_bat_protocol(protocol.into());
         sys.set_bat_voltage(format!("{:.2}", jf(&bat, "voltage_v")).into());
         sys.set_bat_current(format!("{:.0}", jf(&bat, "current_ma").abs()).into());
-        sys.set_bat_power(format!("{:.1}", jf(&bat, "power_w")).into());
+        sys.set_bat_power_str(power_str.into());
+        sys.set_bat_chg_p(chg_p.into());
+        sys.set_bat_chg_v(chg_v.into());
+        sys.set_bat_chg_i(chg_i.into());
         let bt = jf(&bat, "temp_celsius");
         sys.set_bat_temp(bt as f32);
         sys.set_bat_temp_str(format!("{bt:.1} °C").into());
@@ -1655,26 +1704,14 @@ fn apply_hardware(w: &Weak<App>, v: &Value) {
     let freq_s = if suspended { "休眠".to_string() } else { format!("{cur}") };
     let range = format!("调速区间 {min}–{max}MHz · {}", if gov.is_empty() { "n/a" } else { &gov });
     let charger_online = jb(&charging, "charger_online");
-    let chg_v = if jf(&charging, "charger_voltage_uv") > 0.0 {
-        format!("{:.2}", jf(&charging, "charger_voltage_uv") / 1_000_000.0)
-    } else {
-        "--".to_string()
-    };
-    let i_ua = jf(&charging, "charger_current_ua").abs();
-    let chg_i = if i_ua <= 0.0 {
-        "--".to_string()
-    } else if i_ua >= 1_000_000.0 {
-        format!("{:.2} A", i_ua / 1_000_000.0)
-    } else {
-        format!("{} mA", i_ua / 1000.0)
-    };
     let protocol = js(&charging, "protocol_label");
-    #[allow(unused_variables)]
     let current_max = jf(&charging, "current_max_ua") as i64;
     let limit_s = if current_max >= 1_000_000 {
         format!("{:.1}A", current_max as f64 / 1_000_000.0)
+    } else if current_max > 0 {
+        format!("{}mA", current_max / 1000)
     } else {
-        format!("{current_max}mA")
+        "--".to_string()
     };
     let br = jf(&brightness, "percent") as i64;
     // 熄屏检测（msm 把 bl_power=4 当 DPMS）
@@ -1683,12 +1720,14 @@ fn apply_hardware(w: &Weak<App>, v: &Value) {
         let mut g = HW_LATEST.lock().unwrap_or_else(|p| p.into_inner());
         *g = HwLatest {
             charger_online,
-            chg_vi: format!("{chg_v}V/{chg_i}"),
+            charger_voltage_uv: jf(&charging, "charger_voltage_uv"),
+            charger_current_ua: jf(&charging, "charger_current_ua"),
+            power_w: jf(&charging, "power_w"),
+            limit_s,
             brightness: format!("{br}"),
             protocol: protocol.clone(),
         };
     }
-    let _ = limit_s;
 
     w.upgrade_in_event_loop(move |ui| {
         let sys = ui.global::<Sys>();
@@ -1697,8 +1736,6 @@ fn apply_hardware(w: &Weak<App>, v: &Value) {
         sys.set_gpu_range(range.into());
         sys.set_gpu_pct(gpu_pct as f32);
         sys.set_governor(if gov.is_empty() { "n/a".into() } else { gov.into() });
-        sys.set_bat_chg_v(chg_v.into());
-        sys.set_bat_chg_i(chg_i.into());
         ui.global::<Ui>().set_screen_on(screen_on);
         // 亮度回填：拖动期间跳过——轮询拿到的是请求落地前的旧值，回填会把旋钮拽回去
         let ui_g = ui.global::<Ui>();
@@ -2395,7 +2432,7 @@ fn spawn_demo(w: Weak<App>) {
                 }
                 let vals: Vec<f32> = tps.iter().copied().collect();
                 let (line, area) = polyline(&vals, TPS_W, TPS_H, "");
-                let (line_p, area_p) = polyline(&vals, TPS_W_P, TPS_H, "");
+                let (line_p, area_p) = polyline(&vals, TPS_W_P, TPS_H_P, "");
                 let (line_s, area_s) = polyline(&vals, TPS_W_S, TPS_H, "");
                 let cur = v;
                 let streams = if burst == 1 { 2 } else { 0 };

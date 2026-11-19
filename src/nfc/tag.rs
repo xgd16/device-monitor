@@ -148,7 +148,7 @@ pub fn hex_colon(bytes: &[u8]) -> String {
 /// 连续 hex 字符串 → 字节（允许空格/冒号/换行，忽略大小写）
 pub fn unhex(s: &str) -> Result<Vec<u8>, String> {
     let cleaned: String = s.chars().filter(|c| !c.is_whitespace() && *c != ':' && *c != '-').collect();
-    if cleaned.len() % 2 != 0 {
+    if !cleaned.len().is_multiple_of(2) {
         return Err(format!("十六进制长度必须是偶数（当前 {} 位）", cleaned.len()));
     }
     if !cleaned.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -197,10 +197,7 @@ pub fn type2_write_page(tag: &RawTag, page: u8, data: &[u8; 4]) -> io::Result<()
     let rx = tag.transceive(&tx, Duration::from_millis(600))?;
     // 4-bit ACK 会被内核按位对齐成 0x0A；部分卡返回 0x00（NAK）
     if rx.first() != Some(&0x0A) {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("写页 {page} 被拒绝（响应 {}）", hex(&rx)),
-        ));
+        return Err(io::Error::other(format!("写页 {page} 被拒绝（响应 {}）", hex(&rx))));
     }
     Ok(())
 }
@@ -278,13 +275,11 @@ pub fn build_type2_tlv(message: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Type 2 标签读取结果：(页缓冲, CC, NDEF 消息, 原始帧记录)
+pub type Type2Dump = (Vec<u8>, Option<Type2Cc>, Option<Vec<u8>>, Vec<Exchange>);
+
 /// 读取 Type 2 标签：页 0..3（含 CC）＋数据区直到 TLV 结束
-///
-/// 返回 (页缓冲, CC, NDEF 消息, 原始帧记录)
-pub fn type2_dump(
-    tag: &RawTag,
-    max_pages: u8,
-) -> io::Result<(Vec<u8>, Option<Type2Cc>, Option<Vec<u8>>, Vec<Exchange>)> {
+pub fn type2_dump(tag: &RawTag, max_pages: u8) -> io::Result<Type2Dump> {
     let mut log = Vec::new();
     let mut buf = type2_read_logged(tag, 0, &mut log)?;
     let cc = parse_type2_cc(&buf[12..16]);
@@ -336,7 +331,7 @@ pub fn apdu(tag: &RawTag, apdu: &[u8], log: &mut Vec<Exchange>) -> io::Result<Ve
     }
     let sw = u16::from_be_bytes([rx[rx.len() - 2], rx[rx.len() - 1]]);
     if sw != 0x9000 {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("APDU 返回状态字 {sw:04X}")));
+        return Err(io::Error::other(format!("APDU 返回状态字 {sw:04X}")));
     }
     Ok(rx[..rx.len() - 2].to_vec())
 }

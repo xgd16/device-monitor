@@ -495,10 +495,10 @@ fn maybe_reapply_charge_mode(charger_online: bool) -> bool {
 
 /// 从 usb_type 文本取当前协商项，形如 `"[DCP] Unknown SDP CDP"` → `"DCP"`。
 fn parse_usb_type_now(raw: &str) -> String {
-    if let Some(start) = raw.find('[') {
-        if let Some(rel_end) = raw[start..].find(']') {
-            return raw[start + 1..start + rel_end].trim().to_string();
-        }
+    if let Some(start) = raw.find('[')
+        && let Some(rel_end) = raw[start..].find(']')
+    {
+        return raw[start + 1..start + rel_end].trim().to_string();
     }
     raw.split_whitespace().next().unwrap_or("").to_string()
 }
@@ -550,10 +550,10 @@ fn refresh_qc_label() {
             }
         }
     }
-    if let Some(label) = decision {
-        if let Ok(mut g) = qc_label_store().lock() {
-            *g = label;
-        }
+    if let Some(label) = decision
+        && let Ok(mut g) = qc_label_store().lock()
+    {
+        *g = label;
     }
 }
 
@@ -859,7 +859,7 @@ pub fn set_screen_power(on: bool) -> Result<(), String> {
 /// 触发一次振动，时长限制在 50-3000ms。
 pub fn vibrate_once(duration_ms: u32) -> Result<u32, String> {
     stop_vibrate();
-    let ms = duration_ms.max(50).min(3000);
+    let ms = duration_ms.clamp(50, 3000);
     run_vibrate(ms)?;
     Ok(ms)
 }
@@ -868,7 +868,7 @@ pub fn vibrate_once(duration_ms: u32) -> Result<u32, String> {
 pub fn start_pattern(pattern: &VibePattern) -> Result<bool, String> {
     stop_vibrate();
 
-    let segments: Vec<u32> = pattern.segments.iter().map(|s| s.duration_ms.max(50).min(3000)).collect();
+    let segments: Vec<u32> = pattern.segments.iter().map(|s| s.duration_ms.clamp(50, 3000)).collect();
     let repeat = pattern.repeat;
 
     VIBRATING.store(true, Ordering::Relaxed);

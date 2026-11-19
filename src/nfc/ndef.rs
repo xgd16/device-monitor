@@ -168,7 +168,7 @@ pub fn uri_record(uri: &str) -> Vec<u8> {
         }
     }
     let mut payload = vec![best_code];
-    payload.extend_from_slice(uri[best_len..].as_bytes());
+    payload.extend_from_slice(&uri.as_bytes()[best_len..]);
     build_record(1, b"U", &payload)
 }
 

@@ -73,18 +73,19 @@ impl AlertEngine {
         let now = data.timestamp;
 
         // CPU 温度：取所有 thermal zone 的最高温
-        if let Some(max_temp) = data.thermal.iter().map(|t| t.temp_celsius).reduce(f64::max) {
-            if max_temp >= self.config.cpu_temp_threshold && now - self.last_cpu_alert > 300 {
-                let _ = self.db.store_alert(
-                    "warning",
-                    "CPU 温度过高",
-                    &format!(
-                        "当前最高温度: {:.1}°C (阈值: {:.1}°C)",
-                        max_temp, self.config.cpu_temp_threshold
-                    ),
-                );
-                self.last_cpu_alert = now;
-            }
+        if let Some(max_temp) = data.thermal.iter().map(|t| t.temp_celsius).reduce(f64::max)
+            && max_temp >= self.config.cpu_temp_threshold
+            && now - self.last_cpu_alert > 300
+        {
+            let _ = self.db.store_alert(
+                "warning",
+                "CPU 温度过高",
+                &format!(
+                    "当前最高温度: {:.1}°C (阈值: {:.1}°C)",
+                    max_temp, self.config.cpu_temp_threshold
+                ),
+            );
+            self.last_cpu_alert = now;
         }
 
         // 内存使用率

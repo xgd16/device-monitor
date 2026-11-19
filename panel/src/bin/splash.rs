@@ -8,16 +8,22 @@
 //!      （自己保持存活，灰色帧继续被扫描）→ 写 /tmp/panel-splash.gone。
 //!   4. 新面板后端打开 card0 时无主 → 内核自动授予 → 初始化 → 首帧 set_crtc 接管
 //!      屏幕；启动器健康检查通过后击杀本进程（灰色帧彼时已不被扫描，释放无闪烁）。
+//!
 //! 兑底：3 秒拿不到 master、DropMaster 失败、或 30 秒未交接 → 退出释放资源，
 //! 退化为普通黑屏路径，不卡死。
 //!
 //! 单实例：/tmp/panel-splash.pid 已有存活 pid 则直接退出。
 
+// 下面四个常量只被 Linux 分支引用；在别的平台编译时整段不存在，避免 dead_code。
+#[cfg(target_os = "linux")]
 const PIDF: &str = "/tmp/panel-splash.pid";
+#[cfg(target_os = "linux")]
 const GONEF: &str = "/tmp/panel-splash.gone";
 /// main.rs 启动时打印的交接信号（stderr → panel.log）
+#[cfg(target_os = "linux")]
 const TOKEN: &str = "splash handoff wait";
 /// 面板日志（cwd 与 panel 相同 = 部署目录，启动器每轮先截断）
+#[cfg(target_os = "linux")]
 const PANEL_LOG: &str = "panel.log";
 
 #[cfg(target_os = "linux")]
@@ -50,16 +56,16 @@ fn run() -> Result<(), String> {
     // ── 单实例：接管旧残留（计划内切换间隔极短时旧 splash 可能还活着；
     //    它已 DropMaster 且其帧未被扫描，或它正持有灰色帧——杀掉后本实例
     //    会重新上灰色帧，衔接无缝）──
-    if let Ok(s) = fs::read_to_string(PIDF) {
-        if let Ok(pid) = s.trim().parse::<u32>() {
-            if pid != std::process::id() && Path::new(&format!("/proc/{pid}")).exists() {
-                let _ = std::process::Command::new("kill")
-                    .arg(pid.to_string())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
-        }
+    if let Ok(s) = fs::read_to_string(PIDF)
+        && let Ok(pid) = s.trim().parse::<u32>()
+        && pid != std::process::id()
+        && Path::new(&format!("/proc/{pid}")).exists()
+    {
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
     let _ = fs::remove_file(GONEF);
     fs::write(PIDF, format!("{}\n", std::process::id())).map_err(|e| e.to_string())?;
@@ -100,11 +106,12 @@ fn run() -> Result<(), String> {
     let res = card.resource_handles().map_err(|e| format!("resources: {e}"))?;
     let mut con_info = None;
     for &h in res.connectors() {
-        if let Ok(ci) = card.get_connector(h, true) {
-            if ci.state() == connector::State::Connected && !ci.modes().is_empty() {
-                con_info = Some(ci);
-                break;
-            }
+        if let Ok(ci) = card.get_connector(h, true)
+            && ci.state() == connector::State::Connected
+            && !ci.modes().is_empty()
+        {
+            con_info = Some(ci);
+            break;
         }
     }
     let con = con_info.ok_or_else(|| "无已连接且带模式的 connector".to_string())?;

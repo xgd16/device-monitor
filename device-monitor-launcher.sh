@@ -37,9 +37,12 @@ start_api() {
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     "$BIN" >>"$API_LOG" 2>&1 &
     API_PID=$!
+  # 面板优先：这里最多只等 1.5 秒。面板首帧不依赖 API（本地 UI + 占位数据），
+  # API 稍晚就绪时面板的 4s 轮询会自动把数据补上。旧实现最多等 20 秒，
+  # 开机时 API 的任何一次慢调用（nmcli / bluetoothctl / mihomo）都会把亮屏整个拖后。
   i=0
-  while [ "$i" -lt 20 ]; do
-    sleep 1
+  while [ "$i" -lt 3 ]; do
+    sleep 0.5
     i=$((i + 1))
     if health_check; then
       log "API healthy (pid=$API_PID)"
@@ -52,11 +55,24 @@ start_api() {
       return 1
     fi
   done
-  log "API health check timed out after 20s"
-  kill "$API_PID" 2>/dev/null || true
-  wait "$API_PID" 2>/dev/null || true
-  API_PID=""
-  return 1
+  log "API 未在 1.5s 内就绪，面板先起（就绪后数据自动补上）"
+  return 0
+}
+
+# 面板启动前把背光点亮。
+#
+# 面板退出（崩溃 / 设置页切换 / 服务重启 / pkill）时 DRM 关掉 CRTC，msm 驱动会把
+# bl_power 置 4（DPMS off）。新面板实例只做渲染、从不 unblank 背光，于是画面明明
+# 在画却全黑 —— 现象就是「重启后面板跑着但屏幕亮不起来」，而且这时按电源键看到的是
+# 服务端内存里的旧状态，很容易越按越乱。
+#
+# 这里在每次拉起面板前兜底写一次 bl_power=0：面板首帧 1~2 秒内就能看见。
+unblank_backlight() {
+  _bl=/sys/class/backlight/ae94000.dsi.0/bl_power
+  [ -w "$_bl" ] || return 0
+  if [ "$(cat "$_bl" 2>/dev/null)" = "4" ]; then
+    echo 0 > "$_bl" 2>/dev/null && log "背光已点亮（bl_power 4 → 0）"
+  fi
 }
 
 # 解绑内核 framebuffer 控制台（fbcon）：否则服务的 stdout（tty1）、内核 printk、
@@ -135,6 +151,7 @@ try_panel() {
   [ -x "$PANEL_BIN" ] || { log "panel binary not found: $PANEL_BIN"; return 1; }
 
   unbind_fbcon
+  unblank_backlight
   # 朝向：SCREEN_ROTATE 显式设置 > rotation.txt（用户持久化朝向）> 90
   rotate="${SCREEN_ROTATE:-}"
   if [ -z "$rotate" ] && [ -r "$DEPLOY_DIR/rotation.txt" ]; then
@@ -202,6 +219,11 @@ try_panel() {
 }
 
 # ── 主流程 ──
+# 0) 先把背光点亮。服务端启动时会按 bl_power 决定要不要 EVIOCGRAB 独占触摸：
+#    如果此刻 bl_power 还是上一次面板退出（DRM 关 CRTC）留下的 4，它会把触摸抓走；
+#    服务端一旦紧跟其后出问题，触摸就一直失效（2026-11-18 实测：黑屏 + 触摸全无）。
+unblank_backlight
+
 # 1) API 常驻（面板与 Web 的数据源；失败则退出，交给 systemd Restart=always 重试）
 if ! start_api; then
   log "API 启动失败，退出（systemd 将自动重启）"

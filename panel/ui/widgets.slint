@@ -1,4 +1,6 @@
-// 可复用组件库：卡片 / 胶囊 / 脉冲指示灯 / 动画条 / 等化器 / 面积图 / 环形仪表。
+// 可复用组件库：台面仪表语汇——标题行 / 刻度条 / 读数单元 / 等化器 / 面积图 / 环形仪表。
+// 旧版卡片（Card）、胶囊（Pill）、动画条（StatBar）、页签胶囊（TabPill）、圆点（Dot）
+// 已随横竖屏统一而删除：分组靠标题 + 发丝线，不再画卡片框。
 // 所有字号按 1170x540 逻辑分辨率设计，@2x 渲染到 2340x1080 物理。
 import { Theme } from "theme.slint";
 import { Ui } from "data.slint";
@@ -7,14 +9,6 @@ import { Ui } from "data.slint";
 
 export component Mono inherits Text {
     font-family: Theme.font-mono;
-}
-
-export component Dot inherits Rectangle {
-    in property <color> tint;
-    width: 7px;
-    height: 7px;
-    border-radius: self.width / 2;
-    background: root.tint;
 }
 
 // 带外圈呼吸光晕的实时指示灯；熄屏时停止发光省电。
@@ -47,96 +41,13 @@ export component LiveDot inherits Rectangle {
     }
 }
 
-// ── 卡片：圆角 + 描边 + 顶部微光 + 发丝高光 + 标题 ──
-export component Card inherits Rectangle {
-    in property <string> title;
-    border-radius: 16px;
-    background: Theme.card;
-    border-width: 1px;
-    border-color: Theme.border;
-    // 顶部微光 sheen：玻璃质感（深色下可见，浅色随 card-hi 隐入白卡）
-    Rectangle {
-        width: 100%;
-        height: 100%;
-        border-radius: 15px;
-        background: @linear-gradient(180deg, Theme.card-hi.with-alpha(0.09) 0%, Theme.card-hi.with-alpha(0.0) 26%);
-    }
-    Rectangle {
-        x: 16px;
-        y: 0px;
-        height: 1px;
-        width: parent.width - 32px;
-        background: @linear-gradient(90deg, Theme.card-hi.with-alpha(0.0) 0%, Theme.card-hi 50%, Theme.card-hi.with-alpha(0.0) 100%);
-    }
-    Text {
-        x: 14px;
-        y: 9px;
-        text: root.title;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 1.2px;
-        color: Theme.emphasis;
-        font-family: Theme.font-body;
-    }
-}
-
-// ── 胶囊标签：显式宽度 + 手动垂直居中（CJK 行盒 ascent 大，纯居中会偏上，+1px 视觉补偿）──
-export component Pill inherits Rectangle {
-    in property <string> label;
-    in property <color> fg;
-    in property <color> bg;
-    height: 18px;
-    width: lbl.preferred-width + 16px;
-    border-radius: 9px;
-    background: root.bg;
-    border-width: 1px;
-    border-color: root.fg.with-alpha(0.28);
-    lbl := Text {
-        x: 8px;
-        y: Theme.text-nudge;
-        height: parent.height;
-        vertical-alignment: TextVerticalAlignment.center;
-        text: root.label;
-        font-size: 9px;
-        font-weight: 700;
-        color: root.fg;
-        font-family: Theme.font-body;
-    }
-}
-
-// ── 动画进度条 ──
-export component StatBar inherits Rectangle {
-    in property <float> pct; // 0-100
-    in property <color> tint;
-    height: 6px;
-    border-radius: self.height / 2;
-    background: Theme.track;
-    Rectangle {
-        x: 0px;
-        y: 0px;
-        height: 100%;
-        width: parent.width * Math.max(0, Math.min(root.pct, 100)) / 100;
-        border-radius: self.height / 2;
-        background: @linear-gradient(90deg, root.tint.with-alpha(0.72) 0%, root.tint 100%);
-        // 亮端帽：填充末端一格高光，仪表指针般的细节
-        Rectangle {
-            x: parent.width - 2.5px;
-            y: 0px;
-            width: 2.5px;
-            height: 100%;
-            border-radius: 1.25px;
-            background: #FFFFFF;
-            opacity: root.pct > 2.5 ? 0.65 : 0.0;
-        }
-        // 不做 width 过渡动画：本机是常亮仪表，秒级/3 秒级的数据刷新会把
-        // 动画窗口铺满 100% 时间，Slint 渲染循环永不空闲（实测常驻烧一个 CPU 核）
-    }
-}
 
 // ── 等化器柱状图：值 0-100，新样本在右侧、越新越亮 ──
+// flat=true 为竖屏「记录纸」样式：方柱、实色、越新越实（不用渐变洗）
 export component BarChart inherits Rectangle {
     in property <[float]> values;
     in property <color> tint;
+    in property <bool> flat: false;
     property <int> n: values.length;
     for v[i] in values: Rectangle {
         property <float> t: (root.n <= 1) ? 0.0 : i * 1.0 / (root.n - 1);
@@ -144,9 +55,9 @@ export component BarChart inherits Rectangle {
         width: (parent.width - (root.n - 1) * 2px) / root.n;
         y: parent.height - self.height;
         height: Math.max(2px, parent.height * Math.max(0, Math.min(v, 100)) / 100);
-        border-radius: self.width / 2;
-        background: @linear-gradient(180deg, root.tint 0%, root.tint.with-alpha(0.28) 100%);
-        opacity: 0.45 + 0.55 * t;
+        border-radius: root.flat ? 1px : self.width / 2;
+        background: root.flat ? root.tint : @linear-gradient(180deg, root.tint 0%, root.tint.with-alpha(0.28) 100%);
+        opacity: root.flat ? 0.28 + 0.72 * t : 0.45 + 0.55 * t;
         // 同上：height 过渡动画会让高频数据刷新持续喂渲染循环，去掉
     }
 }
@@ -224,46 +135,277 @@ export component RingGauge inherits Rectangle {
     }
 }
 
-// ── 页签 ──
-export component TabPill inherits Rectangle {
+
+// ═══════════════════════════════════════════════════════════════════════
+// 竖屏（手机）仪表组件：台面面板语汇
+// 一块连续面板 = 标题行 + 读数 + 刻度条 + 副值；不画圆角卡片。
+// 所有尺寸由页面显式给，组件内部不做自适应——元素不会因内容长度跑位。
+// ═══════════════════════════════════════════════════════════════════════
+
+// 分组标题行：标题 + 延伸到右缘的发丝线 + 右侧说明。
+// 发丝线从标题右侧 10px 起，到右缘 meta-w+8 处止；meta 右对齐在固定栏内。
+export component SheetHead inherits Rectangle {
+    in property <string> title;
+    in property <string> meta: "";
+    in property <length> meta-w: root.meta == "" ? 0px : 132px;
+    // 状态文字着色（如 WS 在线/断开）；默认弱色，只在该行确实表达状态时覆盖
+    in property <color> meta-tint: Theme.muted;
+    height: 24px;
+    ttl := Text {
+        x: 0px;
+        y: 0px;
+        height: 100%;
+        text: root.title;
+        font-size: 10px;
+        font-weight: 600;
+        color: Theme.muted;
+        font-family: Theme.font-body;
+        vertical-alignment: TextVerticalAlignment.center;
+    }
+    Rectangle {
+        x: ttl.preferred-width + 10px;
+        y: 11px;
+        height: 1px;
+        width: parent.width - self.x - root.meta-w - 8px;
+        background: Theme.border;
+    }
+    Text {
+        x: parent.width - root.meta-w;
+        y: 0px;
+        width: root.meta-w;
+        height: 100%;
+        text: root.meta;
+        font-size: 9px;
+        color: root.meta-tint;
+        font-family: Theme.font-body;
+        horizontal-alignment: TextHorizontalAlignment.right;
+        vertical-alignment: TextVerticalAlignment.center;
+        overflow: elide;
+    }
+}
+
+// 刻度条（竖屏）：方端、实色、无端帽。颜色只表达状态，数值永远同时可见。
+export component Meter inherits Rectangle {
+    in property <float> pct: 0.0;
+    in property <color> tint: Theme.accent;
+    height: 4px;
+    border-radius: 1px;
+    background: Theme.track;
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        height: 100%;
+        width: parent.width * Math.max(0.0, Math.min(root.pct, 100.0)) / 100.0;
+        border-radius: 1px;
+        background: root.tint;
+    }
+}
+
+// 单核柱：共用一条 100% 刻度带（页面画），柱从带底长出来；
+// 柱下居中一行「C0 2260」——8 根柱合起来是一台仪表，不是 8 个电池。
+export component CoreCell inherits Rectangle {
+    in property <string> name;
+    in property <string> freq;
+    in property <float> pct;
+    in property <color> tint;
+    width: 60px;
+    height: 58px;
+    in property <length> bar-w: 12px;
+    in property <length> track-h: 36px;
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: root.track-h - self.height;
+        width: root.bar-w;
+        height: Math.max(2px, root.track-h * Math.max(0.0, Math.min(root.pct, 100.0)) / 100.0);
+        background: root.tint;
+    }
+    Mono {
+        x: 0px;
+        y: 42px;
+        width: 100%;
+        text: root.name + " " + root.freq;
+        font-size: 7.5px;
+        color: Theme.muted;
+        horizontal-alignment: TextHorizontalAlignment.center;
+    }
+}
+
+// 状态贴标：方角小标签（替代胶囊），颜色 = 状态
+export component Tag inherits Rectangle {
     in property <string> label;
+    in property <color> tint: Theme.muted;
+    in property <bool> dot: false;
+    height: 20px;
+    width: txt.preferred-width + (root.dot ? 27px : 16px);
+    border-radius: 3px;
+    background: root.tint.with-alpha(0.10);
+    border-width: 1px;
+    border-color: root.tint.with-alpha(0.38);
+    if root.dot: Rectangle {
+        x: 7px;
+        y: 7.5px;
+        width: 5px;
+        height: 5px;
+        border-radius: 2.5px;
+        background: root.tint;
+    }
+    txt := Text {
+        x: root.dot ? 17px : 8px;
+        y: Theme.text-nudge;
+        height: 100%;
+        text: root.label;
+        font-size: 8.5px;
+        color: root.tint;
+        font-family: Theme.font-body;
+        vertical-alignment: TextVerticalAlignment.center;
+    }
+}
+
+// 分段控件的一格：选中 = 底部 3px 主墨线 + 主墨文字（与顶栏页签同一套「选中」语汇）。
+// 不用实底：实底黑块会让「浅色」这种选项自相矛盾。
+export component SegItem inherits Rectangle {
+    in property <string> label;
+    in property <string> sub: "";
+    in property <bool> sel: false;
+    callback pick();
+    accessible-role: button;
+    accessible-label: root.label + " " + root.sub;
+    border-radius: 3px;
+    background: transparent;
+    if root.sel: Rectangle {
+        x: 12px;
+        y: parent.height - 3px;
+        width: parent.width - 24px;
+        height: 3px;
+        border-radius: 1.5px;
+        background: Theme.emphasis;
+    }
+    VerticalLayout {
+        alignment: center;
+        padding: 4px;
+        spacing: 1px;
+        Text {
+            text: root.label;
+            font-size: 13px;
+            font-weight: root.sel ? 700 : 400;
+            color: root.sel ? Theme.emphasis : Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.center;
+        }
+        if root.sub != "": Text {
+            text: root.sub;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.center;
+            overflow: elide;
+        }
+    }
+    ta := TouchArea {
+        clicked => {
+            root.pick();
+        }
+    }
+    opacity: ta.pressed ? 0.75 : 1.0;
+}
+
+// 操作按钮（WiFi / 蓝牙 / 重启 / 关机）：细描边 + 两行字，按下填色
+export component ActionBtn inherits Rectangle {
+    in property <string> label;
+    in property <string> sub: "";
+    in property <color> tint: Theme.fg;
+    in property <bool> enabled: true;
+    callback pick();
+    accessible-role: button;
+    accessible-label: root.label + " " + root.sub;
+    border-radius: 4px;
+    background: root.tint.with-alpha(root.enabled ? 0.08 : 0.02);
+    border-width: 1px;
+    border-color: root.enabled ? root.tint.with-alpha(0.55) : Theme.border;
+    VerticalLayout {
+        alignment: center;
+        padding: 3px;
+        spacing: 0px;
+        Text {
+            text: root.label;
+            font-size: 13px;
+            font-weight: 600;
+            color: root.enabled ? root.tint : Theme.muted;
+            font-family: Theme.font-body;
+            horizontal-alignment: TextHorizontalAlignment.center;
+        }
+        Text {
+            text: root.sub;
+            font-size: 8px;
+            color: Theme.muted;
+            font-family: Theme.font-mono;
+            horizontal-alignment: TextHorizontalAlignment.center;
+            overflow: elide;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.pick();
+        }
+    }
+    opacity: root.enabled ? (ta.pressed ? 0.80 : 1.0) : 0.40;
+}
+
+// 键值行（设置页系统信息）：键左弱、值右墨
+export component KeyRow inherits Rectangle {
+    in property <string> k;
+    in property <string> v;
+    height: 28px;
+    Text {
+        x: 0px;
+        y: Theme.text-nudge;
+        height: 100%;
+        text: root.k;
+        font-size: 9.5px;
+        color: Theme.muted;
+        font-family: Theme.font-body;
+        vertical-alignment: TextVerticalAlignment.center;
+    }
+    Mono {
+        x: 140px;
+        y: Theme.text-nudge;
+        width: parent.width - 140px;
+        height: 100%;
+        text: root.v;
+        font-size: 10.5px;
+        color: Theme.emphasis;
+        horizontal-alignment: TextHorizontalAlignment.right;
+        vertical-alignment: TextVerticalAlignment.center;
+    }
+}
+
+// 图表井：给面积图一块可读的底（浅色下是纸白，深色下比面板亮一档）
+export component Well inherits Rectangle {
+    border-radius: 3px;
+    background: Theme.card;
+}
+
+// 页码刻度（底栏）：短刻度 = 未选中，长墨条 = 当前页；命中区比视觉大
+export component Tick inherits Rectangle {
     in property <bool> active;
     in property <int> idx;
-    height: 24px;
-    width: lbl.preferred-width + 26px;
-    border-radius: self.height / 2;
-    background: root.active ? Theme.accent : Theme.card-alt;
-    border-width: 1px;
-    border-color: root.active ? Theme.accent : Theme.border;
-    animate background {
-        duration: 260ms;
+    callback pick();
+    width: root.active ? 22px : 12px;
+    height: 4px;
+    border-radius: 1.5px;
+    background: root.active ? Theme.emphasis : Theme.track;
+    animate width {
+        duration: 220ms;
         easing: ease-out;
     }
-    lbl := Text {
-        x: 13px;
-        y: Theme.text-nudge;
-        height: parent.height;
-        vertical-alignment: TextVerticalAlignment.center;
-        text: root.label;
-        font-size: 10px;
-        font-weight: 700;
-        color: root.active ? (Theme.dark ? #071019 : #FFFFFF) : Theme.muted;
-        font-family: Theme.font-body;
-        animate color {
-            duration: 260ms;
-            easing: ease-out;
-        }
-    }
     TouchArea {
-        pointer-event(e) => {
-            Ui.touch-probe = true;
-            // 页签在顶栏卡片 (14,14) 内，横排 y=17、x=736：换算到窗口坐标供探针显示
-            Ui.probe-x = 736px + self.mouse-x;
-            Ui.probe-y = 31px + self.mouse-y;
-            Ui.probe(self.mouse-x / 1px, self.mouse-y / 1px, (e.kind == PointerEventKind.down ? "tab-down" : (e.kind == PointerEventKind.up ? "tab-up" : "tab-move")));
-        }
+        x: -7px;
+        y: -13px;
+        width: parent.width + 14px;
+        height: 29px;
         clicked => {
-            Ui.go(root.idx);
+            root.pick();
         }
     }
 }

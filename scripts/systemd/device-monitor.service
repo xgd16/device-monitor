@@ -1,0 +1,13 @@
+[Unit]
+Description=Device Monitor Server
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user/code/device-monitor
+ExecStart=/home/user/code/device-monitor/target/release/device-monitor-server --tui
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

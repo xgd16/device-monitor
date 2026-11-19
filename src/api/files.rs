@@ -328,12 +328,11 @@ pub async fn write_file(Json(body): Json<WriteBody>) -> Json<Value> {
 
     tracing::info!(path = %path.display(), "files: write");
 
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                return error(&format!("Failed to create parent: {}", e));
-            }
-        }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        return error(&format!("Failed to create parent: {}", e));
     }
 
     match fs::write(&path, &body.content) {

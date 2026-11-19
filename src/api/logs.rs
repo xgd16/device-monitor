@@ -52,7 +52,7 @@ pub async fn get_logs(Query(q): Query<LogQuery>) -> Json<Value> {
     }
 
     let total = logs.len();
-    let start = if total > max_lines { total - max_lines } else { 0 };
+    let start = total.saturating_sub(max_lines);
     let logs: Vec<&str> = logs[start..].to_vec();
 
     Json(serde_json::json!({

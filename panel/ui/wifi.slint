@@ -56,8 +56,8 @@ component Tag inherits Rectangle {
     in property <color> tint: Theme.muted;
     height: 20px;
     width: lbl.preferred-width + 14px;
-    border-radius: 10px;
-    background: root.tint.with-alpha(0.12);
+    border-radius: 3px;
+    background: root.tint.with-alpha(0.10);
     border-width: 1px;
     border-color: root.tint.with-alpha(0.35);
     lbl := Text {
@@ -86,10 +86,24 @@ component ApRow inherits Rectangle {
     callback pick();
 
     height: Ui.portrait ? 64px : 52px;
-    border-radius: 11px;
-    background: root.in-use ? Theme.accent.with-alpha(0.10) : Theme.card-alt.with-alpha(0.62);
-    border-width: 1px;
-    border-color: root.in-use ? Theme.accent.with-alpha(0.5) : Theme.border.with-alpha(0.55);
+    border-radius: 0px;
+    background: root.in-use ? Theme.card-alt : transparent;
+
+    // 已连接：左侧 3px 主墨条（选中语汇与页签一致）
+    if root.in-use : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 3px;
+        height: 100%;
+        background: Theme.emphasis;
+    }
+    Rectangle {
+        x: 0px;
+        y: parent.height - 1px;
+        width: 100%;
+        height: 1px;
+        background: Theme.border;
+    }
 
     // 触控层放最上面也没关系：本行没有其他可点控件
     ta := TouchArea {
@@ -169,7 +183,7 @@ component Key inherits Rectangle {
     callback press();
 
     height: Ui.portrait ? 52px : 46px;
-    border-radius: 9px;
+    border-radius: 4px;
     background: root.strong ? root.tint.with-alpha(0.16) : Theme.card-alt;
     border-width: 1px;
     border-color: root.strong ? root.tint.with-alpha(0.6) : Theme.border;
@@ -292,7 +306,7 @@ export component WifiOverlay inherits Rectangle {
         y: (parent.height - self.height) / 2;
         width: root.cw;
         height: root.ch;
-        border-radius: 18px;
+        border-radius: 6px;
         background: Theme.card;
         border-width: 1px;
         border-color: Theme.border;
@@ -310,13 +324,15 @@ export component WifiOverlay inherits Rectangle {
             width: 42px;
             height: 3px;
             border-radius: 1.5px;
-            background: Theme.accent;
+            background: Theme.emphasis;
         }
         Text {
             x: root.pad;
             y: 24px;
             text: "WiFi 管理";
             font-size: 20px;
+            height: 20px;
+            vertical-alignment: TextVerticalAlignment.center;
             font-weight: 700;
             color: Theme.emphasis;
             font-family: Theme.font-body;
@@ -350,7 +366,7 @@ export component WifiOverlay inherits Rectangle {
             y: 16px;
             width: 44px;
             height: 44px;
-            border-radius: 12px;
+            border-radius: 4px;
             background: Theme.card-alt;
             border-width: 1px;
             border-color: Theme.border;
@@ -400,10 +416,10 @@ export component WifiOverlay inherits Rectangle {
                 y: 78px;
                 width: 150px;
                 height: 38px;
-                border-radius: 11px;
-                background: Wifi.scanning ? Theme.card-alt : Theme.accent.with-alpha(0.14);
+                border-radius: 4px;
+                background: Wifi.scanning ? Theme.card-alt : Theme.emphasis.with-alpha(0.08);
                 border-width: 1px;
-                border-color: Wifi.scanning ? Theme.border : Theme.accent.with-alpha(0.6);
+                border-color: Wifi.scanning ? Theme.border : Theme.emphasis.with-alpha(0.55);
                 Text {
                     x: 0px;
                     width: 100%;
@@ -412,7 +428,7 @@ export component WifiOverlay inherits Rectangle {
                     text: Wifi.scanning ? "扫描中…" : "重新扫描";
                     font-size: 10px;
                     font-weight: 700;
-                    color: Wifi.scanning ? Theme.muted : Theme.accent;
+                    color: Wifi.scanning ? Theme.muted : Theme.emphasis;
                     font-family: Theme.font-body;
                     horizontal-alignment: TextHorizontalAlignment.center;
                     vertical-alignment: TextVerticalAlignment.center;
@@ -487,7 +503,7 @@ export component WifiOverlay inherits Rectangle {
                 y: root.field-y;
                 width: root.cw - root.pad * 2;
                 height: Ui.portrait ? 62px : 52px;
-                border-radius: 12px;
+                border-radius: 4px;
                 background: Theme.card-alt;
                 border-width: 1px;
                 border-color: Wifi.error != "" ? Theme.error.with-alpha(0.7) : Theme.border;

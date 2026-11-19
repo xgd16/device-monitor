@@ -112,11 +112,31 @@ fn str_field(value: &Value, key: &str) -> String {
     value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
 }
 
+/// 带超时的 TCP 连接。
+///
+/// **绝对不要用 `TcpStream::connect`**：它没有超时。2026-11-18 实测开机时
+/// （WiFi 还没起来）采集线程卡在 connect 里 `wait_woken`，整个服务停摆
+/// 2 分 22 秒 —— API 全部超时、面板不刷新、连带触摸被 `EVIOCGRAB` 独占不释放。
+fn connect_with_timeout(host: &str, port: u16, budget: Duration) -> Result<TcpStream, String> {
+    use std::net::{SocketAddr, ToSocketAddrs};
+    let addrs: Vec<SocketAddr> = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve mihomo {}:{} failed: {}", host, port, e))?
+        .collect();
+    let mut last_err = format!("no address for {}:{}", host, port);
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, budget) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last_err = format!("{}", e),
+        }
+    }
+    Err(format!("connect mihomo {}:{} failed: {}", host, port, last_err))
+}
+
 fn get_json(controller: &str, path: &str) -> Result<Value, String> {
     let (host, port, base_path) = parse_http_url(controller)?;
     let full_path = if base_path == "/" { path.to_string() } else { format!("{}{}", base_path, path) };
-    let mut stream = TcpStream::connect((host.as_str(), port))
-        .map_err(|e| format!("connect mihomo {}:{} failed: {}", host, port, e))?;
+    let mut stream = connect_with_timeout(&host, port, Duration::from_millis(900))?;
     stream.set_read_timeout(Some(Duration::from_millis(900))).map_err(|e| format!("set read timeout failed: {}", e))?;
     stream
         .set_write_timeout(Some(Duration::from_millis(900)))

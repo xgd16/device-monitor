@@ -78,6 +78,7 @@ fn is_external_power_online() -> bool {
 ///   1. 屏幕/网页显示「放电」而实际在充电；
 ///   2. 低电量告警判定条件是 `status != "Charging"` → 充电中误报低电；
 ///   3. 容量学习把充电电流当放电积分 → 学出来的容量偏大。
+///
 /// 判「充电」时额外要求外部电源在线：没有电源却读到正电流只可能是传感器毛刺。
 fn normalize_status(raw_status: &str, current_ua: f64, usb_online: bool) -> String {
     if usb_online && current_ua > CHARGE_CURRENT_UA {
@@ -116,10 +117,10 @@ fn effective_max_from_file(raw: u8) -> u8 {
 }
 
 fn load_effective_max_pct() -> u8 {
-    if let Ok(env) = std::env::var("BATTERY_EFFECTIVE_MAX_PCT") {
-        if let Ok(v) = env.parse::<u8>() {
-            return v.clamp(50, 100);
-        }
+    if let Ok(env) = std::env::var("BATTERY_EFFECTIVE_MAX_PCT")
+        && let Ok(v) = env.parse::<u8>()
+    {
+        return v.clamp(50, 100);
     }
     effective_max_from_file(load_u8(EFFECTIVE_MAX_FILE))
 }
@@ -339,14 +340,15 @@ fn learn_capacity(capacity: u8, current_ua: f64, status: &str) {
     let accum = accum + current_ua.abs() * dt / 3600.0 / 1000.0; // μA·s → mAh
     let span = soc0.saturating_sub(capacity) as u32;
 
-    if !measured && discharge_is_measurable(span, capacity) {
-        if let Some(est) = capacity_from_discharge(accum, span) {
-            save_f64(CAPACITY_MAH_FILE, blend_capacity(load_f64(CAPACITY_MAH_FILE), est));
-            tracing::info!("电池实际容量估计 {est:.0} mAh（从 {soc0}% 掉到 {capacity}%，累计放出 {accum:.0} mAh）");
-            // 本段已量过：重新起一段，避免同一段被反复测量反复融合
-            save_discharge(capacity, 0.0, now, true);
-            return;
-        }
+    if !measured
+        && discharge_is_measurable(span, capacity)
+        && let Some(est) = capacity_from_discharge(accum, span)
+    {
+        save_f64(CAPACITY_MAH_FILE, blend_capacity(load_f64(CAPACITY_MAH_FILE), est));
+        tracing::info!("电池实际容量估计 {est:.0} mAh（从 {soc0}% 掉到 {capacity}%，累计放出 {accum:.0} mAh）");
+        // 本段已量过：重新起一段，避免同一段被反复测量反复融合
+        save_discharge(capacity, 0.0, now, true);
+        return;
     }
     save_discharge(soc0, accum, now, measured);
 }

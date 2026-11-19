@@ -287,6 +287,8 @@ pnpm dev
 
 熄屏语义：电源键 / `POST /api/hardware/screen` 只写背光 `bl_power`（4=灭）。熄屏时服务端对触摸屏 `stmfts` 的 evdev 节点做 `EVIOCGRAB` 独占：事件只进服务端 fd 并被丢弃，libinput 收不到，黑屏下的触摸不会再被面板消费（改亮度 / 主题 / 方向）；亮屏释放 grab 即恢复。**不走 input `inhibited`**：那会让驱动 close/open 并反复切 FTS5 scan mode（0x00/0xff），这台机器的触摸 IC 在多次切换后会整块失效（2026-11-01 实测，只能硬复位恢复）。服务端每 2s 巡检 `bl_power`，外部直接改背光状态也会同步。
 
+启动器每次拉起面板前会兜底写一次 `bl_power=0`（`unblank_backlight`）。原因：面板退出（崩溃 / 设置页切换 / 服务重启 / `pkill`）时 DRM 关掉 CRTC，msm 驱动会把 `bl_power` 置 4，而新面板实例只做渲染、从不 unblank 背光 —— 不兜底就会出现「面板进程在跑、画面也在画，但屏幕全黑」，且此时按电源键用的是服务端内存里的旧状态，越按越乱（2026-11-18 定位）。
+
 熄屏后自动 suspend（2026-11-05）：默认**关闭**；`panel-suspend.txt` 写 `1` 才启用。`set_screen_power(false)` 会启动一个 3 秒延迟任务，确认屏幕仍灭且 `device-monitor-panel` 进程存在后执行一次 `systemctl suspend -i`（需要 root 的 polkit 规则；失败只记录、不重试，避免 resume 后立刻再次 suspend 的循环）。这样 DSI PLL/CRTC 也随 suspend 关闭，不再出现“背光灭了但显示链路还在跑”的 0.2W 级浪费。实测 s2idle 可正常唤醒，NetworkManager 在 resume 后自动重连 WiFi；stmfts 驱动的 `stmfts_resume` 会重新启动扫描，唤醒后触摸正常；面板 `screen-watch` 检测到 `bl_power=0` 后恢复 tick/轮询。面板进程缺失时会跳过 suspend，避免“黑屏 + 睡眠”卡死。polkit 规则示例见 `scripts/10-systemd-logind-root-ignore-inhibitors.rules`。
 
 未使用的 CDSP 可在开机后停掉（modem 不能停：停掉后 ath10k 会报 `-108` 且 WiFi 数据面失效；ADSP 负责音频；SLPI 被 `hexagonrpcd-sdsp` 使用）。`scripts/disable-cdsp.service` 会在 `multi-user.target` 后把 `cdsp` remoteproc 置为 `offline`，需要时手动 `echo start > /sys/class/remoteproc/remoteproc1/state` 恢复。
@@ -389,10 +391,39 @@ sudo systemctl restart device-monitor
 journalctl -u device-monitor -f      # 面板日志见 panel.log，服务日志见 api.log
 ```
 
-附带的两个 drop-in（`/etc/systemd/system/device-monitor.service.d/`）：
+附带的三个 drop-in（`/etc/systemd/system/device-monitor.service.d/`，仓库副本见 `scripts/systemd/`）：
 
-- `wait-for-network.conf` — 等 `network-online.target` 就绪后再启动
+- `wait-for-network.conf` — **不再等任何网络目标**。2026-11-18 之前这里是
+  `After=/Wants=network-online.target`，后果是 WiFi 没连上时 `nm-online` 要等满 30 秒才放行，
+  这段时间面板根本没启动、屏幕全黑，而且「亮屏时刻」恰好等于「WiFi 连上时刻」，
+  看起来就像没 WiFi 就不亮屏。面板只依赖本机 API（`127.0.0.1:3000`）与 sysfs，
+  WiFi 卡片每 10 秒轮询、连上后自动回填，不该阻塞显示。连 `network.target` 也一并去掉：
+  去掉后服务在 `basic.target`（≈10.7s）就能起。
+- `priority.conf` — 开机把面板排到其它设备服务前面（`Before=` 一票 `multi-user.target`
+  服务），并给 `Nice=-10 / CPUWeight=10000 / IOWeight=10000`。开机那几秒 CPU/IO 全是
+  别的服务在抢，不加权重面板首帧会被拖到 20s+。
 - `launcher.conf` — 改用启动器、输出写入 journal（写 tty1 会触发 fbcon 重画，盖掉面板）
+
+### 开机黑屏排查（2026-11-18）
+
+现象：开机后屏幕一直不亮；拔掉 WiFi 后更明显。最后定位到**三条独立原因叠加**，都已修：
+
+1. **服务被网络门槛挡住**（见上面 `wait-for-network.conf`）：WiFi 没连上时服务要等 30s，
+   面板进程根本没起。
+2. **面板重启后背光没人点亮**：面板退出时 DRM 关 CRTC，msm 驱动把 `bl_power` 置 4；
+   新实例只渲染、不 unblank → 「进程在跑、画面在画、屏幕全黑」。启动器现在每次拉起
+   面板前兜底写 `bl_power=0`。
+3. **后端卡在无超时 TCP connect 上**：`collector::mihomo::get_json()` 用
+   `TcpStream::connect` 连 mihomo 控制器，没有超时；开机时 WiFi 还没起来，采集线程在
+   `wait_woken` 里卡了 **2 分 22 秒**，期间 API 全部超时、面板不刷新、数据库断更。
+   更糟的是服务端启动时按 `bl_power` 决定是否 `EVIOCGRAB` 独占触摸 —— 一旦它卡死，
+   触摸也一起失效。修复：
+   - `connect_with_timeout()`（900ms 预算）替代裸 `TcpStream::connect`；
+   - 采集循环改 `tokio::task::spawn_blocking`，慢采集不再占用 runtime worker；
+   - 启动器在**启动 API 之前**就点亮背光，避免服务端启动瞬间误抓触摸。
+
+验证：重启后 `Started Device Monitor` 从 **19.36s → 10.50s**，面板进程从 **20.47s → 11.62s**
+（首帧约 12s），屏幕与触摸均正常。
 
 ---
 

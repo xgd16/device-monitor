@@ -601,16 +601,16 @@ fn handle_cmd(nl: &mut Netlink, shared: &Arc<Shared>, cmd: Cmd) {
                 }
             }
             // 保证控制器上电
-            if !lock(&shared.status).device.as_ref().map(|d| d.powered).unwrap_or(false) {
-                if let Err(e) = nl.dev_up(dev) {
-                    // 已经上电时内核返回 EALREADY/EINPROGRESS，忽略
-                    let raw = e.raw_os_error().unwrap_or(0);
-                    if raw != 114 && raw != 16 {
-                        let msg = format!("控制器上电失败：{e}");
-                        set_error(shared, &msg);
-                        let _ = reply.send(Err(msg));
-                        return;
-                    }
+            if !lock(&shared.status).device.as_ref().map(|d| d.powered).unwrap_or(false)
+                && let Err(e) = nl.dev_up(dev)
+            {
+                // 已经上电时内核返回 EALREADY/EINPROGRESS，忽略
+                let raw = e.raw_os_error().unwrap_or(0);
+                if raw != 114 && raw != 16 {
+                    let msg = format!("控制器上电失败：{e}");
+                    set_error(shared, &msg);
+                    let _ = reply.send(Err(msg));
+                    return;
                 }
             }
             // 轮询与监听共用同一个 RF_DISCOVER：先无条件停一次，让 NFCC 回到干净状态再开始。
@@ -695,12 +695,12 @@ fn handle_cmd(nl: &mut Netlink, shared: &Arc<Shared>, cmd: Cmd) {
             }
             // 目标模式：只监听 NFC-DEP（内核 nci 唯一支持的 listen 组合）
             let mut started = nl.start_poll(dev, 0, proto::NFC_DEP_MASK);
-            if let Err(e) = &started {
-                if e.raw_os_error() == Some(16) {
-                    // 上一次 RF_DEACTIVATE 还没完成，稍等重试一次
-                    std::thread::sleep(Duration::from_millis(250));
-                    started = nl.start_poll(dev, 0, proto::NFC_DEP_MASK);
-                }
+            if let Err(e) = &started
+                && e.raw_os_error() == Some(16)
+            {
+                // 上一次 RF_DEACTIVATE 还没完成，稍等重试一次
+                std::thread::sleep(Duration::from_millis(250));
+                started = nl.start_poll(dev, 0, proto::NFC_DEP_MASK);
             }
             match started {
                 Ok(()) => {
@@ -739,10 +739,10 @@ fn handle_cmd(nl: &mut Netlink, shared: &Arc<Shared>, cmd: Cmd) {
         }
         Cmd::Read { req, reply } => {
             let out = do_read(nl, shared, &req);
-            if out.is_err() {
-                if let Err(e) = &out {
-                    set_error(shared, e);
-                }
+            if out.is_err()
+                && let Err(e) = &out
+            {
+                set_error(shared, e);
             }
             let _ = reply.send(out);
             resume_poll(nl, shared);
@@ -1022,10 +1022,10 @@ fn do_read(_nl: &mut Netlink, shared: &Arc<Shared>, req: &ReadReq) -> Result<Rea
             let (buf, cc, message, log) = tag::type2_dump(&raw, 64).map_err(|e| format!("读取 Type 2 失败：{e}"))?;
             result.raw_exchanges = log;
             result.pages = Some(tag::page_dump(0, &buf));
-            if let Some(msg) = message {
-                if !msg.is_empty() {
-                    result.ndef = Some(ndef::parse_message(&msg)?);
-                }
+            if let Some(msg) = message
+                && !msg.is_empty()
+            {
+                result.ndef = Some(ndef::parse_message(&msg)?);
             }
             result.note = format!(
                 "Type 2（NTAG/Ultralight）容量 {} 字节，CC {}",

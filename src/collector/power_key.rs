@@ -126,12 +126,12 @@ pub fn start_listener() {
 
             loop {
                 // 检查是否有待处理的单击已超时
-                if let Some(press_time) = pending_single {
-                    if press_time.elapsed().as_millis() >= DOUBLE_CLICK_MS {
-                        // 超时，确认为单击
-                        pending_single = None;
-                        on_single_click();
-                    }
+                if let Some(press_time) = pending_single
+                    && press_time.elapsed().as_millis() >= DOUBLE_CLICK_MS
+                {
+                    // 超时，确认为单击
+                    pending_single = None;
+                    on_single_click();
                 }
 
                 match file.read_exact(&mut buf) {

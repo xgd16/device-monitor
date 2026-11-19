@@ -137,7 +137,7 @@ pub fn list_processes() -> Vec<ProcessInfo> {
         map.retain(|pid, _| live.contains(pid));
     }
 
-    processes.sort_by(|a, b| b.memory_mb.cmp(&a.memory_mb));
+    processes.sort_by_key(|p| std::cmp::Reverse(p.memory_mb));
     processes
 }
 

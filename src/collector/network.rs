@@ -13,8 +13,10 @@ use std::time::{Duration, Instant};
 
 const IP_CACHE_TTL: Duration = Duration::from_secs(30);
 
-static IP_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Vec<String>)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// IP 查询缓存：命令名 → (写入时刻, 地址列表)
+type IpCache = HashMap<String, (Instant, Vec<String>)>;
+
+static IP_CACHE: LazyLock<Mutex<IpCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn command_path(candidates: &[&str]) -> String {
     candidates
@@ -126,10 +128,10 @@ fn get_ips(iface: &str) -> Vec<String> {
     if let Ok(output) = std::process::Command::new(&ip).args(["-f", "inet", "addr", "show", "dev", iface]).output() {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
-            if line.contains("inet ") {
-                if let Some(ip) = line.split_whitespace().nth(1) {
-                    ips.push(ip.to_string());
-                }
+            if line.contains("inet ")
+                && let Some(ip) = line.split_whitespace().nth(1)
+            {
+                ips.push(ip.to_string());
             }
         }
     }
@@ -139,10 +141,10 @@ fn get_ips(iface: &str) -> Vec<String> {
     {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
-            if line.contains("inet6 ") {
-                if let Some(ip) = line.split_whitespace().nth(1) {
-                    ips.push(ip.to_string());
-                }
+            if line.contains("inet6 ")
+                && let Some(ip) = line.split_whitespace().nth(1)
+            {
+                ips.push(ip.to_string());
             }
         }
     }
@@ -161,10 +163,8 @@ pub fn get_wifi_info() -> WifiInfo {
         .unwrap_or_default();
 
     let connected = output.contains("Connected to");
-    if !connected {
-        if let Some(info) = get_wifi_info_from_nmcli() {
-            return info;
-        }
+    if !connected && let Some(info) = get_wifi_info_from_nmcli() {
+        return info;
     }
     let ssid = extract_field(&output, "SSID").unwrap_or_default();
     let signal =
@@ -499,7 +499,7 @@ pub fn set_bluetooth_power(enabled: bool) -> Result<(), String> {
 }
 
 /// 从 iw 输出中按关键字提取冒号后的值。
-fn extract_field<'a>(text: &'a str, key: &str) -> Option<String> {
+fn extract_field(text: &str, key: &str) -> Option<String> {
     let key_lower = key.to_lowercase();
     for line in text.lines() {
         if line.to_lowercase().contains(&key_lower) {

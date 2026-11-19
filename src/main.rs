@@ -135,7 +135,18 @@ async fn main() {
                     };
                     if last_collect.is_none_or(|t| t.elapsed().as_secs() >= want_secs) {
                         last_collect = Some(std::time::Instant::now());
-                        let overview = collector::collect_system_overview();
+                        // 采集是同步阻塞的一堆子进程 + sysfs 读 + TCP 探测，必须挪到
+                        // blocking 线程池：直接放在 select! 分支里会占住 runtime worker，
+                        // 一旦里面有慢调用（曾经的 mihomo connect 无超时），整个服务的
+                        // HTTP 全部停摆。spawn_blocking 后最多是这次数据迟到。
+                        let overview = match tokio::task::spawn_blocking(collector::collect_system_overview).await
+                        {
+                            Ok(v) => v,
+                            Err(e) => {
+                                tracing::error!("系统采集任务失败: {}", e);
+                                continue;
+                            }
+                        };
                         if let Err(e) = collector::hardware::apply_cpu_status_led_link(overview.cpu.overall_usage as f64) {
                             tracing::error!("CPU 状态灯联动失败: {}", e);
                         }

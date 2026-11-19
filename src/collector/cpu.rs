@@ -175,7 +175,7 @@ pub fn get_governor() -> CpuGovernor {
     // 读取可用的 governor
     let available_str =
         fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors").unwrap_or_default();
-    let available: Vec<String> = available_str.trim().split_whitespace().map(|s| s.to_string()).collect();
+    let available: Vec<String> = available_str.split_whitespace().map(|s| s.to_string()).collect();
 
     // 读取各核心的 governor
     let mut per_core = Vec::new();
@@ -195,7 +195,7 @@ pub fn set_governor(governor: &str) -> Result<(), String> {
     // 先验证 governor 是否可用
     let available_str =
         fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors").unwrap_or_default();
-    let available: Vec<&str> = available_str.trim().split_whitespace().collect();
+    let available: Vec<&str> = available_str.split_whitespace().collect();
 
     if !available.contains(&governor) {
         return Err(format!("Governor '{}' 不可用。可用选项: {:?}", governor, available));
@@ -205,10 +205,10 @@ pub fn set_governor(governor: &str) -> Result<(), String> {
     let mut errors = Vec::new();
     for i in 0..8 {
         let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_governor", i);
-        if std::path::Path::new(&path).exists() {
-            if let Err(e) = fs::write(&path, governor) {
-                errors.push(format!("CPU{}: {}", i, e));
-            }
+        if std::path::Path::new(&path).exists()
+            && let Err(e) = fs::write(&path, governor)
+        {
+            errors.push(format!("CPU{}: {}", i, e));
         }
     }
 
@@ -258,7 +258,7 @@ pub fn get_frequency() -> CpuFrequency {
 
     let freqs_str =
         fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies").unwrap_or_default();
-    let available_freqs: Vec<u64> = freqs_str.trim().split_whitespace().filter_map(|s| s.parse().ok()).collect();
+    let available_freqs: Vec<u64> = freqs_str.split_whitespace().filter_map(|s| s.parse().ok()).collect();
 
     CpuFrequency { min_freq, max_freq, hw_min_freq, hw_max_freq, available_freqs }
 }
@@ -269,7 +269,7 @@ pub fn set_max_frequency_limit(max_freq_khz: u64) -> Result<CpuGovernor, String>
     // 验证频率是否可用
     let freqs_str =
         fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies").unwrap_or_default();
-    let available_freqs: Vec<u64> = freqs_str.trim().split_whitespace().filter_map(|s| s.parse().ok()).collect();
+    let available_freqs: Vec<u64> = freqs_str.split_whitespace().filter_map(|s| s.parse().ok()).collect();
 
     if !available_freqs.contains(&max_freq_khz) {
         return Err(format!("频率 {} kHz 不可用。可用频率: {:?}", max_freq_khz, available_freqs));
@@ -282,10 +282,10 @@ pub fn set_max_frequency_limit(max_freq_khz: u64) -> Result<CpuGovernor, String>
     let mut errors = Vec::new();
     for i in 0..8 {
         let setspeed_path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_setspeed", i);
-        if std::path::Path::new(&setspeed_path).exists() {
-            if let Err(e) = fs::write(&setspeed_path, max_freq_khz.to_string()) {
-                errors.push(format!("CPU{}: {}", i, e));
-            }
+        if std::path::Path::new(&setspeed_path).exists()
+            && let Err(e) = fs::write(&setspeed_path, max_freq_khz.to_string())
+        {
+            errors.push(format!("CPU{}: {}", i, e));
         }
     }
 
